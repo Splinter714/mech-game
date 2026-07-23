@@ -19,7 +19,7 @@ import {
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
-  orbLayout, orbFillPolygon, paperDollLayout, perimeterRun, mechPools,
+  orbLayout, orbFillPolygon, paperDollLayout, perimeterRun, mechPools, noneLayout,
 } from '../data/healthReadout.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
@@ -610,7 +610,9 @@ export default class HudScene extends Phaser.Scene {
     const bottom = this.H - 10 + pad;
     for (const panel of this.panels) {
       const b = panel.bars;
-      drawBay(g, { x: b.x - pad, y: b.headerY - 2, w: b.w + pad * 2, h: bottom - (b.headerY - 2) });
+      // #448: no block ⇒ no bay. An empty recess where the readout used to be is exactly the
+      // "hole" the NONE mode has to avoid.
+      if (b.w > 0) drawBay(g, { x: b.x - pad, y: b.headerY - 2, w: b.w + pad * 2, h: bottom - (b.headerY - 2) });
       const t = panel.tileBox;
       if (t) drawBay(g, { x: t.x - pad, y: t.y - pad, w: t.w + pad * 2, h: bottom - (t.y - pad) }, { framed: false });
     }
@@ -639,6 +641,9 @@ export default class HudScene extends Phaser.Scene {
   _integrityLayoutFor(anchorX, availW) {
     const box = { anchorX, side: 'left', bottomY: this.H - 10, availW };
     const mode = this._readoutMode();
+    // #448: NONE is a zero-width block on the tile row's baseline — the band then drops the
+    // block gap with it (data/hudLayout.js `consoleBand`) so the shell collapses to its tiles.
+    if (mode === 'none') return noneLayout(box);
     if (mode === 'orbs') return orbLayout(box);
     if (mode === 'paperdoll') return paperDollLayout(INTEGRITY_ORDER, box);
     const bars = integrityLayout(INTEGRITY_ORDER, box);
@@ -700,8 +705,13 @@ export default class HudScene extends Phaser.Scene {
     const bars = this._integrityLayoutFor(group.blockX, 0);
     panel.bars = bars;
     panel.mode = bars.mode;
+    const blank = bars.mode === 'none';
+    // #448: with NO integrity block there is nothing for a header to head, and reserving its line
+    // would leave exactly the hole the mode exists to remove — so the block's content ceiling
+    // becomes the tile row itself and no header is created at all.
+    if (blank) bars.headerY = tiles.length ? tiles[0].y : this.H - 10;
 
-    panel.header = this.add.text(bars.x, bars.headerY, panelLabel(spec.index, count), {
+    panel.header = blank ? null : this.add.text(bars.x, bars.headerY, panelLabel(spec.index, count), {
       fontFamily: 'monospace', fontSize: '12px', color: identify ? colStr : C.dim,
     });
     panel.partBarsGfx = this.add.graphics();
@@ -734,9 +744,16 @@ export default class HudScene extends Phaser.Scene {
     // #452: it sits ON the header's line and hides the header while it shows — the two are
     // mutually exclusive states, and a second stacked text row made the console taller for a line
     // nobody ever sees at the same time as the other.
-    panel.statusText = this.add.text(bars.x, bars.headerY, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: C.bad,
-    }).setVisible(false);
+    // #448: in the NONE readout there is no header line to take over, so the downed line rides
+    // centred over that player's own tile row instead — the tiles are dimmed to 0.3 while a player
+    // is down, so it sits on a quiet surface either way.
+    panel.statusText = blank
+      ? this.add.text(group.tilesX + group.tilesW / 2, bars.headerY + 6, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: C.bad,
+      }).setOrigin(0.5, 0).setVisible(false)
+      : this.add.text(bars.x, bars.headerY, '', {
+        fontFamily: 'monospace', fontSize: '11px', color: C.bad,
+      }).setVisible(false);
 
     // Skill tiles for THIS player's own mech, in this panel's half of the bottom edge.
     panel.skillBar = this.add.container(0, 0);
@@ -816,7 +833,7 @@ export default class HudScene extends Phaser.Scene {
     const present = !!mech;
     panel.skillBar.setVisible(present);
     panel.statusText.setVisible(false);
-    panel.header.setVisible(present);
+    panel.header?.setVisible(present);   // #448: the NONE readout has no header at all
     this._updateTargetPod(panel, present ? snapshot : null, delta);
     if (!present) {
       panel.partBarsGfx.clear();
@@ -869,7 +886,7 @@ export default class HudScene extends Phaser.Scene {
     // #452: the downed line takes the header's place rather than stacking above it.
     if (status) {
       panel.statusText.setText(status).setVisible(true);
-      panel.header.setVisible(false);
+      panel.header?.setVisible(false);
     }
   }
 
@@ -1126,6 +1143,8 @@ export default class HudScene extends Phaser.Scene {
       this.objectiveText
         .setText(complete ? 'COMPLETE' : line)
         .setColor(complete ? C.good : C.warn);
+      // #449: the plate is measured off the line, so it is repainted with it.
+      this._paintObjectivePanel();
       // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
       // come) — once the run itself is over (run-over banner below takes precedence), suppress
       // it so the two banners don't stack.
@@ -1379,6 +1398,8 @@ export default class HudScene extends Phaser.Scene {
   // anywhere; they differ only in how those three quantities are shaped. Geometry is decided in
   // data/healthReadout.js; this is the paint.
   _updateIntegrity(panel, mech) {
+    // #448: NONE draws nothing at all — the mech's own display has to carry it.
+    if (panel.mode === 'none') return panel.partBarsGfx.clear();
     if (panel.mode === 'orbs') return this._paintOrbReadout(panel, mech);
     if (panel.mode === 'paperdoll') return this._paintDollReadout(panel, mech);
     this._updatePartBars(panel, mech);

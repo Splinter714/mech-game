@@ -109,6 +109,7 @@ export function objectivePanelRect(textW, textH, { x, y, originX = 1 }) {
   }
   return { x: Math.round(left), y: Math.round(y - P.padY), w: Math.round(w), h: Math.round(textH + P.padY * 2) };
 }
+
 // Which panels exist, plus where the shared readouts sit.
 //
 // #452 (style pass) took the per-panel SCREEN-EDGE geometry out of here. The bottom readouts no
@@ -256,7 +257,7 @@ export function tileRowWidth(size, n = CONSOLE_TILES.n, gap = CONSOLE_TILES.gap)
 export function consoleTileSize(W, blockWs) {
   const n = Math.max(1, blockWs.length);
   const budget = W - CONSOLE.edgeGap * 2 - CONSOLE.padX * 2
-    - blockWs.reduce((s, b) => s + b + CONSOLE.blockGap, 0)
+    - blockWs.reduce((s, b) => s + blockRun({ blockW: b }), 0)
     - CONSOLE.playerGap * (n - 1);
   const size = Math.floor((budget / n - CONSOLE_TILES.gap * (CONSOLE_TILES.n - 1)) / CONSOLE_TILES.n);
   return Math.max(CONSOLE_TILES.min, Math.min(CONSOLE_TILES.max, size));
@@ -266,15 +267,23 @@ export function consoleTileSize(W, blockWs) {
 // one comes back with the x its integrity block and its tile row start at. The band's own
 // `{ x, w }` is what the shell is drawn to — so the shell is exactly its contents plus `padX`,
 // and centring the band centres the console.
+// #448: a group whose integrity block has ZERO width (the NONE readout) takes NO block gap either.
+// Without this the band would keep a 16px void where the block used to be and the console would
+// read as a panel with a bite out of it — "collapse gracefully" is the whole requirement of that
+// mode. One rule here rather than a mode check in the scene, so every caller gets it.
+function blockRun(g) {
+  return g.blockW > 0 ? g.blockW + CONSOLE.blockGap : 0;
+}
+
 export function consoleBand(W, groups) {
-  const inner = groups.reduce((s, g) => s + g.blockW + CONSOLE.blockGap + g.tilesW, 0)
+  const inner = groups.reduce((s, g) => s + blockRun(g) + g.tilesW, 0)
     + CONSOLE.playerGap * Math.max(0, groups.length - 1);
   const w = Math.round(inner + CONSOLE.padX * 2);
   const x = Math.round((W - w) / 2);
   let cx = x + CONSOLE.padX;
   const placed = groups.map((g) => {
     const blockX = cx;
-    const tilesX = cx + g.blockW + CONSOLE.blockGap;
+    const tilesX = cx + blockRun(g);
     cx = tilesX + g.tilesW + CONSOLE.playerGap;
     return { blockX, blockW: g.blockW, tilesX, tilesW: g.tilesW };
   });

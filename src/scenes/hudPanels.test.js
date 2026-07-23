@@ -446,7 +446,7 @@ describe('HudScene health readout modes (#448)', () => {
     expect(scene.panels[0].bars.segments.map((s) => s.loc)).toHaveLength(4);
   });
 
-  it('H cycles bars → orbs → paper doll → bars, rebuilding the panel each time', () => {
+  it('H cycles bars → orbs → paper doll → none → bars, rebuilding the panel each time', () => {
     const { scene } = modeScene();
     const first = scene.panels[0].header;
     scene._cycleReadout();
@@ -454,6 +454,8 @@ describe('HudScene health readout modes (#448)', () => {
     expect(first.destroyed).toBe(true);       // rebuilt, not left stacked on screen
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('paperdoll');
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('none');
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('bars');
   });
@@ -523,10 +525,78 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene } = modeScene();
     const mech = new Mech({ chassisId: 'medium' });
     mech.applyDamage('leftArm', 9999);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       expect(() => scene._updateIntegrity(scene.panels[0], mech)).not.toThrow();
       scene._cycleReadout();
     }
+  });
+
+  // ── #448 follow-up: the NONE readout ───────────────────────────────────────────────────────
+  // Jackson: "maybe we don't need an integrity readout if the on-mech display is good enough" —
+  // so NONE has to hide it ENTIRELY and the console shell has to collapse rather than leave a hole.
+  describe('the NONE readout', () => {
+    const noneScene = () => {
+      const built = modeScene();
+      for (let i = 0; i < 3; i++) built.scene._cycleReadout();
+      expect(built.scene.panels[0].mode).toBe('none');
+      return built;
+    };
+
+    it('draws no bars, no captions, no shield caption and no header', () => {
+      const { scene } = noneScene();
+      const p = scene.panels[0];
+      expect(p.bars.w).toBe(0);
+      expect(p.bars.segments).toEqual([]);
+      expect(Object.keys(p.partLabels)).toHaveLength(0);
+      expect(p.extras).toEqual([]);
+      expect(p.shieldLabel).toBeNull();
+      expect(p.header).toBeNull();
+    });
+
+    it('paints nothing at all against a live mech', () => {
+      const { scene } = noneScene();
+      const p = scene.panels[0];
+      const mech = new Mech({ chassisId: 'medium' });
+      mech.applyDamage('leftArm', 9999);
+      expect(() => scene._updateIntegrity(p, mech)).not.toThrow();
+      // Not one stroked run, filled polygon or circle — the mech's own display carries it alone.
+      expect(p.partBarsGfx.strokedPoints ?? []).toHaveLength(0);
+      expect(p.partBarsGfx.filledPoints ?? []).toHaveLength(0);
+    });
+
+    it('collapses the console band to exactly the tile row — no hole where the block was', () => {
+      const { scene } = noneScene();
+      const g = scene._band.groups[0];
+      expect(g.blockW).toBe(0);
+      expect(g.tilesX).toBe(scene._band.x + CONSOLE.padX);
+      expect(scene._band.w).toBe(g.tilesW + CONSOLE.padX * 2);
+      expect(scene._band.x + scene._band.w / 2).toBeCloseTo(scene.W / 2, 0);
+    });
+
+    it('takes its console ceiling from the TILE ROW, so the shell does not grow an empty band', () => {
+      const { scene } = noneScene();
+      const p = scene.panels[0];
+      // `_paintConsole` takes the shell's ceiling as min(tileTop, bars.headerY); with no block
+      // those are the same line, so the shell is the tile row's own height — no empty band above.
+      expect(p.bars.headerY).toBe(p.tileTop);
+      const shell = consoleLayout(scene.H, Math.min(p.tileTop, p.bars.headerY), scene._band);
+      expect(shell.y).toBe(p.tileTop - CONSOLE.padTop);
+      // ...and it still runs all the way down to the bottom of the screen.
+      expect(shell.y + shell.h).toBe(scene.H - CONSOLE.edgeGap);
+    });
+
+    // With no header to take over (the other three modes reuse the header's line), the downed
+    // line has to have somewhere of its own to go — over that player's tile row.
+    it('still says what a downed player is waiting on', () => {
+      const { scene } = noneScene();
+      const p = scene.panels[0];
+      const downed = snap(0, { dead: true, respawn: { remainingMs: 4200, waitingOnCombat: false } });
+      scene._updateTargetPod = () => {};   // the pod needs real textures; not what this pins
+      scene._updatePanel(p, downed, 16);
+      expect(p.statusText.visible).toBe(true);
+      expect(p.statusText.text).toMatch(/RESPAWN/);
+      expect(p.skillBar.alpha).toBe(0.3);
+    });
   });
 
   it('the paper doll actually strokes a draining outline for a damaged part', () => {

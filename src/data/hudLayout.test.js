@@ -536,3 +536,32 @@ describe('objectivePanelRect — the objective line reads on any terrain', () =>
     expect(OBJECTIVE_PANEL.fontSize).toBeGreaterThan(13);
   });
 });
+
+// ── #448: the NONE readout collapses the band instead of leaving a hole ──────────────────────
+describe('consoleBand — a zero-width integrity block (the NONE readout)', () => {
+  it('drops the block GAP with the block, so the shell is exactly its tile row', () => {
+    const b = consoleBand(W, [{ blockW: 0, tilesW: 404 }]);
+    expect(b.w).toBe(404 + CONSOLE.padX * 2);
+    const [g] = b.groups;
+    expect(g.tilesX).toBe(b.x + CONSOLE.padX);          // no void where the block used to be
+    expect(g.tilesX + g.tilesW).toBe(b.x + b.w - CONSOLE.padX);
+  });
+
+  it('stays centred on the screen with no block', () => {
+    const b = consoleBand(W, [{ blockW: 0, tilesW: 404 }]);
+    expect(b.x + b.w / 2).toBeCloseTo(W / 2, 0);
+  });
+
+  it('collapses BOTH co-op groups without overlapping them', () => {
+    const b = consoleBand(W, [{ blockW: 0, tilesW: 300 }, { blockW: 0, tilesW: 300 }]);
+    const [a, c] = b.groups;
+    expect(b.w).toBe(300 * 2 + CONSOLE.playerGap + CONSOLE.padX * 2);
+    expect(a.tilesX + a.tilesW).toBeLessThanOrEqual(c.tilesX);
+    expect(c.tilesX + c.tilesW).toBe(b.x + b.w - CONSOLE.padX);
+  });
+
+  it('keeps the gap for a block that HAS width (every other readout is untouched)', () => {
+    const b = consoleBand(W, [{ blockW: 120, tilesW: 404 }]);
+    expect(b.w).toBe(120 + CONSOLE.blockGap + 404 + CONSOLE.padX * 2);
+  });
+});

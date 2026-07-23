@@ -27,12 +27,20 @@ import { INTEGRITY_BARS } from './hudLayout.js';
 
 // The cycle order. 'bars' is first because it is the SHIPPED readout — a fresh run always starts
 // on it, and cycling always comes back to it.
-export const READOUT_MODES = ['bars', 'orbs', 'paperdoll'];
+//
+// #448 follow-up (Jackson: "maybe we don't need an integrity readout if the on-mech display is
+// good enough") added 'none' as a FOURTH entry rather than a separate toggle: it is the same
+// question the other three answer — which readout is on — and the point is to flip to it in play
+// and judge whether the mech's own display (shield opacity, destroyed-part stumps) carries the
+// information alone. It is last in the cycle so H still walks the three real readouts in their
+// old order before offering the empty one.
+export const READOUT_MODES = ['bars', 'orbs', 'paperdoll', 'none'];
 
 export const READOUT_LABELS = {
   bars: 'BARS',
   orbs: 'ORBS',
   paperdoll: 'PAPER DOLL',
+  none: 'NONE',
 };
 
 // Anything unrecognised (an old saved value, an empty registry on the first frame) reads as the
@@ -48,6 +56,30 @@ export function nextReadoutMode(mode) {
 
 export function readoutLabel(mode) {
   return READOUT_LABELS[normalizeReadoutMode(mode)];
+}
+
+// ── NONE ─────────────────────────────────────────────────────────────────────────────────────
+//
+// No integrity readout at all. It still has to return the SAME shape as the other three, because
+// the console shell (#452) frames whatever a panel laid out and must not learn which mode it is
+// framing — so this is a ZERO-WIDTH block on the tile row's own baseline. `consoleBand` drops the
+// block-to-tiles gap for a zero-width block (see hudLayout.js), so the console collapses to
+// exactly its tile row rather than leaving a hole where the bars used to be.
+//
+// `headerY` is deliberately the baseline rather than a line above it: the header text is not drawn
+// in this mode, and a header line reserved for nothing would make the console taller by 16px for
+// an empty band — the exact hole this mode has to avoid.
+export function noneLayout({ anchorX = 0, bottomY = 0 } = {}) {
+  return {
+    mode: 'none',
+    x: anchorX, w: 0,
+    top: bottomY, bottom: bottomY,
+    labelY: bottomY,
+    headerY: bottomY,
+    segments: [],
+    shieldLabel: null,
+    extraLabels: [],
+  };
 }
 
 // ── ORBS ─────────────────────────────────────────────────────────────────────────────────────

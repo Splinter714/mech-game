@@ -3,8 +3,9 @@ import {
   READOUT_MODES, normalizeReadoutMode, nextReadoutMode, readoutLabel,
   orbLayout, orbFillPolygon, ORBS,
   paperDollLayout, perimeterRun, PAPER_DOLL,
-  mechPools,
+  mechPools, noneLayout,
 } from './healthReadout.js';
+import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_BARS, INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
 
 const LOCS = INTEGRITY_ORDER;
@@ -16,10 +17,17 @@ describe('#448 readout modes', () => {
     expect(normalizeReadoutMode('nonsense')).toBe('bars');
   });
 
-  it('cycles bars → orbs → paperdoll → bars', () => {
+  // #448 follow-up: NONE joined the cycle as a fourth entry, AFTER the three real readouts.
+  it('cycles bars → orbs → paperdoll → none → bars', () => {
     expect(nextReadoutMode('bars')).toBe('orbs');
     expect(nextReadoutMode('orbs')).toBe('paperdoll');
-    expect(nextReadoutMode('paperdoll')).toBe('bars');
+    expect(nextReadoutMode('paperdoll')).toBe('none');
+    expect(nextReadoutMode('none')).toBe('bars');
+  });
+
+  it('has NONE last, so the three real readouts keep their old order', () => {
+    expect(READOUT_MODES).toEqual(['bars', 'orbs', 'paperdoll', 'none']);
+    expect(readoutLabel('none')).toBe('NONE');
   });
 
   it('cycles from an unknown mode without getting stuck', () => {
@@ -29,6 +37,41 @@ describe('#448 readout modes', () => {
   it('labels every mode', () => {
     for (const m of READOUT_MODES) expect(readoutLabel(m)).toMatch(/\S/);
     expect(readoutLabel('junk')).toBe(readoutLabel('bars'));
+  });
+});
+
+// #448 follow-up: NONE hides the integrity readout so the mech's own display can be judged alone.
+// The requirement that has teeth is that the CONSOLE still lays out sensibly with nothing there.
+describe('#448 the NONE readout', () => {
+  const box = { anchorX: 300, bottomY: 790, availW: 0, side: 'left' };
+
+  it('returns the same SHAPE every other mode does, so the shell stays mode-agnostic', () => {
+    const L = noneLayout(box);
+    for (const key of ['mode', 'x', 'w', 'top', 'bottom', 'labelY', 'headerY', 'segments', 'shieldLabel', 'extraLabels']) {
+      expect(L).toHaveProperty(key);
+    }
+    expect(L.mode).toBe('none');
+  });
+
+  it('occupies NO width and draws NO segments, captions or shield', () => {
+    const L = noneLayout(box);
+    expect(L.w).toBe(0);
+    expect(L.segments).toEqual([]);
+    expect(L.extraLabels).toEqual([]);
+    expect(L.shieldLabel).toBeNull();
+  });
+
+  it('reserves no header line above the tile row — the hole this mode exists to remove', () => {
+    const L = noneLayout(box);
+    expect(L.headerY).toBe(box.bottomY);
+    expect(L.top).toBe(L.bottom);
+  });
+
+  it('lets the console band collapse to exactly its tile row', () => {
+    const L = noneLayout(box);
+    const b = consoleBand(1280, [{ blockW: L.w, tilesW: 404 }]);
+    expect(b.w).toBe(404 + CONSOLE.padX * 2);
+    expect(b.groups[0].tilesX).toBe(b.x + CONSOLE.padX);
   });
 });
 
