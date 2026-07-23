@@ -72,6 +72,106 @@ export function respawnReadout(state) {
   };
 }
 
+// ── #394 (playtest follow-up): the HUD countdown ─────────────────────────────────────────────
+//
+// Jackson, 2026-07-22: "HUD timer + a better in-world cue" — the countdown goes on the HUD in the
+// SAME visual language as the powerup timers, and the in-world marker is redesigned (the ground
+// circle "looks kinda weird"), not replaced by the HUD line.
+//
+// The powerup timers are a stack of draining rings with a label and a seconds count beside them
+// (HudScene `_updateBuffHud`). A respawn is exactly that shape of thing — a clock running down on
+// a state you did not choose — so it becomes another ROW in that same stack rather than a second
+// widget with its own idiom. This is the pure part: which rows exist, what each says, and how full
+// its ring is. `snapshots` is the per-player HUD channel (data/hudLayout.js `hudPlayerSnapshot`),
+// so this works identically for a solo death and for either co-op player.
+//
+// A HELD row (the clock is done but the out-of-combat gate is still holding placement) reports
+// `holding` and a FULL ring: the renderer shows it breathing rather than parked at 0.0s, the same
+// call the in-world marker makes, so the two readouts never disagree about why nothing is
+// happening.
+export function respawnHudRows(snapshots = []) {
+  const rows = [];
+  snapshots.forEach((s, i) => {
+    if (!s?.dead) return;
+    const r = respawnReadout(s.respawn);
+    if (!r) return;
+    rows.push({
+      // Solo has nobody to be told apart from, so the row is just RESPAWN; co-op names the pilot
+      // it belongs to — the same rule every other per-player label on the HUD follows.
+      label: snapshots.length > 1 ? `P${i + 1} RESPAWN` : 'RESPAWN',
+      color: s.color ?? null,
+      // Held reads as a full ring (see above); otherwise the drain is the time left.
+      fraction: r.holding ? 1 : r.fraction,
+      seconds: r.seconds,
+      holding: r.holding,
+    });
+  });
+  return rows;
+}
+
+// ── #394 (playtest follow-up): the IN-WORLD marker, redesigned ───────────────────────────────
+//
+// The first cut drew a filled ring flat on the ground at the wreck; Jackson: "I'm seeing a respawn
+// circle on the ground, which looks kinda weird". The problem is that a ring lying in the terrain
+// reads as a DECAL — one more painted circle among the craters and scorch marks — rather than as
+// something arriving.
+//
+// The replacement is a DROP ZONE: four corner brackets that CLOSE IN as the clock runs down (wide
+// and loose at the moment of death, tight around the landing spot at zero), with a beacon column
+// standing up out of the ground and a chevron sliding down it. Nothing is drawn as a closed
+// circle, everything is off the ground plane, and the shape itself carries the countdown — so it
+// reads at a glance from across the arena without anyone having to look at the number.
+//
+// Pure geometry, in LOCAL coordinates around the wreck (the scene adds the player's x/y), so it is
+// testable and the renderer stays a painter.
+export const RESPAWN_MARKER = {
+  farHalf: 52,      // bracket square half-extent at the start of the wait...
+  nearHalf: 20,     // ...and at zero, where it frames the returning mech
+  armFrac: 0.36,    // how much of each side a corner bracket occupies
+  beamH: 46,        // height of the beacon column above the wreck
+  chevronDrop: 12,  // how far the sliding chevron travels along the column per cycle
+  textLift: 14,     // the seconds readout, above the bracket square
+};
+
+// `readout` is `respawnReadout`'s result; `phase` is a 0..1 animation phase the scene drives off
+// its own clock (the chevron's slide and the held pulse), kept as an argument so this stays pure.
+export function respawnMarkerLayout(readout, phase = 0) {
+  if (!readout) return null;
+  const M = RESPAWN_MARKER;
+  const p = Math.max(0, Math.min(1, phase));
+  // `fraction` is time REMAINING, so the square closes as it falls: 1 ⇒ far, 0 ⇒ near.
+  const half = readout.holding
+    ? M.nearHalf
+    : M.nearHalf + (M.farHalf - M.nearHalf) * readout.fraction;
+  const arm = half * 2 * M.armFrac;
+  // Four corners, each drawn as two arms running back along the square's sides toward its middle.
+  const corners = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      const x = sx * half, y = sy * half;
+      corners.push({
+        x, y,
+        arms: [
+          { x1: x, y1: y, x2: x - sx * arm, y2: y },
+          { x1: x, y1: y, x2: x, y2: y - sy * arm },
+        ],
+      });
+    }
+  }
+  return {
+    half,
+    corners,
+    // The beacon column, standing UP out of the wreck (screen-up: negative y).
+    beam: { x: 0, y1: 0, y2: -M.beamH },
+    // ...and the chevron sliding down it, looping on the phase.
+    chevronY: -M.beamH + M.chevronDrop * p,
+    textY: -half - M.textLift,
+    holding: !!readout.holding,
+    // The held state breathes instead of sliding, so the scene has one number for both.
+    pulse: p,
+  };
+}
+
 // WHERE the respawn lands: "the far edge of the current view". `view` is the camera's world-space
 // rect ({x, y, width, height}); the candidates are its four edge midpoints, pulled in by `margin`
 // so the mech materialises just inside the frame rather than half off it — the player has to be

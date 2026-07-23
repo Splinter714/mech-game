@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   OUT_OF_COMBAT_MS, RESPAWN_DELAY_MS, makeRespawnState, pickRespawnPoint, respawnReadout,
-  startRespawn, tickRespawn,
+  startRespawn, tickRespawn, respawnHudRows, respawnMarkerLayout, RESPAWN_MARKER,
 } from './respawn.js';
 
 const QUIET = OUT_OF_COMBAT_MS + 1;
@@ -195,5 +195,99 @@ describe('pickRespawnPoint — constrained to ground the player can stand on (#3
   it('still accepts a bare margin number as the third argument', () => {
     const p = pickRespawnPoint(VIEW, [{ x: 500, y: 600 }], 100);
     expect(p.y).toBeCloseTo(100, 6);
+  });
+});
+
+// ── #394 (playtest follow-up): "HUD timer + a better in-world cue" ───────────────────────────
+describe('respawnHudRows — the countdown as a powerup-style ring row', () => {
+  const down = (over = {}) => ({ dead: true, color: 0x4fc3f7, respawn: startRespawn(makeRespawnState()), ...over });
+
+  it('gives a downed player one row, full at the moment of death', () => {
+    const rows = respawnHudRows([down()]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].fraction).toBeCloseTo(1, 6);
+    expect(rows[0].seconds).toBeCloseTo(RESPAWN_DELAY_MS / 1000, 6);
+    expect(rows[0].holding).toBe(false);
+  });
+
+  it('drains as the clock runs down, so the ring reads as time left', () => {
+    const half = { remainingMs: RESPAWN_DELAY_MS / 2, waitingOnCombat: false };
+    expect(respawnHudRows([down({ respawn: half })])[0].fraction).toBeCloseTo(0.5, 6);
+  });
+
+  it('shows nothing for a living player, or for one with no clock running', () => {
+    expect(respawnHudRows([{ dead: false, respawn: startRespawn(makeRespawnState()) }])).toEqual([]);
+    expect(respawnHudRows([{ dead: true, respawn: makeRespawnState() }])).toEqual([]);
+    expect(respawnHudRows([])).toEqual([]);
+    expect(respawnHudRows()).toEqual([]);
+  });
+
+  it('says HOLD on a full ring while the out-of-combat gate is holding placement', () => {
+    const held = { remainingMs: 0, waitingOnCombat: true };
+    const [row] = respawnHudRows([down({ respawn: held })]);
+    expect(row.holding).toBe(true);
+    expect(row.fraction).toBe(1);      // never a ring parked at empty
+  });
+
+  it('is unnamed in solo and names the pilot in co-op', () => {
+    expect(respawnHudRows([down()])[0].label).toBe('RESPAWN');
+    const rows = respawnHudRows([{ dead: false }, down()]);
+    expect(rows[0].label).toBe('P2 RESPAWN');
+  });
+
+  it('takes each downed player\'s own identifying colour', () => {
+    const rows = respawnHudRows([down({ color: 0x111111 }), down({ color: 0x222222 })]);
+    expect(rows.map((r) => r.color)).toEqual([0x111111, 0x222222]);
+  });
+});
+
+describe('respawnMarkerLayout — the in-world DROP ZONE that replaced the ground circle', () => {
+  const at = (fraction, holding = false) => respawnMarkerLayout({ fraction, seconds: 1, holding });
+
+  it('shows nothing when there is no clock', () => {
+    expect(respawnMarkerLayout(null)).toBeNull();
+  });
+
+  it('CLOSES IN as the clock runs down — the shape is the countdown', () => {
+    expect(at(1).half).toBeCloseTo(RESPAWN_MARKER.farHalf, 6);
+    expect(at(0).half).toBeCloseTo(RESPAWN_MARKER.nearHalf, 6);
+    expect(at(0.5).half).toBeLessThan(at(1).half);
+    expect(at(0.5).half).toBeGreaterThan(at(0).half);
+  });
+
+  it('draws four corner brackets, never a closed circle or a filled ring', () => {
+    const L = at(0.5);
+    expect(L.corners).toHaveLength(4);
+    for (const c of L.corners) expect(c.arms).toHaveLength(2);
+    // Each corner sits on the square, and both arms run back INTO it rather than around it.
+    for (const c of L.corners) {
+      expect(Math.abs(c.x)).toBeCloseTo(L.half, 6);
+      expect(Math.abs(c.y)).toBeCloseTo(L.half, 6);
+      for (const arm of c.arms) {
+        expect(Math.hypot(arm.x2, arm.y2)).toBeLessThan(Math.hypot(arm.x1, arm.y1));
+      }
+    }
+  });
+
+  it('stands a beacon column UP out of the wreck, off the ground plane', () => {
+    const L = at(0.5);
+    expect(L.beam.y1).toBe(0);
+    expect(L.beam.y2).toBeLessThan(0);         // screen-up
+    expect(L.chevronY).toBeLessThan(0);        // the chevron rides the column, not the floor
+  });
+
+  it('slides the chevron down the column with the animation phase', () => {
+    expect(at(0.5).chevronY).toBeLessThan(respawnMarkerLayout({ fraction: 0.5, holding: false }, 1).chevronY);
+  });
+
+  it('puts the seconds ABOVE the bracket square, clear of the wreck', () => {
+    const L = at(0.5);
+    expect(L.textY).toBeLessThan(-L.half);
+  });
+
+  it('parks the brackets at their tightest while HELD on the combat gate', () => {
+    const L = at(1, true);
+    expect(L.holding).toBe(true);
+    expect(L.half).toBeCloseTo(RESPAWN_MARKER.nearHalf, 6);
   });
 });

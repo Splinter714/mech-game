@@ -19,7 +19,7 @@ import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
-  makeRespawnState, pickRespawnPoint, respawnReadout, startRespawn, tickRespawn,
+  makeRespawnState, pickRespawnPoint, respawnReadout, respawnMarkerLayout, startRespawn, tickRespawn,
 } from '../../data/respawn.js';
 import { separatePlayers } from '../../data/playerCollision.js';
 import { nearestValidPixel } from '../../data/spawnPlacement.js';
@@ -34,11 +34,15 @@ import { Audio } from '../../audio/index.js';
 // and drawn at DEPTH.GROUND_FX (the footfall-decal tier) so it can never render over a unit.
 const MARKER_RADIUS = 30;
 
-// #394: the in-world respawn countdown drawn at a downed player's wreck — a draining ring in the
-// spirit of the HUD powerup cooldown-pies (HudScene `_updateBuffHud`), tinted the downed player's
-// own identifying colour so both players can read WHOSE clock it is and how long is left. Sized a
-// touch larger than the ground marker so it reads as a beacon over the wreck, not a floor decal.
-const RESPAWN_RING_RADIUS = 34;
+// #394 (playtest follow-up): the in-world respawn cue is a DROP ZONE, not a ground ring. Jackson
+// on the first cut: "I'm seeing a respawn circle on the ground, which looks kinda weird" — a
+// circle lying flat in the terrain reads as one more painted decal among the craters. The
+// replacement is closing corner brackets plus a standing beacon column (geometry in
+// data/respawn.js `respawnMarkerLayout`); the countdown is carried by the SHAPE closing in, so it
+// reads from across the arena without anyone reading the number. The HUD carries the same clock as
+// a powerup-style ring (HudScene `_updateBuffHud`) — Jackson asked for both, not either.
+const RESPAWN_CHEVRON = 7;      // half-width of the chevron sliding down the beacon column
+const RESPAWN_PHASE_MS = 900;   // one slide/breath cycle
 
 export const CoopMixin = {
   // #348: the two shared "can a player be HERE?" primitives behind both co-op placements
@@ -299,45 +303,56 @@ export const CoopMixin = {
     if (!g) return;
     g.clear();
     const texts = this._respawnTexts;
-    const R = RESPAWN_RING_RADIUS;
-    const start = -Math.PI / 2;   // 12 o'clock, matching the HUD buff pies
     let slot = 0;
     for (const p of playersOf(this)) {
       if (!p.dead) continue;
       const readout = respawnReadout(p.respawn);
       if (!readout) continue;
+      const phase = ((this.time?.now ?? 0) % RESPAWN_PHASE_MS) / RESPAWN_PHASE_MS;
+      const L = respawnMarkerLayout(readout, phase);
       const color = p.color ?? 0xffffff;
       const cx = p.x, cy = p.y;
-      // Dim full track behind the drain, so the empty portion still reads as a ring.
-      g.lineStyle(4, color, 0.22);
-      g.strokeCircle(cx, cy, R);
-      if (readout.holding) {
-        // Held on the combat gate: a full ring that breathes, so it reads as "waiting", not frozen.
-        const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 220);
-        g.lineStyle(4, color, 0.5 + 0.4 * pulse);
-        g.strokeCircle(cx, cy, R);
-        g.fillStyle(color, 0.10 + 0.12 * pulse);
-        g.fillCircle(cx, cy, R - 3);
-      } else {
-        // Draining remainder: an arc from 12 o'clock going clockwise, shrinking as time runs out.
-        const end = start + readout.fraction * Math.PI * 2;
-        g.lineStyle(4, color, 1);
-        g.beginPath();
-        g.arc(cx, cy, R, start, end, false);
-        g.strokePath();
-        g.fillStyle(color, 0.10 + 0.14 * readout.fraction);
-        g.fillCircle(cx, cy, R - 3);
+      // Held on the combat gate: the brackets sit at their tightest and BREATHE, so a paused clock
+      // reads as "waiting on the fight" rather than as a frozen widget.
+      const breathe = L.holding ? 0.55 + 0.45 * Math.sin(this.time.now / 220) : 1;
+
+      // The four closing corner brackets. They are the countdown: wide at the moment of death,
+      // tight around the landing spot as the clock runs out.
+      g.lineStyle(3, color, 0.95 * breathe);
+      for (const corner of L.corners) {
+        for (const arm of corner.arms) {
+          g.beginPath();
+          g.moveTo(cx + arm.x1, cy + arm.y1);
+          g.lineTo(cx + arm.x2, cy + arm.y2);
+          g.strokePath();
+        }
       }
-      // The readout inside the ring: whole seconds while counting, HOLD while gated.
+      // The beacon column standing out of the wreck, with a chevron sliding down it — the piece
+      // that gets the cue OFF the ground plane, which is what made the old ring read as a decal.
+      g.lineStyle(2, color, 0.45 * breathe);
+      g.beginPath();
+      g.moveTo(cx + L.beam.x, cy + L.beam.y1);
+      g.lineTo(cx + L.beam.x, cy + L.beam.y2);
+      g.strokePath();
+      const w = RESPAWN_CHEVRON;
+      g.lineStyle(3, color, 0.95 * breathe);
+      g.beginPath();
+      g.moveTo(cx - w, cy + L.chevronY - w);
+      g.lineTo(cx, cy + L.chevronY);
+      g.lineTo(cx + w, cy + L.chevronY - w);
+      g.strokePath();
+
+      // The number, above the bracket square rather than inside a ring: whole seconds while
+      // counting, HOLD while gated.
       let t = texts[slot];
       if (!t) {
         t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold' })
-          .setOrigin(0.5, 0.5).setDepth(DEPTH.WORLD_UI);
+          .setOrigin(0.5, 1).setDepth(DEPTH.WORLD_UI);
         texts[slot] = t;
       }
       t.setText(readout.holding ? 'HOLD' : `${Math.ceil(readout.seconds)}`)
         .setColor('#' + color.toString(16).padStart(6, '0'))
-        .setPosition(cx, cy)
+        .setPosition(cx, cy + L.textY)
         .setVisible(true);
       slot++;
     }

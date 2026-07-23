@@ -27,6 +27,10 @@ import { baseClearLabel } from '../data/bases.js';
 import { magazineReadout } from '../data/weaponStats.js';
 import { respawnHudRows } from '../data/respawn.js';
 
+// #394: the respawn row's ring colour when the downed player has no identifying colour of their
+// own (the pre-`hudPlayers` singleton fallback). Every real player carries one.
+const C_RESPAWN_RING = 0xe2533a;
+
 // #465: Phaser's TextureManager fires this (with the key) synchronously the moment a texture is
 // destroyed — `Phaser.Textures.Events.REMOVE`. Written as the literal string rather than reached
 // through the namespace so it stays readable in the tests that stub the `phaser` module.
@@ -1138,7 +1142,7 @@ export default class HudScene extends Phaser.Scene {
       this.runOverBanner.setVisible(false);
     }
 
-    this._updateBuffHud();
+    this._updateBuffHud(snapshots);
     // #383: the main-game-window objective edge arrow (#80) is now REDUNDANT — the follow-window
     // minimap carries its own on-map objective edge marker (see `_updateMinimap`), so the
     // navigational cue lives there instead of overlaying the play area. Jackson's call: "maybe
@@ -1557,7 +1561,12 @@ export default class HudScene extends Phaser.Scene {
   // stack readably down the top-right. Text objects are pooled; the Graphics layer is redrawn
   // each frame. #409: instant buffs (Armor Patch AND Shield) never enter `activePowerups`, so they
   // never show a ring — only the timed buffs (Overdrive/Overclock/Barrage/Infinite Fire) do.
-  _updateBuffHud() {
+  // #394: a downed player's RESPAWN clock rides this same stack as one more row (Jackson: "HUD
+  // timer + a better in-world cue" — the countdown in the powerup timers' visual language). It is
+  // appended rather than given its own widget precisely so it inherits the idiom: same ring, same
+  // radius, same label-and-seconds line to the left, same anchor. `respawnHudRows`
+  // (data/respawn.js) decides which rows exist and what each says.
+  _updateBuffHud(snapshots = this._playerSnapshots()) {
     const active = this.registry.get('activePowerups') || {};
     const ids = Object.keys(active).filter((id) => active[id] > 0);
 
@@ -1581,12 +1590,25 @@ export default class HudScene extends Phaser.Scene {
     // moves them to top-centre and keeps the original top start.
     let y = this._buffStartY();
 
-    ids.forEach((id, i) => {
+    // Every row this stack draws, in one list: the live timed buffs, then any downed player's
+    // respawn clock (#394). One shape — label, colour, drain fraction, seconds — so the draw loop
+    // below cannot treat them differently and the two can never drift apart visually.
+    const rowsData = ids.map((id) => {
       const p = POWERUPS[id];
-      const color = p?.color ?? 0xffffff;
+      return {
+        label: p?.label ?? id,
+        color: p?.color ?? 0xffffff,
+        fraction: Math.max(0, Math.min(1, active[id] / (this._buffCache[id] || active[id]))),
+        seconds: active[id] / 1000,
+        holding: false,
+      };
+    }).concat(respawnHudRows(snapshots).map((r) => ({ ...r, color: r.color ?? C_RESPAWN_RING })));
+
+    rowsData.forEach((row, i) => {
+      const color = row.color;
       const colStr = '#' + color.toString(16).padStart(6, '0');
       const cy = y + R;
-      const frac = Math.max(0, Math.min(1, active[id] / (this._buffCache[id] || active[id])));
+      const frac = row.fraction;
 
       // Track: a dim full ring behind the drain, so the empty portion still reads as a ring.
       g.lineStyle(4, color, 0.22);
@@ -1602,13 +1624,14 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(color, 0.10 + 0.14 * frac);
       g.fillCircle(cx, cy, R - 3);
 
-      // Label + seconds to the left of the ring.
+      // Label + seconds to the left of the ring. A respawn held on the out-of-combat gate says
+      // HOLD instead of a stuck 0.0s — the same call the in-world marker makes.
       let t = this.buffTexts[i];
       if (!t) {
         t = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px' }).setOrigin(1, 0.5);
         this.buffTexts[i] = t;
       }
-      t.setText(`${p?.label ?? id}  ${(active[id] / 1000).toFixed(1)}s`)
+      t.setText(`${row.label}  ${row.holding ? 'HOLD' : `${row.seconds.toFixed(1)}s`}`)
         .setColor(colStr)
         .setPosition(cx - R - 8, cy)
         .setVisible(true);
@@ -1622,7 +1645,6 @@ export default class HudScene extends Phaser.Scene {
     // the INTEGRITY block (`_updateShieldBar`, right under the per-location armor/hp bars) —
     // a steadier, always-in-the-same-place readout than a buff ring that only appeared mid-
     // powerup, and it stays visible for the player's native baseline too, not just a boost.
-    const rows = ids.length;
-    for (let i = rows; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
+    for (let i = rowsData.length; i < this.buffTexts.length; i++) this.buffTexts[i].setVisible(false);
   }
 }
