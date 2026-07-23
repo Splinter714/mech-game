@@ -453,6 +453,41 @@ function rubbleScatter(sg, baseCol, slabCol, litCol, seed) {
 // `iceShardScatter`, `cinderScatter`) are gone with the `*Rubble` tiles they painted — see the
 // `rubbleId` note in data/terrain.js. `rubbleScatter` above stays: `hex_debris` still uses it.
 
+// #447: DIFFUSE FULL-TILE TEXTURE. A hex is HEX_SIZE=48 across the circumradius, but most DETAIL
+// painters below draw hand-placed shapes within roughly ±13px of the centre — so they read as a
+// small motif parked in the middle of a large empty tile, and (worse) that motif repeats
+// identically at the same spot on every hex of that terrain. `buildMottle` instead lays soft
+// blotches on a jittered lattice covering the WHOLE hex (the same recipe the forest/cover lattices
+// use), so the terrain reads as one continuous vague surface with no centre to it. Deterministic,
+// so the texture is stable build-to-build; built once at module load, not per bake.
+// Returns [dx, dy, rx, ry] offsets from the hex centre.
+function buildMottle(seed, step, rMin, rMax, squash = 0.55, inset = 0.94) {
+  const s = HEX_SIZE * inset;
+  const rnd = seeded(seed);
+  const n = Math.ceil(HEX_SIZE / step) + 1;
+  const spots = [];
+  for (let row = -n; row <= n; row++) {
+    const oy = row * step * 0.86;
+    const xoff = (row & 1) ? step / 2 : 0;
+    for (let col = -n; col <= n; col++) {
+      const dx = col * step + xoff + (rnd() - 0.5) * step * 0.9;
+      const dy = oy + (rnd() - 0.5) * step * 0.9;
+      const rx = rMin + rnd() * (rMax - rMin);
+      const ry = rx * (squash + rnd() * 0.35);
+      if (inHex(dx, dy, s)) spots.push([dx, dy, rx, ry]);
+    }
+  }
+  return spots;
+}
+
+// Paint one mottle layer (a set of `buildMottle` spots) in a single colour/alpha. Layering two or
+// three of these — a lighter dry tone, a darker wet tone, a faint sheen — is what makes the surface
+// read as vague and organic rather than as a stamped shape.
+function mottle(sg, spots, color, alpha) {
+  sg.fillStyle(color, alpha);
+  for (const [dx, dy, rx, ry] of spots) sg.fillEllipse(C.cx + dx, C.cy + dy, rx * 2, ry * 2);
+}
+
 // Is (dx,dy) — offset from the hex centre — inside a pointy-top hexagon of circumradius s?
 function inHex(dx, dy, s) {
   const hw = s * SQRT3 / 2;
@@ -484,6 +519,15 @@ function buildForestTrees() {
   return trees;
 }
 const FOREST_TREES = buildForestTrees();
+
+// #447: mud's four diffuse layers, each its own scatter across the whole tile — a lighter drying
+// crust, darker water-logged patches, a faint greenish sheen where water still stands, and a fine
+// pitting of hoof/track pockmarks. Different steps/sizes per layer so no two layers line up and the
+// result reads as vague boggy ground rather than a pattern.
+const MUD_DRY = buildMottle(0xd1, 11, 4.5, 9, 0.55);
+const MUD_WET = buildMottle(0xd2, 9, 3.5, 7.5, 0.5);
+const MUD_SHEEN = buildMottle(0xd3, 15, 2.2, 5, 0.4);
+const MUD_PITS = buildMottle(0xd4, 8, 0.7, 1.7, 0.8);
 
 // Per-terrain detail painted over the base hex.
 const DETAIL = {
@@ -615,13 +659,17 @@ const DETAIL = {
   // #289/#464: the brush FLOOR (canopy clumps live in CANOPY_DETAIL.scrub) + a faint stubble of
   // cut stems — one tile for both the standing `scrub` hex and its cleared state.
   hex_scrubCleared: (sg) => clearedCoverFloor(sg, 0x8f7440, 0.55, 0x6b5730, 0xc2),
-  // #278: mud — grassland's own in-map hazard: a soft boggy patch with glossy standing-water
-  // pools and a few sunken cracked-mud rings, distinct from quicksand's cleaner sand-pit look.
+  // #278: mud — grassland's own in-map hazard: a boggy patch, distinct from quicksand's cleaner
+  // sand-pit look.
+  // #447: reworked from a CENTRAL MOTIF (one 24x14 puddle ellipse, two pockmarks and a crack line,
+  // all inside ~±12px of a 48-radius hex) to a DIFFUSE, VAGUE TEXTURE covering the whole tile — the
+  // old version left most of the hex flat and put an obvious repeated blob dead centre on every mud
+  // hex. Four overlapping full-tile mottle layers, low alpha, no shape you can name.
   hex_mud: (sg) => {
-    sg.fillStyle(0x352918, 0.6); sg.fillEllipse(C.cx, C.cy, 24, 14);
-    sg.fillStyle(0x5c6a3a, 0.35); sg.fillEllipse(C.cx - 3, C.cy + 2, 12, 5);   // dull puddle sheen
-    sg.fillStyle(0x241b0e, 0.5); sg.fillCircle(C.cx - 6, C.cy - 2, 2.4); sg.fillCircle(C.cx + 6, C.cy + 3, 1.8); // sunken pockmarks
-    crackLine(sg, [[C.cx - 9, C.cy - 4], [C.cx - 1, C.cy], [C.cx + 8, C.cy - 3]], 0x2a2010, 0.6, 1);
+    mottle(sg, MUD_DRY, 0x5c4926, 0.34);    // drying crust, slightly lighter than the fill
+    mottle(sg, MUD_WET, 0x2e2210, 0.40);    // water-logged darker patches
+    mottle(sg, MUD_SHEEN, 0x5c6a3a, 0.13);  // faint dull sheen where water still stands
+    mottle(sg, MUD_PITS, 0x241b0e, 0.35);   // fine pitting / churned pockmarks
   },
   // #110: quicksand — a sunken, rippled pit distinct from the dry-riverbed channel.
   hex_quicksand: (sg) => {

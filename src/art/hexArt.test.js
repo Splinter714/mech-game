@@ -3,6 +3,7 @@ import {
   HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
   buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId, BOUNDARY_ONLY_IDS,
 } from './hexArt.js';
+import { ART_SCALE } from './_frames.js';
 import { BIOMES, BIOME_IDS } from '../data/biomes.js';
 import { HEX_SIZE, hexCorners, hexToPixel } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
@@ -165,5 +166,66 @@ describe('world-boundary "deep" terrain has no baked tile (#464)', () => {
 
   it('every biome\'s deep role is a boundary-only id, so no biome loses a rendered tile', () => {
     for (const bid of BIOME_IDS) expect(BOUNDARY_ONLY_IDS.has(BIOMES[bid].deep), bid).toBe(true);
+  });
+});
+
+// #447 (owner: "hexes like mud shouldn't have a central art pattern, they should have a generally
+// diffuse, vague texture"). A hex is HEX_SIZE=48 across, but mud's detail used to be a single
+// 24x14 puddle ellipse plus two pockmarks and a crack, all inside ~±12px of the centre — a small
+// stamped motif in the middle of a large flat tile, identical on every mud hex. These checks pin
+// the property that matters and is invisible to eyeball-by-diff: the detail marks reach out to the
+// tile's edges in EVERY direction, so no centre reads as "the pattern".
+//
+// The recording scene captures the shapes each texture's draw fn emits, keyed by the texture name
+// `generateTexture` is finally called with. Coordinates come through scaled by ART_SCALE (the
+// super-sampling wrapper), so they're divided back down to the design grid here.
+function recordingScene() {
+  const drawn = {};
+  return {
+    make: {
+      graphics: () => {
+        const marks = [];
+        const rec = (x, y) => marks.push([x / ART_SCALE, y / ART_SCALE]);
+        return {
+          fillStyle: () => {}, lineStyle: () => {}, destroy: () => {},
+          fillRect: (x, y) => rec(x, y),
+          fillCircle: (x, y) => rec(x, y),
+          fillEllipse: (x, y) => rec(x, y),
+          fillTriangle: (x, y) => rec(x, y),
+          fillPoints: () => {},                      // the base hex polygon, not "detail"
+          generateTexture: (key) => { drawn[key] = marks; },
+        };
+      },
+    },
+    textures: { exists: () => false, get: () => ({ getSourceImage: () => ({ getContext: () => null }) }) },
+    _drawn: drawn,
+  };
+}
+
+describe('mud is a diffuse full-tile texture, not a central motif (#447)', () => {
+  const scene = recordingScene();
+  buildHexTextures(scene);
+  const marks = scene._drawn.hex_mud;
+  const cx = HEX_TEX_W / 2, cy = HEX_TEX_H / 2;
+  const offsets = marks.map(([x, y]) => [x - cx, y - cy]);
+
+  it('paints many marks, not a handful of hand-placed shapes', () => {
+    expect(offsets.length).toBeGreaterThan(60);
+  });
+
+  it('reaches the outer half of the tile in every direction', () => {
+    // Six 60° sectors; each must contain a mark past 60% of the hex radius.
+    for (let sector = 0; sector < 6; sector++) {
+      const lo = sector * 60 - 180, hi = lo + 60;
+      const reach = offsets.some(([dx, dy]) => {
+        const a = Math.atan2(dy, dx) * 180 / Math.PI;
+        return a >= lo && a < hi && Math.hypot(dx, dy) > HEX_SIZE * 0.6;
+      });
+      expect(reach, `sector ${sector}`).toBe(true);
+    }
+  });
+
+  it('keeps every mark inside the tile', () => {
+    for (const [dx, dy] of offsets) expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(HEX_SIZE);
   });
 });
