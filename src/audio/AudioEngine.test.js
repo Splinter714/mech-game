@@ -116,6 +116,29 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(before);
   });
 
+  // #479: the SHIPPED baked legLift is a 6-variant FILE pool at volume 0.10 + a 530ms fade-out.
+  // End-to-end through the real BAKED_SFX table: with a legLift buffer decoded, eng.legLift routes
+  // to the bake (not the procedural stub) and the gain must be ANCHORED at 0.10 from playback
+  // start — proving the #479 volume fix carries the authored quiet level through the whole head of
+  // the cue (not unity-then-drop), so the shipped legLift is NOT loud.
+  it('the baked legLift plays at its authored 0.10 volume from the very start (not unity)', () => {
+    _resetBakedForTest(); setAudioContext(ctx);
+    _setBakedBufferForTest('legLift', 'play', { __baked: 'tireScreech', duration: 2.5 });
+    const before = ctx._counts();
+    eng.legLift(0);
+    // Routed to the bake: exactly one buffer source, no procedural oscillator layers.
+    expect(ctx._counts().sources).toBe(before.sources + 1);
+    expect(ctx._counts().oscillators).toBe(before.oscillators);
+    const fades = ctx._fadeGains();               // trimMs 870 + fadeOutMs 530 → one fade node
+    expect(fades.length).toBe(1);
+    const events = fades[0]._events;
+    const startAt = ctx.currentTime;
+    const endTime = startAt + 0.87;
+    expect(events[0]).toEqual(['set', 0.1, expect.closeTo(startAt, 5)]);        // anchored at 0.10 from START
+    expect(events[1]).toEqual(['set', 0.1, expect.closeTo(endTime - 0.53, 5)]); // holds 0.10 to the fade-start
+    expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);         // then fades to silence
+  });
+
   // #178/#188/#196/#201/#210: the generic UI/pickup cue dispatch (equip/deploy/returnToGarage/
   // menuNav/scrapPickup/the 5 per-powerup powerupPickup* ids/sprintOn/sprintOff/partDestroyed/
   // mechDestroyed) — every id registered in sfxDomains.js's `ui` domain plays a procedural stub

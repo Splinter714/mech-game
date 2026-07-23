@@ -129,34 +129,20 @@ describe('sfxOverridePanelState (#177 generalized id/stage panel display state)'
     expect(hasOverride('plasmaLance', 'fire')).toBe(false);
   });
 
-  // #479 regression: the GAIT cues (footstep/legLift) are `{ synth }` baked pools with NO source
-  // file. Their variant rows must be labeled as a PROCEDURAL SYNTH pool, NOT as a "file override:
-  // (baked) shipped sound" row — that generic file-cue wording is what made the gait pool read as
-  // "variants 1-4 from some other sound effect" (identical to mechDestroyed's file-bake rows). A
-  // FILE bake keeps the old wording; the two must be distinguishable.
-  it('labels a fileless SYNTH bake (gait cue) as a synth variant, not a "file override" row', () => {
-    // footstep::play is a REAL 4-variant synth pool in BAKED_SFX (GAIT_SFX_ENTRIES). Seed its
-    // decoded buffers the way loadAllBaked's offline render would, for all 4 variants.
-    for (let i = 0; i < 4; i++) {
-      _setBakedBufferForTest('footstep', 'play', { duration: 0.18, numberOfChannels: 1, sampleRate: 48000 }, i);
+  // #479: the GAIT cues (footstep/legLift) are now FILE bakes (multi-variant .m4a pools), like
+  // mechDestroyed — the last synth bake (and the `isSynth` labeling that distinguished it) was
+  // retired. A baked variant row reads as the "(baked) shipped sound" file wording.
+  it('labels a multi-variant FILE bake (gait cue) as a "(baked) shipped sound" row', () => {
+    for (let i = 0; i < 6; i++) {
+      _setBakedBufferForTest('legLift', 'play', { duration: 2.5, numberOfChannels: 2, sampleRate: 48000 }, i);
     }
-    // It IS the gait cue's own pool: exactly 4 variant slots, every row baked.
-    expect(getVariantSlotCount('footstep', 'play')).toBe(4);
-    const rows = getVariantRowStates('footstep', 'play');
-    expect(rows).toHaveLength(4);
+    expect(getVariantSlotCount('legLift', 'play')).toBe(6);
+    const rows = getVariantRowStates('legLift', 'play');
+    expect(rows).toHaveLength(6);
     for (const row of rows) {
       expect(row.source).toBe('baked');
-      // honest synth wording — no misleading "file override" / "shipped sound" file language
-      expect(row.statusText).toMatch(/synth/i);
-      expect(row.statusText).not.toMatch(/file override/i);
+      expect(row.statusText).toMatch(/baked/i);
     }
-    // A file-backed bake on a DIFFERENT cue keeps the original (baked) file wording — proving the
-    // two representations are distinct and don't bleed into each other.
-    _setBakedBufferForTest('mechDestroyed', 'play', { duration: 2.6 });
-    const fileRow = getOverrideRowState('mechDestroyed', 'play');
-    expect(fileRow.source).toBe('baked');
-    expect(fileRow.statusText).toMatch(/file override/i);
-    expect(fileRow.statusText).not.toMatch(/synth/i);
   });
 
   // #181: a live dev-tool override (no bake involved) also hides the procedural controls, and

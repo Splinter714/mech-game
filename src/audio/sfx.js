@@ -529,10 +529,10 @@ function returnToGarageCue(e) {
 }
 
 // #479: the two GAIT cues' LIVE procedural fallbacks — played only in the brief window before
-// their synth-baked buffers finish rendering at boot (or in a context with no OfflineAudioContext),
-// exactly like any other baked cue's procedural stub. Once baked, the multi-variant pool
-// (bakedSfx.js's GAIT_SFX_ENTRIES, via playOverride below) plays instead. footstepCue is the
-// original hardcoded footstep synth; legLiftCue is the new servo/hydraulic limb-lift whir.
+// their baked FILE pools (bakedSfx.js: footstep = "Hard Step", legLift = "Tire Screech") finish
+// fetch+decoding at boot, exactly like any other baked cue's procedural stub. Once the files are
+// decoded, the multi-variant pool (via playOverride below) plays instead. footstepCue is the
+// original hardcoded footstep synth; legLiftCue is the servo/hydraulic limb-lift whir.
 function footstepCue(e, foot = 0) {                          // heavy low foot-plant thud + crunch
   e.tone(e.sfx, { type: 'sine', freq: foot ? 78 : 66, freqEnd: 38, dur: 0.16, gain: 0.30, attack: 0.002 });
   e.noise(e.sfx, { dur: 0.09, gain: 0.08, type: 'lowpass', freq: 320 }); // dirt/servo crunch
@@ -572,9 +572,8 @@ export function uiCue(e, id, stage = 'play') {
 
 // ── Gait cues (#34/#479) — footstep PLANT + legLift SERVO SWING. ─────────────────────────────
 // Both now route through the generic (id, 'play') override/bake path (uiCue → playOverride):
-// their SYNTH-BAKED multi-variant pools (bakedSfx.js's GAIT_SFX_ENTRIES) play by default, a dev
-// file override/bake can still win, and the live procedural stub (UI_CUES.footstep/legLift) is the
-// pre-bake fallback. Both are throttled (separate timestamps) so a fast gait can't machine-gun
+// their baked multi-variant FILE pools (bakedSfx.js) play by default, a dev file override/bake can
+// still win, and the live procedural stub (UI_CUES.footstep/legLift) is the pre-bake fallback. Both are throttled (separate timestamps) so a fast gait can't machine-gun
 // either sound — belt-and-suspenders on top of locomotion.js's own per-beat firing.
 export function footstep(e, foot = 0) {
   const t = e._now();

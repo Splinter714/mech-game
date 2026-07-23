@@ -135,18 +135,23 @@ import returnToGaragePhaseSwish from '../assets/sfx/returnToGarage-play-phaseSwi
 // 003 is deliberately dropped, so the four are 001/002/004/005). Converted with macOS `afconvert`
 // to 48kHz STEREO AAC/.m4a (~192kbps, ~7-8KB each). Played back as the FULL file (startMs 0, no
 // trim/fade/processing/volume — the tuner export's 0→2500ms window IS the whole clip: a clean
-// passthrough). legLift stays synth (see gaitSfx.js) — a separate decision.
+// passthrough).
 import footstepHardStep1 from '../assets/sfx/footstep-play-hardStep1.m4a';
 import footstepHardStep2 from '../assets/sfx/footstep-play-hardStep2.m4a';
 import footstepHardStep4 from '../assets/sfx/footstep-play-hardStep4.m4a';
 import footstepHardStep5 from '../assets/sfx/footstep-play-hardStep5.m4a';
-// #479: the SYNTHESISED gait cue that remains — legLift ONLY (footstep is now the file pool above).
-// This carries NO `asset` — each entry is a `{ synth: <recipe> }` variant pool that loadAllBaked
-// renders offline into a buffer at boot, instead of fetch+decoding a file. It joins the baked pool
-// as a first-class multi-variant entry (spread into BAKED_SFX below) so it plays through the exact
-// same pickBakedVariant path as mechDestroyed's file-backed pool. See gaitSfx.js for the recipe +
-// the offline renderer.
-import { GAIT_SFX_ENTRIES, renderSynthBuffer } from './gaitSfx.js';
+// #479: the LEG-MOVEMENT (leg-lift) cue — now a 6-VARIANT FILE pool, REPLACING the earlier
+// synthesised legLift (which retired gaitSfx.js and the last synth bake entirely). Six
+// "DSGNMisc_MOVEMENT-Tire Screech_HY_PC-00N.wav" files (N = 1..6) from the same Helton Yan pack,
+// each converted with macOS `afconvert` to 48kHz STEREO AAC/.m4a (~192kbps, ~15-19KB). Identical
+// tuning on all six: a 0→870ms window (startMs 0, trimMs 870), pitched +980 cents (detune), a
+// 530ms fade-out, and 0.10x volume — a quiet, higher-pitched servo texture under the foot-plant.
+import legLiftTireScreech1 from '../assets/sfx/legLift-play-tireScreech1.m4a';
+import legLiftTireScreech2 from '../assets/sfx/legLift-play-tireScreech2.m4a';
+import legLiftTireScreech3 from '../assets/sfx/legLift-play-tireScreech3.m4a';
+import legLiftTireScreech4 from '../assets/sfx/legLift-play-tireScreech4.m4a';
+import legLiftTireScreech5 from '../assets/sfx/legLift-play-tireScreech5.m4a';
+import legLiftTireScreech6 from '../assets/sfx/legLift-play-tireScreech6.m4a';
 
 const keyFor = (weaponId, stage) => `${weaponId}::${stage}`;
 
@@ -386,12 +391,21 @@ export const BAKED_SFX = {
     { asset: footstepHardStep4, startMs: 0 },
     { asset: footstepHardStep5, startMs: 0 },
   ],
-  // #479: the SYNTHESISED gait cue that remains — `legLift::play` ONLY, a multi-variant `{ synth }`
-  // pool (no `asset`). loadAllBaked renders it offline instead of fetching a file;
-  // getBaked/pickBakedVariant treat it identically to a file-backed pool (the recipe fields
-  // startMs/trimMs/processing/etc are simply absent → null, so the whole rendered buffer plays at
-  // unity). Spread in from gaitSfx.js so the recipe lives next to the offline renderer.
-  ...GAIT_SFX_ENTRIES,
+  // #479: the LEG-MOVEMENT (leg-lift) cue — a 6-VARIANT FILE pool (#195), one entry per
+  // "DSGNMisc_MOVEMENT-Tire Screech_HY_PC-00N.wav" (N = 1..6) from the Helton Yan pack. REPLACES
+  // the earlier synthesised legLift (the last synth bake — gaitSfx.js and its offline renderer
+  // were removed with it). IDENTICAL tuning on all six: a 0→870ms window (startMs 0, trimMs 870),
+  // pitched up +980 cents (detune), a 530ms fade-out, and 0.10x volume — a quiet, higher servo
+  // texture under the plant, deliberately well below the footstep thud. Playback (pickBakedVariant)
+  // picks uniformly at random among the 6 decoded variants, so a walk cycle rotates through them.
+  'legLift::play': [
+    { asset: legLiftTireScreech1, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech2, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech3, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech4, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech5, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech6, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+  ],
 };
 
 // Decoded AudioBuffer cache — the only thing playback (sfx.js) ever reads, synchronously.
@@ -415,19 +429,6 @@ export async function loadAllBaked() {
     // #195: decode every variant independently (same fire-and-forget-per-asset contract as
     // before) — a single-entry bake decodes exactly one buffer at the plain key, unchanged.
     await Promise.all(entries.map(async (entry, i) => {
-      // #479: a SYNTH entry (`{ synth }`, the gait cues) is RENDERED offline into a buffer rather
-      // than fetch+decoded from a file. Same fire-and-forget-per-slot contract: if there's no
-      // OfflineAudioContext (test env) or the render throws, the slot stays empty and the cue falls
-      // back to its live procedural stub in sfx.js, exactly like a file that failed to decode.
-      if (entry?.synth) {
-        try {
-          const buffer = await renderSynthBuffer(entry.synth, _ctx?.sampleRate);
-          _cache.set(variantCacheKey(key, i), buffer);
-        } catch {
-          // no OfflineAudioContext / render failed — leave the slot empty (procedural fallback).
-        }
-        return;
-      }
       if (!entry?.asset) return;
       try {
         const res = await fetch(entry.asset);
@@ -464,12 +465,6 @@ export function getBaked(weaponId, stage) {
   if (!buffer) return null;
   return {
     buffer,
-    // #479: whether this bake is a SYNTHESISED pool (the gait cues — `{ synth }`, rendered
-    // offline, NO source file) vs a file-backed bake (an `asset` import). The tuner panel reads
-    // this to render an honest variant-row label — a fileless synth pool must NOT be presented
-    // as a "file override: (baked) shipped sound" row (which reads as some other cue's file); it
-    // has no file at all. Defaults false for every pre-#479 file bake, unchanged.
-    isSynth: !!entry.synth,
     startMs: entry.startMs ?? null,
     trimMs: entry.trimMs ?? null,
     processing: entry.processing ?? null,

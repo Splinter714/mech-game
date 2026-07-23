@@ -63,7 +63,8 @@ export const SFX_DOMAINS = {
     // #479: the two GAIT cues. Registered as ordinary `ui`-domain (id, 'play') entries so they
     // appear in the AUDIO tab's SFX section (SFX_UI_GROUPS 'GAIT' below) and route through the same
     // override/bake authoring plumbing (WeaponSfxPanel) as every other UI cue. Their DEFAULT sound
-    // is the synth-baked variant pool in bakedSfx.js (GAIT_SFX_ENTRIES), NOT a live per-play synth.
+    // is a baked multi-variant FILE pool in bakedSfx.js (footstep = "Hard Step", legLift =
+    // "Tire Screech"), NOT a live per-play synth.
     { id: 'footstep', label: 'Footstep (plant)', stages: [['play', 'PLAY']] },
     { id: 'legLift', label: 'Leg Movement (lift)', stages: [['play', 'PLAY']] },
   ],
