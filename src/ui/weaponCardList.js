@@ -4,6 +4,7 @@ import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
+import { magazineReadout } from '../data/weaponStats.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUNDS_ENABLED } from '../audio/sfxParams.js';
 // #224 (temporary): both flags gate the Weapon Lab preview's trajectory/impact cues below —
@@ -292,7 +293,10 @@ export class WeaponCardList {
     else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s${(d.count ?? 1) > 1 ? ` ×${d.count}` : ''}`);
     if (d.burst) parts.push(`burst×${d.count ?? 1}`);
     if (d.guidance === 'homing') parts.push('homing');
-    const ammo = weapon.ammoMax == null ? '∞' : `${weapon.ammoMax}`;   // #402: mag size only (no trickle)
+    // #402: mag size only (no trickle). #451: counted in PROJECTILES, the same unit the arena HUD
+    // now shows — a 4-round rack of 5-missile salvoes reads 20 in both places or the two disagree.
+    const mag = magazineReadout(weapon, weapon.ammoMax);
+    const ammo = mag == null ? '∞' : `${mag.max}`;
     const cadence = d.pattern === 'stream' ? `${d.fireRate}/s` : `${(weapon.cycleTime / 1000).toFixed(2)}s`;
     return [parts.join(' · '), `dmg ${weapon.damage} · rng ${weapon.range.max} · ${cadence} · ammo ${ammo}`].join('\n');
   }

@@ -24,6 +24,8 @@ import {
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
+import { magazineReadout } from '../data/weaponStats.js';
+import { respawnHudRows } from '../data/respawn.js';
 
 // #465: Phaser's TextureManager fires this (with the key) synchronously the moment a texture is
 // destroyed — `Phaser.Textures.Events.REMOVE`. Written as the literal string rather than reached
@@ -841,9 +843,14 @@ export default class HudScene extends Phaser.Scene {
           opts.onCooldown = true;
           opts.cooldownFrac = w.reload / w.reloadMax;
         } else {
-          opts.subtitle = `${Math.floor(w.ammo)}/${w.weapon.ammoMax}`;
+          // #451: the readout counts PROJECTILES, not trigger pulls — a 4-round rack of 5-missile
+          // salvoes reads 20 and falls by 5 a pull. `magazineReadout` (data/weaponStats.js) is
+          // where that conversion lives, keyed off `delivery.count` for every weapon rather than
+          // special-casing the missiles; a single-shot gun's line is unchanged.
+          const m = magazineReadout(w.weapon, w.ammo);
+          opts.subtitle = `${m.left}/${m.max}`;
           opts.subtitleColor = w.ready ? C.good : C.warn;
-          opts.ammoFrac = w.ammo / w.weapon.ammoMax;
+          opts.ammoFrac = m.frac;
         }
       }
       updateSkillTile(panel.skillRefs[loc], opts);

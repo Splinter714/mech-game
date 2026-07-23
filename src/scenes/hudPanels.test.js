@@ -19,7 +19,8 @@ vi.mock('phaser', () => ({
 const { default: HudScene } = await import('./HudScene.js');
 const { Mech } = await import('../data/Mech.js');
 const { PLAYER_COLORS } = await import('../data/players.js');
-const { hudPlayerSnapshot } = await import('../data/hudLayout.js');
+const { hudPlayerSnapshot, CONSOLE, consoleLayout } = await import('../data/hudLayout.js');
+const { getWeapon } = await import('../data/weapons.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -395,6 +396,42 @@ describe('HudScene lock chevron — co-op', () => {
 // Three readouts (bars / orbs / paper doll) exist to be compared IN PLAY, so what matters here is
 // the wiring: H cycles the mode, the mode is shared by every panel, switching actually rebuilds
 // the panels at the new geometry, and all three paint against a real Mech without throwing.
+// #451 — the ammo line on a skill tile counts PROJECTILES, not trigger pulls. The conversion is
+// pinned in data/weaponStats.test.js; what is pinned here is that the HUD actually uses it.
+describe('HudScene ammo readout (#451)', () => {
+  const armed = (id) => {
+    const mech = new Mech({ chassisId: 'medium' });
+    mech.mount('rightArm', id);
+    return hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
+  };
+  const subtitles = (created) => created
+    .filter((o) => typeof o.text === 'string' && /^\d+\/\d+$/.test(o.text))
+    .map((o) => o.text);
+
+  const run = (weaponId) => {
+    const built = fakeScene([armed(weaponId)]);
+    built.scene._syncPanels();
+    built.scene._updateTargetPod = () => {};
+    built.scene._updatePanel(built.scene.panels[0], built.scene._playerSnapshots()[0], 16);
+    return built;
+  };
+
+  it('shows a missile rack\'s TOTAL missiles, not its magazine of pulls', () => {
+    const { created } = run('swarmRack');
+    const rack = getWeapon('swarmRack');
+    const total = rack.ammoMax * rack.delivery.count;
+    expect(subtitles(created)).toContain(`${total}/${total}`);
+    // …and specifically NOT the old shot count.
+    expect(subtitles(created)).not.toContain(`${rack.ammoMax}/${rack.ammoMax}`);
+  });
+
+  it('leaves a single-projectile weapon\'s line exactly as it was', () => {
+    const { created } = run('autocannon');
+    const gun = getWeapon('autocannon');
+    expect(subtitles(created)).toContain(`${gun.ammoMax}/${gun.ammoMax}`);
+  });
+});
+
 describe('HudScene health readout modes (#448)', () => {
   const modeScene = () => {
     const built = fakeScene([snap(0)]);

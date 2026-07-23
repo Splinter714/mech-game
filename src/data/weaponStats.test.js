@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   damagePerPull, pullIntervalMs, burstDps, sustainedDps, weaponTheory, allWeaponTheory,
-  RELOAD_MS,
+  RELOAD_MS, projectilesPerRound, magazineReadout,
 } from './weaponStats.js';
 import { WEAPONS, getWeapon } from './weapons.js';
 import { RELOAD_SECONDS } from './Mech.js';
@@ -90,5 +90,70 @@ describe('weaponStats — DPS helpers (#423)', () => {
     const all = allWeaponTheory();
     expect(Object.keys(all).sort()).toEqual(Object.keys(WEAPONS).sort());
     for (const t of Object.values(all)) expect(t.sustainedDps).toBeGreaterThan(0);
+  });
+});
+
+// ── #451: the ammo readout counts PROJECTILES, not trigger pulls ─────────────────────────────
+// Jackson: "missile ammo/reload should be the projectile count, not just the 'shot' count" —
+// a 4-round magazine firing 5 missiles a pull reads as 20 and falls by 5 a pull.
+describe('#451 magazine readout — projectiles remaining', () => {
+  const w = (ammoMax, delivery = {}) => ({ ammoMax, delivery });
+
+  it('a single-shot weapon is unchanged: one round, one projectile', () => {
+    expect(projectilesPerRound(w(12))).toBe(1);
+    const m = magazineReadout(w(12), 12);
+    expect([m.left, m.max]).toEqual([12, 12]);
+  });
+
+  it('the issue\'s own example: a 4-round rack of 5-missile salvoes reads 20', () => {
+    const rack = w(4, { count: 5 });
+    expect(projectilesPerRound(rack)).toBe(5);
+    expect(magazineReadout(rack, 4).max).toBe(20);
+    expect(magazineReadout(rack, 4).left).toBe(20);
+    // ...and drops by FIVE per trigger pull, not one.
+    expect(magazineReadout(rack, 3).left).toBe(15);
+    expect(magazineReadout(rack, 1).left).toBe(5);
+    expect(magazineReadout(rack, 0).left).toBe(0);
+  });
+
+  it('is generic — every multi-projectile weapon counts the same way, not just the missiles', () => {
+    for (const count of [2, 3, 6, 7]) {
+      expect(magazineReadout(w(10, { count }), 10).max).toBe(10 * count);
+    }
+  });
+
+  it('a per-bolt-ammo volley (delivery.ammoPerShot) already spends a round per bolt, so it is 1:1', () => {
+    const arc = w(30, { count: 5, ammoPerShot: true });
+    expect(projectilesPerRound(arc)).toBe(1);
+    expect(magazineReadout(arc, 30).max).toBe(30);
+    expect(magazineReadout(arc, 25).left).toBe(25);
+  });
+
+  it('never advertises a pull the magazine cannot afford (fractional ammo from Overdrive)', () => {
+    // 0.5 of a round left on a 5-missile rack is not 2 missiles you can fire.
+    expect(magazineReadout(w(4, { count: 5 }), 0.5).left).toBe(2);
+    expect(magazineReadout(w(4, { count: 5 }), 0.9).left).toBe(4);
+    expect(magazineReadout(w(12), 0.5).left).toBe(0);
+  });
+
+  it('keeps the ammo BAR reading as a fraction of the magazine either way', () => {
+    expect(magazineReadout(w(4, { count: 5 }), 2).frac).toBeCloseTo(0.5, 6);
+    expect(magazineReadout(w(12), 6).frac).toBeCloseTo(0.5, 6);
+  });
+
+  it('has nothing to report for an unlimited weapon (melee)', () => {
+    expect(magazineReadout(w(null), null)).toBeNull();
+    expect(magazineReadout(w(null), 5)).toBeNull();
+  });
+
+  it('every real catalog weapon reports a whole, positive projectile magazine', () => {
+    for (const id of Object.keys(WEAPONS)) {
+      const weapon = getWeapon(id);
+      const m = magazineReadout(weapon, weapon.ammoMax);
+      if (weapon.ammoMax == null) { expect(m).toBeNull(); continue; }
+      expect(Number.isInteger(m.max)).toBe(true);
+      expect(m.max).toBeGreaterThanOrEqual(weapon.ammoMax);
+      expect(m.left).toBe(m.max);
+    }
   });
 });
