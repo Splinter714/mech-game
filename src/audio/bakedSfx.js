@@ -389,25 +389,26 @@ export const BAKED_SFX = {
   // (pickBakedVariant) picks uniformly at random among the 4 decoded variants, exactly like
   // mechDestroyed, so a walk cycle rotates through the four instead of repeating one.
   'footstep::play': [
-    { asset: footstepHardStep1, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
-    { asset: footstepHardStep2, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
-    { asset: footstepHardStep4, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
-    { asset: footstepHardStep5, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
+    { asset: footstepHardStep1, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 }, volume: 0.20 },
+    { asset: footstepHardStep2, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 }, volume: 0.20 },
+    { asset: footstepHardStep4, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 }, volume: 0.20 },
+    { asset: footstepHardStep5, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 }, volume: 0.20 },
   ],
   // #479: the LEG-MOVEMENT (leg-lift) cue — a 6-VARIANT FILE pool (#195), one entry per
   // "DSGNMisc_MOVEMENT-Tire Screech_HY_PC-00N.wav" (N = 1..6) from the Helton Yan pack. REPLACES
   // the earlier synthesised legLift (the last synth bake — gaitSfx.js and its offline renderer
-  // were removed with it). IDENTICAL tuning on all six: a 0→870ms window (startMs 0, trimMs 870),
-  // pitched up +980 cents (detune), a 530ms fade-out, and 0.10x volume — a quiet, higher servo
-  // texture under the plant, deliberately well below the footstep thud. Playback (pickBakedVariant)
+  // were removed with it). IDENTICAL tuning on all six: a 0→400ms window (startMs 0, trimMs 400),
+  // pitched DOWN -980 cents (detune) with light reverb (mix 0.17, size 0.4), a 50ms fade-out, and
+  // 0.10x volume — a quiet, low servo texture under the plant, deliberately well below the footstep
+  // thud. Playback (pickBakedVariant)
   // picks uniformly at random among the 6 decoded variants, so a walk cycle rotates through them.
   'legLift::play': [
-    { asset: legLiftTireScreech1, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
-    { asset: legLiftTireScreech2, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
-    { asset: legLiftTireScreech3, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
-    { asset: legLiftTireScreech4, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
-    { asset: legLiftTireScreech5, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
-    { asset: legLiftTireScreech6, startMs: 0, trimMs: 870, processing: { detune: 980 }, fadeOutMs: 530, volume: 0.10 },
+    { asset: legLiftTireScreech1, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
+    { asset: legLiftTireScreech2, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
+    { asset: legLiftTireScreech3, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
+    { asset: legLiftTireScreech4, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
+    { asset: legLiftTireScreech5, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
+    { asset: legLiftTireScreech6, startMs: 0, trimMs: 400, processing: { detune: -980, reverbMix: 0.17, reverbSize: 0.4 }, fadeOutMs: 50, volume: 0.10 },
   ],
 };
 

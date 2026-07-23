@@ -116,7 +116,7 @@ describe('AudioEngine (mock context)', () => {
     expect(ctx._counts().oscillators + ctx._counts().sources).toBeGreaterThan(before);
   });
 
-  // #479: the SHIPPED baked legLift is a 6-variant FILE pool at volume 0.10 + a 530ms fade-out.
+  // #479: the SHIPPED baked legLift is a 6-variant FILE pool at volume 0.10 + a 50ms fade-out.
   // End-to-end through the real BAKED_SFX table: with a legLift buffer decoded, eng.legLift routes
   // to the bake (not the procedural stub) and the gain must be ANCHORED at 0.10 from playback
   // start — proving the #479 volume fix carries the authored quiet level through the whole head of
@@ -129,13 +129,13 @@ describe('AudioEngine (mock context)', () => {
     // Routed to the bake: exactly one buffer source, no procedural oscillator layers.
     expect(ctx._counts().sources).toBe(before.sources + 1);
     expect(ctx._counts().oscillators).toBe(before.oscillators);
-    const fades = ctx._fadeGains();               // trimMs 870 + fadeOutMs 530 → one fade node
+    const fades = ctx._fadeGains();               // trimMs 400 + fadeOutMs 50 → one fade node
     expect(fades.length).toBe(1);
     const events = fades[0]._events;
     const startAt = ctx.currentTime;
-    const endTime = startAt + 0.87;
+    const endTime = startAt + 0.40;
     expect(events[0]).toEqual(['set', 0.1, expect.closeTo(startAt, 5)]);        // anchored at 0.10 from START
-    expect(events[1]).toEqual(['set', 0.1, expect.closeTo(endTime - 0.53, 5)]); // holds 0.10 to the fade-start
+    expect(events[1]).toEqual(['set', 0.1, expect.closeTo(endTime - 0.05, 5)]); // holds 0.10 to the fade-start
     expect(events[2]).toEqual(['ramp', 0, expect.closeTo(endTime, 5)]);         // then fades to silence
   });
 
