@@ -46,6 +46,19 @@ function addRaw(a, b) {
   return out;
 }
 
+// #440: pool two `byWeapon` maps (weaponId -> { damageToYou }) into a fresh map, summing
+// damageToYou per weapon. Either side may be missing/partial (old run shapes) — default to {}.
+function poolByWeapon(...maps) {
+  const out = {};
+  for (const m of maps) {
+    for (const [wid, bw] of Object.entries(m ?? {})) {
+      const n = Number(bw?.damageToYou);
+      (out[wid] ??= { damageToYou: 0 }).damageToYou += Number.isFinite(n) ? n : 0;
+    }
+  }
+  return out;
+}
+
 // Re-derive a full display entry (every ratio/average) from pooled raw counters.
 function deriveEnemy(kind, r) {
   return {
@@ -91,11 +104,14 @@ export function splitBroodSubsets(enemies) {
     if (be && bre) {
       // Pool base + brood into the parent; brood is a genuine subset (<= parent everywhere).
       base[kind] = deriveEnemy(kind, addRaw(rawOf(be), rawOf(bre)));
+      base[kind].byWeapon = poolByWeapon(be.byWeapon, bre.byWeapon);   // #440: combined per-weapon
       brood[kind] = deriveEnemy(kind, rawOf(bre));
     } else if (be) {
       base[kind] = { ...be };                     // no brood twin — shallow copy (never mutate input)
+      // byWeapon is carried through by the spread (read-only downstream; never mutated).
     } else {
       base[kind] = deriveEnemy(kind, rawOf(bre)); // only brood ever seen — promote, no subset
+      base[kind].byWeapon = poolByWeapon(bre.byWeapon);
     }
   }
 
@@ -114,6 +130,25 @@ export function splitBroodSubsets(enemies) {
   }
   for (const [kind, e] of Object.entries(base)) {
     e.threatPerUnit = div(dpuByKind[kind], sumDpu);
+    // #440: PER-WEAPON THREAT SUB-ROWS. For a kind that used 2+ DISTINCT weapons, break its
+    // damage-to-you down by weapon. Each weapon sub-row shares the parent's denominators so it
+    // reads on the same scale: threatShare = (weapon dmg / parent dmg) × parent threatShare (both
+    // over Σtaken); threat/unit = (weapon dmg / parent spawned) / sumDpu. A single-weapon kind
+    // gets NO sub-row — its own row already IS that weapon. Informational only: NOT summed into
+    // any total (the parent's damageToYou already counts every weapon's contribution).
+    const wentries = Object.entries(e.byWeapon ?? {})
+      .filter(([, bw]) => Number(bw?.damageToYou) > 0);
+    if (wentries.length >= 2) {
+      const parentDmg = e.damageToYou;
+      e.weaponSubs = wentries
+        .map(([weaponId, bw]) => ({
+          weaponId,
+          damageToYou: bw.damageToYou,
+          threatShare: parentDmg > 0 ? e.threatShare * (bw.damageToYou / parentDmg) : 0,
+          threatPerUnit: div(div(bw.damageToYou, e.spawned), sumDpu),
+        }))
+        .sort((a, b) => b.damageToYou - a.damageToYou);
+    }
   }
   for (const [kind, e] of Object.entries(brood)) {
     const dpu = div(e.damageToYou, e.spawned);

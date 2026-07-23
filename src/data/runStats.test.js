@@ -268,6 +268,25 @@ describe('runStats — accumulator + reducer (#423)', () => {
       expect(red.enemies.droneBrood.threatShare).toBeCloseTo(1, 5);   // all 50 of totalTaken
       expect(red.enemies.droneBrood.spawnedDamage).toBe(0);
     });
+    it('#440: damageTaken accumulates a per-weapon byWeapon breakdown per enemy kind', () => {
+      const r = createRunStats();
+      r.enemySpawned('turret');
+      r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 30 });
+      r.damageTaken({ enemyKind: 'turret', weaponId: 'machineGun', amount: 10 });
+      r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 20 });
+      const e = r.reduce().enemies.turret;
+      expect(e.damageToYou).toBe(60);   // parent unchanged
+      expect(e.byWeapon.autocannon.damageToYou).toBe(50);
+      expect(e.byWeapon.machineGun.damageToYou).toBe(10);
+    });
+    it('#440: a damageTaken with no weaponId leaves byWeapon empty but still counts damage', () => {
+      const r = createRunStats();
+      r.enemySpawned('drone');
+      r.damageTaken({ enemyKind: 'drone', amount: 12 });
+      const e = r.reduce().enemies.drone;
+      expect(e.damageToYou).toBe(12);
+      expect(Object.keys(e.byWeapon)).toHaveLength(0);
+    });
     it('#440: a null spawnerKind (normal unit) never books spawnedDamage', () => {
       const r = createRunStats();
       r.enemySpawned('drone');

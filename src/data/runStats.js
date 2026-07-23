@@ -89,6 +89,11 @@ function enemyBucket() {
     // (e.g. `droneBrood`'s spawnerKind is `carrier`). Recorded on first spawn/hit; stays null for a
     // kind nothing spawned. Display nests this bucket's stats as a sub-row under its spawner.
     spawnerKind: null,
+    // #440: PER-WEAPON threat breakdown — weaponId -> { damageToYou }. Records which of this
+    // kind's weapons dealt how much damage to you, so a multi-weapon kind can show weapon
+    // sub-rows. Informational: NOT part of any 100% total (the parent's damageToYou already
+    // counts every weapon's contribution). A single-weapon kind has one entry (no sub-row shown).
+    byWeapon: {},
   };
 }
 
@@ -180,9 +185,16 @@ export function createRunStats(meta = {}) {
     enemyShotFired(enemyKind) { eb(enemyKind).shotsFired += 1; return api; },
     enemyShotHit(enemyKind) { eb(enemyKind).hits += 1; return api; },
     damageTaken({ enemyKind, weaponId, amount = 0, spawnerKind = null } = {}) {
-      void weaponId;
       state.totalTaken += amount;
-      if (enemyKind != null) eb(enemyKind).damageToYou += amount;
+      if (enemyKind != null) {
+        const e = eb(enemyKind);
+        e.damageToYou += amount;
+        // #440: accumulate the per-weapon threat breakdown for this kind.
+        if (weaponId != null) {
+          const bw = (e.byWeapon[weaponId] ??= { damageToYou: 0 });
+          bw.damageToYou += amount;
+        }
+      }
       // #440: if the attacker was SPAWNED by another unit, ALSO credit this damage to the
       // spawner's kind as a separate `spawnedDamage` figure. Additive — the direct
       // `damageToYou` above is untouched, so threat share never double-counts. eb() ensures the
@@ -286,6 +298,11 @@ export function reduceRun(state) {
       spawnedDamage: e.spawnedDamage,
       // #440: the spawner-linkage label, carried through so display can nest this kind under it.
       spawnerKind: e.spawnerKind ?? null,
+      // #440: per-weapon threat breakdown, carried through for the weapon sub-rows. Cloned so
+      // the reduced report doesn't alias live state.
+      byWeapon: Object.fromEntries(
+        Object.entries(e.byWeapon).map(([id, bw]) => [id, { damageToYou: bw.damageToYou }]),
+      ),
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       // #432 RAW COUNTERS — kept in the reduced shape so ALL-RUNS pooling recomputes metrics
@@ -368,8 +385,13 @@ export function aggregateRuns(runs) {
       const b = (ePool[e.kind] ??= {
         spawned: 0, killed: 0, damageToYou: 0, spawnedDamage: 0, damageToKind: 0, overkill: 0,
         engagedMs: 0, ttkSumMs: 0, ttkCount: 0, shotsFired: 0, hits: 0, spawnerKind: null,
+        byWeapon: {},
       });
       if (b.spawnerKind == null && e.spawnerKind != null) b.spawnerKind = e.spawnerKind;   // #440
+      // #440: pool the per-weapon threat breakdown — sum damageToYou per weaponId across runs.
+      for (const [wid, bw] of Object.entries(e.byWeapon ?? {})) {
+        (b.byWeapon[wid] ??= { damageToYou: 0 }).damageToYou += bw.damageToYou ?? 0;
+      }
       b.spawned += e.spawned ?? 0;
       b.killed += e.killed ?? 0;
       b.damageToYou += e.damageToYou ?? 0;
@@ -426,6 +448,9 @@ export function aggregateRuns(runs) {
       threatShare: div(e.damageToYou, g.totalTaken),
       spawnedDamage: e.spawnedDamage,   // #440
       spawnerKind: e.spawnerKind ?? null,   // #440
+      byWeapon: Object.fromEntries(   // #440: pooled per-weapon threat breakdown
+        Object.entries(e.byWeapon).map(([id, bw]) => [id, { damageToYou: bw.damageToYou }]),
+      ),
       damageToKind: e.damageToKind,
       overkill: e.overkill,
       engagedMs: e.engagedMs,

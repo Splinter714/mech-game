@@ -243,3 +243,56 @@ describe('runStatsEnemies — brood/base pooling (#440)', () => {
     expect(b.damageToYou).toBe(128);
   });
 });
+
+// #440 — per-weapon threat sub-rows.
+describe('splitBroodSubsets — per-weapon threat sub-rows', () => {
+  it('a kind that used 2+ weapons gets one sub-row per weapon, ordered by damage', () => {
+    const r = createRunStats();
+    r.enemySpawned('turret'); r.enemySpawned('turret');
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 30 });
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'machineGun', amount: 10 });
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 20 });
+    // a second kind so the threat-share denominator (Σtaken) isn't just the turret
+    r.enemySpawned('drone'); r.damageTaken({ enemyKind: 'drone', weaponId: 'machineGun', amount: 40 });
+    const { base } = splitBroodSubsets(r.reduce().enemies);
+    const subs = base.turret.weaponSubs;
+    expect(subs).toHaveLength(2);
+    expect(subs.map((s) => s.weaponId)).toEqual(['autocannon', 'machineGun']);  // desc by dmg
+    expect(subs[0].damageToYou).toBe(50);
+    expect(subs[1].damageToYou).toBe(10);
+    // threatShare on the Σtaken (=100) denominator: 50/100 and 10/100.
+    expect(subs[0].threatShare).toBeCloseTo(0.5, 6);
+    expect(subs[1].threatShare).toBeCloseTo(0.1, 6);
+    // sub threatShares sum to the parent's threatShare (60/100), never exceed it.
+    expect(subs[0].threatShare + subs[1].threatShare).toBeCloseTo(base.turret.threatShare, 6);
+    // threat/unit uses the parent's spawned count (2) over the shared sumDpu denominator.
+    const drone = base.drone;
+    const sumDpu = (base.turret.damageToYou / base.turret.spawned) + (drone.damageToYou / drone.spawned);
+    expect(subs[0].threatPerUnit).toBeCloseTo((50 / 2) / sumDpu, 6);
+    expect(subs[0].threatPerUnit + subs[1].threatPerUnit).toBeCloseTo(base.turret.threatPerUnit, 6);
+  });
+
+  it('a kind that used ONE weapon gets no weapon sub-row', () => {
+    const r = createRunStats();
+    r.enemySpawned('turret');
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 25 });
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 15 });
+    const { base } = splitBroodSubsets(r.reduce().enemies);
+    expect(base.turret.weaponSubs).toBeUndefined();
+  });
+
+  it('weapon sub-rows do NOT change the parent totals or the 100% threat/unit sum', () => {
+    const r = createRunStats();
+    r.enemySpawned('turret'); r.enemySpawned('turret');
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 30 });
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'machineGun', amount: 10 });
+    r.enemySpawned('drone');
+    r.damageTaken({ enemyKind: 'drone', weaponId: 'machineGun', amount: 60 });
+    const { base } = splitBroodSubsets(r.reduce().enemies);
+    expect(base.turret.damageToYou).toBe(40);           // parent unchanged
+    expect(base.turret.threatShare).toBeCloseTo(0.4, 6);
+    // threat/unit across the two PARENT kinds still sums to 100% (sub-rows excluded).
+    const total = Object.values(base).reduce((s, e) => s + e.threatPerUnit, 0);
+    expect(total).toBeCloseTo(1, 6);
+  });
+});

@@ -110,6 +110,18 @@ export function enemyOverrideSummary(statKind) {
   return parts.join(';  ');
 }
 
+// #440: display label for a per-weapon threat sub-row under an enemy kind. Returns the weapon's
+// display NAME and whether THIS kind mounts a TUNED VARIANT of it (any slot carrying that base
+// weaponId has an override), so the sub-row can wear the same `*` enemy-variant marker the parent
+// row uses. Accepts a stat-kind string or a pre-computed enemyWeaponInfo object.
+export function enemyWeaponLabel(statKind, weaponId) {
+  const info = statKind && typeof statKind === 'object' ? statKind : enemyWeaponInfo(statKind);
+  const matches = (info?.weapons ?? []).filter((w) => w.weaponId === weaponId);
+  const name = matches[0]?.weaponName ?? WEAPONS[weaponId]?.name ?? weaponId;
+  const hasOverride = matches.some((w) => w.hasOverride);
+  return { name, hasOverride };
+}
+
 // ── Designed durability (Real HP) ────────────────────────────────────────────────────────────
 
 // Total DESIGNED durability of an enemy kind, from its data tables — the counterpart to the run's

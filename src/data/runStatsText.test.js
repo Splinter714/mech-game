@@ -85,6 +85,27 @@ describe('runStatsText — plain-text report (#423)', () => {
     expect(txt).toContain('└ spawned drones');   // the indented spawner sub-row
   });
 
+  it('renders per-weapon threat sub-rows under a multi-weapon enemy kind (#440)', () => {
+    const r = createRunStats();
+    r.tick(1000, { inCombat: true });
+    r.enemySpawned('turret');
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 30 });
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'machineGun', amount: 10 });
+    const txt = runReportText(r.reduce());
+    // WEAPONS[].name for the two ids — indented weapon sub-rows appear.
+    expect(txt).toContain('Autocannon');
+    expect(txt).toContain('└ Repeater');   // WEAPONS.machineGun.name
+  });
+
+  it('a single-weapon enemy kind renders no weapon sub-row (#440)', () => {
+    const r = createRunStats();
+    r.tick(1000, { inCombat: true });
+    r.enemySpawned('turret');
+    r.damageTaken({ enemyKind: 'turret', weaponId: 'autocannon', amount: 40 });
+    const txt = runReportText(r.reduce());
+    expect(txt).not.toContain('└ Autocannon');
+  });
+
   it('columns are aligned (rows share the header width)', () => {
     const txt = runReportText(sampleRun());
     const lines = txt.split('\n');

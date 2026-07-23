@@ -155,6 +155,15 @@ describe('aggregateRuns — pooled ALL RUNS view (#432)', () => {
     expect(aggregateRuns([reduced]).enemies.drone.avgTtkMs).toBe(800);
   });
 
+  it('#440: pools byWeapon per enemy kind, summing damageToYou across runs', () => {
+    const a = run({ global: { totalTaken: 100 }, enemies: [{ kind: 'turret', spawned: 2, damageToYou: 40, byWeapon: { autocannon: { damageToYou: 30 }, machineGun: { damageToYou: 10 } } }] });
+    const b = run({ global: { totalTaken: 100 }, enemies: [{ kind: 'turret', spawned: 1, damageToYou: 20, byWeapon: { autocannon: { damageToYou: 20 } } }] });
+    const e = aggregateRuns([a, b]).enemies.turret;
+    expect(e.byWeapon.autocannon.damageToYou).toBe(50);   // 30 + 20
+    expect(e.byWeapon.machineGun.damageToYou).toBe(10);
+    expect(e.damageToYou).toBe(60);   // parent unchanged
+  });
+
   it('aggregate renders as copyable ALL RUNS text', () => {
     const a = run({ global: { totalDealt: 10, shotsFired: 4, hits: 2 }, weapons: [{ id: WID, shotsFired: 4, hits: 2, damageDealt: 10, firingTimeMs: 1000 }], enemies: [{ kind: 'drone', spawned: 1, killed: 1, ttkSumMs: 300, ttkCount: 1 }] });
     const text = runReportText(aggregateRuns([a, a]));

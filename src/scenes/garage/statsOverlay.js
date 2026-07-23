@@ -25,7 +25,7 @@ import {
   WEAPON_COLUMNS, ENEMY_COLUMNS, compareRows, defaultDir,
 } from '../../data/runStatsColumns.js';
 import {
-  enemyWeaponInfo, enemyOverrideSummary, enemyRealHp,
+  enemyWeaponInfo, enemyOverrideSummary, enemyRealHp, enemyWeaponLabel,
 } from '../../data/enemyStatsMeta.js';
 
 const COL = {
@@ -398,6 +398,20 @@ export class StatsOverlay {
             realHp: enemyRealHp(c.spawnedKind),
           },
           tip: cInfo.hasOverride ? enemyOverrideSummary(cInfo) : '',
+        });
+      }
+      // #440: one sub-row per WEAPON this kind used to hurt you (only when it used 2+). Informational
+      // — carries only the per-weapon damage/threat columns; the rest stay blank.
+      for (const w of e.weaponSubs ?? []) {
+        const wl = enemyWeaponLabel(info, w.weaponId);
+        subs.push({
+          data: {
+            displayName: `  └ ${wl.name}${wl.hasOverride ? ' *' : ''}`,
+            damageToYou: w.damageToYou,
+            threatShare: w.threatShare,
+            threatPerUnit: w.threatPerUnit,
+          },
+          tip: wl.hasOverride ? tip : '',
         });
       }
       return {

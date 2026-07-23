@@ -9,7 +9,7 @@
 // reader doesn't need the header comment to know what a column means.
 
 import { splitBroodSubsets, displayName } from './runStatsEnemies.js';
-import { enemyWeaponInfo, enemyRealHp } from './enemyStatsMeta.js';
+import { enemyWeaponInfo, enemyRealHp, enemyWeaponLabel } from './enemyStatsMeta.js';
 
 function fmt(n, dp = 1) {
   if (n == null || !Number.isFinite(n)) return '-';
@@ -158,6 +158,16 @@ function enemiesSection(run) {
         spawnedRowLabel(c), fmt(c.effectiveHp), fmt(cRealHp), pct(c.weaponAccuracy),
         fmt(c.effectiveDps),
         fmt(c.damageToYou), pct(c.threatShare), pct(c.threatPerUnit), fmt(c.spawnedDamage), fmt(c.damageToKind), fmt(c.overkill),
+      ]);
+    }
+    // #440: per-weapon threat sub-rows — which of this kind's weapons hurt you most (only when it
+    // used 2+). Only the damage/threat columns apply; the rest are blank.
+    for (const w of e.weaponSubs ?? []) {
+      const wl = enemyWeaponLabel(kind, w.weaponId);
+      if (wl.hasOverride) anyOverride = true;
+      threatRows.push([
+        `  └ ${wl.name}${wl.hasOverride ? ' *' : ''}`, '-', '-', '-', '-',
+        fmt(w.damageToYou), pct(w.threatShare), pct(w.threatPerUnit), '-', '-', '-',
       ]);
     }
   }
