@@ -393,6 +393,30 @@ export function hudPlayerSnapshot(p) {
   };
 }
 
+// #462: the minimap's enemy dots, gated. They used to be published raw — every living enemy,
+// every frame, with no visibility test at all — so the corner map quietly revealed the garrison
+// of a compound the player had never driven into. This applies the SAME per-enemy rule that
+// already decides whether the enemy's sprite is drawn and whether it can be locked
+// (`_enemyVisible` → `enemyVisibleInFog`), so a dot can never contradict the world: if you can
+// see it on the map, it is on screen and lockable, and vice versa.
+//
+// Deliberately NO last-seen memory and no fade (owner's call): a dot that is not visible right
+// now simply is not published. Co-op needs no extra handling here — the visibility rule itself is
+// already team-wide (its hard-cover raycast unions over `fogOriginsOf`, and the compound fog is
+// one shared set), so "visible to ANY live player" falls out of asking it once.
+//
+// `isVisible` is optional so a scene double without the visibility mixin still publishes dots
+// (the same `_enemyVisible ? … : true` fallback mission.js uses). Pure.
+export function minimapEnemyDots(enemies, isVisible = null) {
+  const out = [];
+  for (const e of enemies ?? []) {
+    if (e.mech?.isDestroyed?.()) continue;
+    if (isVisible && !isVisible(e)) continue;
+    out.push({ x: e.x, y: e.y });
+  }
+  return out;
+}
+
 // Does the HUD have to REBUILD its panels this frame? Only when the number of players changed —
 // panel geometry is a function of the count alone, so a steady co-op frame rebuilds nothing while
 // a mid-sortie join (or a garage-deploy pair) is picked up the very frame it happens. Asked every

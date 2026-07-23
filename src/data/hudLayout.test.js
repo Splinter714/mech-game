@@ -10,6 +10,7 @@ import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, lockPointOf,
   HUD_COLUMN_W, integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER,
   consoleLayout, targetPodAnchor, targetPodLayout, bodyPools, hudTargetSnapshot,
+  minimapEnemyDots,
 } from './hudLayout.js';
 import { LOCATIONS } from './anatomy.js';
 
@@ -417,5 +418,51 @@ describe('lockPointOf — one player\'s own lock target', () => {
     const s = hudPlayerSnapshot({ id: 1, color: 2, mech: null, convergeTarget: { x: 7, y: 8 } });
     expect(s.lock).toEqual({ x: 7, y: 8 });
     expect(hudPlayerSnapshot({ id: 0, color: 1, mech: null }).lock).toBe(null);
+  });
+});
+
+// #462 — the minimap's enemy dots are gated on visibility. Before this they were published raw,
+// so the corner map showed the garrison of a compound the player had never entered.
+describe('minimapEnemyDots', () => {
+  const alive = (x, y, extra = {}) => ({ x, y, mech: { isDestroyed: () => false }, ...extra });
+
+  it('publishes only the enemies the visibility rule says are visible', () => {
+    const seen = alive(10, 20), hidden = alive(300, 400);
+    const dots = minimapEnemyDots([seen, hidden], (e) => e === seen);
+    expect(dots).toEqual([{ x: 10, y: 20 }]);
+  });
+
+  it('still drops dead enemies, gate or no gate', () => {
+    const dead = { x: 1, y: 2, mech: { isDestroyed: () => true } };
+    expect(minimapEnemyDots([dead], () => true)).toEqual([]);
+    expect(minimapEnemyDots([dead])).toEqual([]);
+  });
+
+  it('publishes every living enemy when no gate is supplied (scene doubles without the mixin)', () => {
+    expect(minimapEnemyDots([alive(1, 2), alive(3, 4)]))
+      .toEqual([{ x: 1, y: 2 }, { x: 3, y: 4 }]);
+  });
+
+  it('co-op: a gate that is true for ANY live player publishes the dot', () => {
+    // The scene's `_enemyVisible` already unions over the live players, so this module asks once.
+    const players = [{ x: 0, y: 0 }, { x: 900, y: 0 }];
+    const nearP2 = alive(880, 0);
+    const visibleToAny = (e) => players.some((p) => Math.hypot(e.x - p.x, e.y - p.y) < 100);
+    expect(minimapEnemyDots([nearP2], visibleToAny)).toEqual([{ x: 880, y: 0 }]);
+    // …and with player 2 gone, the same enemy drops off the map.
+    players.pop();
+    expect(minimapEnemyDots([nearP2], visibleToAny)).toEqual([]);
+  });
+
+  it('copies positions rather than aliasing the enemy record', () => {
+    const e = alive(5, 6);
+    const [dot] = minimapEnemyDots([e], () => true);
+    e.x = 999;
+    expect(dot).toEqual({ x: 5, y: 6 });
+  });
+
+  it('tolerates a missing/empty enemy list', () => {
+    expect(minimapEnemyDots(null, () => true)).toEqual([]);
+    expect(minimapEnemyDots([], () => true)).toEqual([]);
   });
 });

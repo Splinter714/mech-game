@@ -23,7 +23,7 @@ import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { primaryPlayerOf } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
-import { hudPlayerSnapshot } from '../data/hudLayout.js';
+import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
 // #246: the player's native full-mech shield baseline — a real trait present from the start of
@@ -301,9 +301,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerWorlds', this.players.map((p) => ({
       x: p.x, y: p.y, angle: p.turretAngle, color: p.color, dead: !!p.dead,
     })));
-    const enemyPos = [];
-    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyPos.push({ x: e.x, y: e.y });
-    this.registry.set('enemyPositions', enemyPos);
+    // #462: gated by the SAME per-enemy visibility rule that draws the sprite and allows a lock
+    // (`_enemyVisible`), so the minimap can no longer reveal a compound's garrison the player has
+    // never laid eyes on. No last-seen memory, no fade — see `minimapEnemyDots` in hudLayout.js.
+    this.registry.set('enemyPositions', minimapEnemyDots(
+      this.enemies, this._enemyVisible ? (e) => this._enemyVisible(e) : null,
+    ));
     // #155: hide map tiles outside the camera's view (+ margin) — see world.js for why this is
     // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-
     // bounds computation.
