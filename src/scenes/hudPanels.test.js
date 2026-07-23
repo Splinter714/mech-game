@@ -132,7 +132,7 @@ describe('HudScene panels — solo', () => {
     const disc = scene.panels[0].pod;
     expect(disc.cy).toBeLessThan(scene.H / 2);        // top of the screen...
     expect(disc.cx).toBeLessThan(scene.W / 2);        // ...on the left.
-    expect(disc.rings.map((r) => r.key)).toEqual(['hp', 'armor', 'shield']);
+    expect(disc.rings.map((r) => r.key)).toEqual(['shield', 'armor', 'hp']);  // #478: shield outermost
   });
 
   it('stacks the second player\'s disc under the first rather than over the map', () => {

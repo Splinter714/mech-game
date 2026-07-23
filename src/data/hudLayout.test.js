@@ -91,8 +91,8 @@ describe('targetDiscLayout — the preview and its three gauge rings', () => {
     for (const ring of disc.rings) expect(ring.r + ring.w / 2).toBeLessThan(disc.r);
   });
 
-  it('runs the same three layers, in the same order, the player\'s own block draws', () => {
-    expect(disc.rings.map((r) => r.key)).toEqual(['hp', 'armor', 'shield']);
+  it('runs the three layers shield-outermost → structure-innermost (#478)', () => {
+    expect(disc.rings.map((r) => r.key)).toEqual(['shield', 'armor', 'hp']);
     // Outermost first, each one strictly inside the last.
     for (let i = 1; i < disc.rings.length; i++) {
       expect(disc.rings[i].r).toBeLessThan(disc.rings[i - 1].r);

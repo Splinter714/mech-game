@@ -307,14 +307,15 @@ export function consoleLayout(H, contentTop, band) {
 //
 // The locked-enemy readout, as the top-left mirror of the corner minimap: an animated preview of
 // the unit posed inside the disc, ringed by three concentric GAUGE ARCS carrying the same three
-// layers the player's own block draws — structure, armor, shield — so the two readouts still say
-// the same thing in the same order, just wrapped round a circle instead of stood up as bars.
+// layers the player's own block draws — shield, armor, structure. #478 inverted the ring order so
+// SHIELD is the outermost ring and HP/structure the innermost; the player's own integrity bars keep
+// their own left → right order, so the two readouts no longer have to match (the owner's call).
 export const TARGET_DISC = {
-  ringW: 3,         // one gauge ring's stroke width
-  ringGap: 2.5,     // between rings
+  ringW: 4,         // one gauge ring's stroke width
+  ringGap: 1.5,     // between rings (trimmed with the thicker rings so the art square barely shrinks)
   rimInset: 4,      // the outermost ring, in from the disc's frame
   artPad: 5,        // between the innermost ring and the art's bounding square
-  order: ['hp', 'armor', 'shield'],   // outermost → innermost, matching the bars' left → right
+  order: ['shield', 'armor', 'hp'],   // outermost → innermost (#478: shield outermost, structure in)
 };
 
 // Every number the target disc is painted from, for a given bounding box (`targetDiscBox`).
