@@ -362,62 +362,84 @@ describe('channel streaks continue across the hex boundary (#471)', () => {
   });
 });
 
-// #471 playtest, third pass — "river shouldn't have any straight lines like that; if any line-esque
-// stuff, give it squiggly wave lines, very subtle". The pass before this one CALMED the river (fewer
-// marks) but left the marks straight, and every test still passed: counts and containment can't see
-// the difference between a squiggle and a gently-wobbled straight. These two properties can.
+// #471 playtest, third and fourth passes. Third: the calming pass had left the marks literally
+// straight and every test still passed — counts and containment can't tell a wave from a wobbled
+// straight — so this block was added, asserting a heavy squiggle (arc/endpoint > 1.2, >= 3 turn
+// reversals). Fourth: that squiggle overshot — "should be simpler texture so it blends with the
+// 'deep' better, simple horizontal wave lines". A plain, gentle, regular wave legitimately scores
+// ~1.07 on arc length, so the OLD thresholds were thresholds from a rejected direction and are gone.
+// What replaces them still separates "wave" from "accidentally straight", which is how an earlier
+// pass shipped wrong — measured against the line's own chord rather than its total length:
 //
-//   WANDER — total path length vs. the straight line between its endpoints. A straight streak scores
-//            ~1.00; a wobbled one barely more. A real sine undulation is well above it.
-//   REVERSALS — how many times the path changes which WAY it turns. A random walk drifts, so it can
-//            hold one turn direction for its whole length; an undulation must flip once per half
-//            wave. This is the property that actually says "squiggly" rather than "not straight".
-describe('the river lines are squiggly, not straight (#471)', () => {
-  function wander(line) {
-    let arc = 0;
-    for (let i = 0; i + 3 < line.length; i += 2) {
-      arc += Math.hypot(line[i + 2] - line[i], line[i + 3] - line[i + 1]);
-    }
-    const span = Math.hypot(line[line.length - 2] - line[0], line[line.length - 1] - line[1]);
-    return arc / (span || 1);
+//   SWING — the largest perpendicular distance from the straight chord between the endpoints. A
+//           straight or gently-wobbled streak barely leaves its chord; a real sine reaches ~amp.
+//   CROSSINGS — how many times the path crosses back over that chord. One bend crosses zero times;
+//           an undulation must cross once per half wave. This is what says WAVE, not just "bent".
+//   HORIZONTAL — the chord's slope. The owner asked specifically for horizontal wave lines.
+describe('the river lines are simple horizontal waves (#471)', () => {
+  // Signed perpendicular offset of every vertex from the endpoint chord.
+  function offsets(line) {
+    const x0 = line[0], y0 = line[1];
+    const dx = line[line.length - 2] - x0, dy = line[line.length - 1] - y0;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const out = [];
+    for (let i = 0; i < line.length; i += 2) out.push((line[i] - x0) * nx + (line[i + 1] - y0) * ny);
+    return out;
   }
 
-  // Sign changes of the turn (2-D cross product of consecutive segment directions), sampled coarsely
-  // so floating-point noise on a near-collinear pair can't count as a reversal.
-  function reversals(line) {
-    const turns = [];
-    for (let i = 0; i + 5 < line.length; i += 2) {
-      const ax = line[i + 2] - line[i], ay = line[i + 3] - line[i + 1];
-      const bx = line[i + 4] - line[i + 2], by = line[i + 5] - line[i + 3];
-      const cross = ax * by - ay * bx;
-      if (Math.abs(cross) > 1e-6) turns.push(Math.sign(cross));
-    }
+  const swing = (line) => Math.max(...offsets(line).map(Math.abs));
+
+  function crossings(line) {
+    const signs = offsets(line).filter((o) => Math.abs(o) > 1e-6).map(Math.sign);
     let n = 0;
-    for (let i = 1; i < turns.length; i++) if (turns[i] !== turns[i - 1]) n++;
+    for (let i = 1; i < signs.length; i++) if (signs[i] !== signs[i - 1]) n++;
     return n;
   }
 
   for (const [name, set] of Object.entries(RIVER_STREAK_SETS)) {
     describe(name, () => {
-      it('every line wanders well past its straight-line distance', () => {
-        for (const line of set) expect(wander(line)).toBeGreaterThan(1.2);
+      it('every line swings clear of its own chord', () => {
+        for (const line of set) expect(swing(line)).toBeGreaterThan(1.2);
       });
 
-      it('every line reverses its turn direction several times', () => {
-        for (const line of set) expect(reversals(line)).toBeGreaterThanOrEqual(3);
+      it('every line crosses back over that chord more than once — a wave, not a bend', () => {
+        for (const line of set) expect(crossings(line)).toBeGreaterThanOrEqual(2);
+      });
+
+      it('every line runs horizontally', () => {
+        for (const line of set) {
+          const dx = Math.abs(line[line.length - 2] - line[0]);
+          const dy = Math.abs(line[line.length - 1] - line[1]);
+          expect(dy / (dx || 1)).toBeLessThan(0.2);
+        }
       });
     });
   }
 
   it('a straight streak set would fail the same properties', () => {
     const straight = buildStreaks(0x77, { count: 8, len: 58, segs: 3, wobble: 0.13 });
-    expect(straight.every((l) => wander(l) > 1.2)).toBe(false);
-    expect(straight.every((l) => reversals(l) >= 3)).toBe(false);
+    expect(straight.every((l) => swing(l) > 1.2)).toBe(false);
+    expect(straight.every((l) => crossings(l) >= 2)).toBe(false);
+  });
+
+  // The simplification is only worth anything if it's actually simpler than the rejected pass: one
+  // set of a few lines, gently waved, not a dense field of hard squiggles.
+  it('is a SIMPLE treatment — one set, few lines, gentle waves', () => {
+    const sets = Object.values(RIVER_STREAK_SETS);
+    expect(sets).toHaveLength(1);
+    expect(sets[0].length / HEX_LATTICE.length).toBeLessThanOrEqual(6);   // seeds per fundamental domain
+    // Gentle: the shipped lines peak at ~5.1px off their chord; the rejected 4.6px-amplitude
+    // squiggle set never went below 5.9, so this ceiling is what keeps the busy version out.
+    for (const line of sets[0]) expect(swing(line)).toBeLessThan(5.5);
   });
 
   // A waved path still has to satisfy the lattice property the whole channel scheme rests on.
   it('keeps the tile-to-tile crossing match with a waved path', () => {
-    const lines = buildStreaks(0x8c, { count: 10, len: 58, segs: 26, wave: { amp: 4.6, period: 17 } });
+    const lines = buildStreaks(0x8c, {
+      count: 10, len: 54, segs: 24, angle: 0, angleJitter: 0.05,
+      wave: { amp: 2.6, period: 24, jitter: 0.12 },
+    });
     const crossings = [];
     for (const line of lines) {
       for (let i = 0; i + 3 < line.length; i += 2) {
