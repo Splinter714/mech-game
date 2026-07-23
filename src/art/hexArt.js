@@ -222,32 +222,18 @@ function isBoundaryTerrainId(key) {
 // per-tile boundary art with a single flat camera-background fill (`terrainFillColor(B.deep)`,
 // world.js) and stopped placing tile Images in the ring at all — which stranded both that helper
 // and its whole texture-build pass with zero consumers. #464 deleted them, along with the five
-// DETAIL painters for `deepWater`/`mesa`/`ice`/`collapsed`/`lava`, which the `boundary` guard in
-// `buildHexTextures` had already been skipping. The ids' PAL and TERRAIN entries STAY: the ring's
-// `passable: false` is the invisible wall keeping the mech in the corridor, and the PAL fill is
-// what the camera background reads.
+// DETAIL painters for `deepWater`/`mesa`/`ice`/`collapsed`/`lava`.
+//
+// #464 (playtest, owner: "I'm still seeing the art for the deep hexes, which we talked about not
+// needing"): the five GROUND TEXTURES themselves are now gone too. `buildHexTextures` skips these
+// ids entirely, so `hex_deepWater`/`hex_mesa`/`hex_ice`/`hex_collapsed`/`hex_lava` are never
+// baked. Nothing in the arena ever placed them (world.js skips boundary hexes in both its tile
+// loop and its edge pass), and the art gallery derives its rows from which textures EXIST, so the
+// biomes' `deep` role now drops out of the gallery by itself. The ids' PAL and TERRAIN entries
+// STAY: the ring's `passable: false` is the invisible wall keeping the mech in the corridor, and
+// the PAL fill is what `terrainFillColor` hands the camera background.
 export { isBoundaryTerrainId, BOUNDARY_ONLY_IDS };
 
-// #222 (2nd playtest pass): even with identical fill and no per-hex decoration, the boundary
-// ring still read as an obviously-tiled hex grid rather than one continuous surface. Root cause
-// isn't the art content — it's that every hex is a SEPARATE baked texture stamped at its own
-// centre (world.js `hexToPixel`), rendered with `pixelArt: true` (nearest-filtering, main.js) and
-// the arena's fractional `dpr * zoomFactor` camera zoom (main.js `applySize`). Adjacent tiles'
-// polygons meet at a mathematically-exact shared edge in "design space", but once that boundary
-// gets projected through a non-integer zoom and rounded to device pixels, each tile's quad rounds
-// independently — a classic tile-seam/bleed problem, visible as a hairline gap (or double-thick
-// line) at every hex edge, same-color fill or not. The standard fix is overdraw: make each boundary
-// tile's fill polygon slightly LARGER than its true hex footprint so neighbours' opaque fills
-// physically overlap at the seam instead of exactly abutting, hiding any rounding gap regardless of
-// zoom/subpixel placement. `HEX_TEX_W/H` already carry a small margin around the true hex bounds
-// (added for supersampling headroom), which conveniently doubles as overdraw room: neighbouring
-// hex images' texture RECTS already overlap by exactly that margin (their centres are spaced by the
-// true hex width/height, while each texture is slightly wider/taller than that), so growing the
-// fill polygon into that margin is safe — it can't spill past either tile's own texture bounds.
-// 1.015 pushes the fill ~0.7px past the true edge on every side, comfortably inside the tightest
-// margin (the vertical one, ~1px each side) with headroom to spare, while every other terrain's
-// normal (non-boundary) inset is untouched.
-const BOUNDARY_OVERDRAW_INSET = 1.015;
 
 // A top-down tree: a soft drop shadow, then a canopy built from several overlapping
 // blobs (so the silhouette reads as foliage, not a flat disc), shaded dark->light from
@@ -799,26 +785,20 @@ export function buildHexTextures(scene) {
   // per-tile wiring here.
   for (const [key, pal] of Object.entries(PAL)) {
     if (key === 'ground' || key === 'groundB' || key === 'wall') continue;
+    // #464 (playtest): the five world-boundary-only ids (deep water / mesa / ice / collapsed /
+    // lava) get NO tile at all. #222's 4th pass stopped placing ring tiles in the arena — the ring
+    // is one flat camera-background fill (`terrainFillColor(B.deep)`, world.js) — so these
+    // textures had no renderer left anywhere except the art gallery, where they showed up as five
+    // flat "deep" swatches the owner asked to be rid of. Their PAL entries stay (that fill is
+    // exactly what the camera background reads); only the baked tile goes.
+    if (isBoundaryTerrainId(key)) continue;
     tiles[`hex_${key}`] = pal;
   }
   for (const [key, pal] of Object.entries(tiles)) {
     gen(scene, key, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
       const sg = scaledGraphics(g);
-      // #222: the world-boundary-only terrain ids (deep water / mesa / ice / collapsed / lava)
-      // were stamped edge-to-edge across a very wide ring, which made every hex show the identical
-      // bordered tile PLUS an identical "icon" (a wave swell, a rock butte, a rubble heap, a lava
-      // pool) — an obviously-repeating tiled pattern rather than one continuous surface. So a
-      // boundary tile drops the darker inset border band (an inset of >=1.0 instead of 0.9, the
-      // fill running flush to and slightly past the true edge, see BOUNDARY_OVERDRAW_INSET) and
-      // skips the terrain's DETAIL painter entirely.
-      // #464: those five DETAIL painters were then DELETED — the guard below meant they could
-      // never run, and #222's 4th pass went further still and stopped placing ring tiles at all
-      // (world.js paints the camera background `terrainFillColor(B.deep)` instead), so nothing
-      // renders these textures in play today. The guard stays because it's what makes that true,
-      // and the textures themselves are still cheap to keep for the art gallery.
-      const boundary = isBoundaryTerrainId(key);
-      drawHex(sg, pal.fill, pal.edge, boundary ? BOUNDARY_OVERDRAW_INSET : 0.9, isImpassableTerrainId(key));
-      if (!boundary) DETAIL[key]?.(sg);
+      drawHex(sg, pal.fill, pal.edge, 0.9, isImpassableTerrainId(key));
+      DETAIL[key]?.(sg);
     });
   }
   // #393: the wall reads as a SOLID, RAISED block so it's unmistakable against a (now flat-looking)

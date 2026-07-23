@@ -15,7 +15,8 @@ import { vehicleHasArmorArt } from '../art/vehicles/index.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
 // target readout renders an enemy by the exact same rules rather than a second copy of them.
 import { InkCache, texSize, fitScale } from '../art/inkBounds.js';
-import { mechPreviewKeys, poseMechInto } from '../art/preview.js';
+import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
+import { vehicleScaleFactor, MECH_SCALE_FACTOR, trueScaleBase } from '../data/unitScale.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { WEAPON_IDS } from '../data/weapons.js';
@@ -110,6 +111,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this._scrollY = 0;
     this._maxScroll = 0;
     this._chassisIndex = -1;    // -1 = the player's own saved chassis (MECH view)
+    this.trueScale = false;     // ENEMIES: normalized by default, TRUE relative scale on demand (#468)
     this._damageStep = 0;
 
     this.ink = new InkCache(this.textures);
@@ -220,6 +222,19 @@ export default class ArtPreviewScene extends Phaser.Scene {
       this._rebuild();
     });
     x += 90;
+
+    // #468: the ENEMIES tab's scale mode. Follows the CHASSIS button's pattern (view-specific,
+    // states cycled on the button itself) and uses the shared `active` styling, so the current
+    // mode reads off the control strip without opening anything — gold + outlined while TRUE
+    // scale is on, plain while normalized.
+    if (this.view === 'ENEMIES') {
+      this._button(x, y, 210, h, `SCALE: ${this.trueScale ? 'TRUE RELATIVE' : 'NORMALIZED'}`, () => {
+        this.trueScale = !this.trueScale;
+        this._buildControls();
+        this._rebuild();
+      }, { active: this.trueScale });
+      x += 216;
+    }
 
     if (this.view === 'MECH') {
       const label = this._chassisIndex < 0 ? 'CHASSIS: SAVED' : `CHASSIS: ${CHASSIS_IDS[this._chassisIndex].toUpperCase()}`;
@@ -410,7 +425,9 @@ export default class ArtPreviewScene extends Phaser.Scene {
   //      the mechanism still handles both.)
   //   2. The #289 canopy overlays had a standalone COVER CANOPY group, and the #395 dock doors
   //      a standalone DOCK DOORS group while `dock`/`dockClosed` sat in BASE + STRUCTURE.
-  // Now: each cover role reads intact → + canopy → cleared → rubble in one place per biome, and
+  // Now: each cover role reads intact → + canopy → cleared → rubble in one place per biome (with
+  // the intact cell folded into the canopy composite when the two share one ground tile — see the
+  // #464 note in `_buildHexes`), and
   // every dock piece is one run inside the base grouping. Both memberships are DERIVED (canopy
   // from the biome's own role ids, derivatives from the TERRAIN fields), never a hand-written
   // map, so new content flows through by itself. A derivative reachable from two biomes appears
@@ -458,14 +475,33 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const roles = [
         ['groundA', B.groundA], ['groundB', B.groundB], ['channel', B.channel],
         ['deep', B.deep], ['hazard', B.hazard], ['cover', B.cover],
+      // #464 (playtest): `deep` now always filters itself out — hexArt.js stopped baking a tile
+      // for the five world-boundary-only ids, which is the whole reason the role vanishes from
+      // these rows. The role stays declared so the list still mirrors biomes.js, and so it comes
+      // back on its own if a boundary tile is ever baked again.
       ].filter(([, id]) => id && this._hasHexTex(id));
       const cells = [];
       for (const [role, id] of roles) {
-        cells.push(tile(id, `${id}\n${role}`));
+        const derivatives = this._derivativesOf(id);
+        // #464 (playtest, owner: "I'm seeing separate forest cover and forest cleared cover, which
+        // feels redundant"): the first pass merged each soft-cover role's intact GROUND tile into
+        // its cleared twin (`TERRAIN.forest.tex === 'hex_forestCleared'`), but this row still drew
+        // a bare cell for each — so "forest / cover" and "forestCleared / ↳ cover cleared" sat
+        // side by side showing the byte-identical image. When that alias holds and the role wears
+        // a canopy, the canopy composite IS the intact state (a standing cover hex is never
+        // rendered without it, scenes/arena/world.js), so the bare ground cell is dropped and the
+        // composite takes the role's own label. Derived from the textures, not a hand-written
+        // list: a cover terrain that ever regains its own distinct ground tile gets both cells
+        // back automatically.
+        const aliasesCleared = derivatives.some(([, did]) => this._hexTex(did) === this._hexTex(id));
+        const canopy = hasCanopy(id);
+        const merged = aliasesCleared && canopy;
+        if (merged) shown.add(id);           // still claimed by this row, so the catch-all skips it
+        else cells.push(tile(id, `${id}\n${role}`));
         // The full lifecycle of this role, in order: the canopy overlay it wears while intact,
         // then what it collapses into once shot away.
-        if (hasCanopy(id)) cells.push(canopyCell(id, `${id}\n↳ ${role} + canopy`));
-        for (const [kind, did] of this._derivativesOf(id)) {
+        if (canopy) cells.push(canopyCell(id, merged ? `${id}\n${role}` : `${id}\n↳ ${role} + canopy`));
+        for (const [kind, did] of derivatives) {
           cells.push(tile(did, `${did}\n↳ ${role} ${kind}`));
         }
       }
@@ -527,33 +563,85 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   _vehicleKey(id) { return `${TEX_PREFIX}veh_${id}`; }
 
+  // The two texture keys a vehicle cell stacks, by the multi-frame conventions the arena renders
+  // with (`legFrames` ⇒ `_hull_0..N`, `turretFrames` ⇒ `_turret_0..N`).
+  _vehicleTexKeys(key, def) {
+    const { hull, turret } = vehiclePreviewKeys(key, def);
+    return [hull, turret];
+  }
+
+  // ── TRUE RELATIVE SCALE (#468) ──────────────────────────────────────────────────────────
+  // Normalized (the default) fits every unit to its own cell, which is the only way infantry is
+  // reviewable at all — but it makes "is the drone too big next to the tank" unanswerable from
+  // this screen. The toggle switches the whole tab to ONE shared scale: each cell draws at
+  // `base × the unit's game scale factor`, so the cells reproduce the arena's real size ratios
+  // (and infantry duly becomes a speck — that IS the answer, not a bug to half-fix).
+  //
+  // The base has to be settled BEFORE any cell builds, because `_group` builds its cells
+  // synchronously — so `_buildEnemies` collects every unit's ink + factor first, then lays out.
+  _trueBase(box) {
+    if (this._trueBox !== box) {
+      this._trueBox = box;
+      this._trueBaseScale = trueScaleBase(this._trueEntries ?? [], box);
+    }
+    return this._trueBaseScale;
+  }
+
+  // The scale one cell draws at: its shared-scale share in TRUE mode, else fitted to its cell.
+  _unitScale(u, box, factor) {
+    return factor == null ? this._fit(u.w, u.h, box) : this._trueBase(box) * factor;
+  }
+
   _buildEnemies() {
+    const on = this.trueScale;
+    this._trueEntries = [];
+    this._trueBox = null;
+    // Everything that will be drawn, resolved up front (textures baked, ink measured) so the
+    // shared TRUE scale can see the whole tab before the first cell lays out.
+    const note = (keys, factor) => {
+      if (!on) return;
+      const u = this._inkUnion(keys.filter((k) => this.textures.exists(k)));
+      if (u) this._trueEntries.push({ w: u.w, h: u.h, factor });
+    };
+
     const cells = [];
     for (const id of ENEMY_KIND_IDS) {
       const def = ENEMY_KINDS[id];
       const key = this._vehicleKey(id);
       if (!this.textures.exists(`${key}_turret`)) buildVehicleTextures(this, key, def);
       const armored = vehicleHasArmorArt(def);
-      if (armored) cells.push(this._vehicleCell(`${id}\narmored`, key + ARMORED_SUFFIX, def));
-      cells.push(this._vehicleCell(armored ? `${id}\nbare (#401)` : id, key, def));
+      const factor = on ? vehicleScaleFactor(def) : null;
+      if (armored) cells.push(this._vehicleCell(`${id}\narmored`, key + ARMORED_SUFFIX, def, { factor }));
+      cells.push(this._vehicleCell(armored ? `${id}\nbare (#401)` : id, key, def, { factor }));
+      note(this._vehicleTexKeys(key, def), factor);
     }
-    this._group('VEHICLE KINDS (hull + turret, as the arena stacks them)', cells);
 
     const built = Object.keys(ENEMIES).map((id) => {
       const mech = new Mech(ENEMIES[id]);
       mech.repairAll();
       const key = `${TEX_PREFIX}emech_${id}`;
       buildMechTextures(this, key, mech, { theme: 'enemy' });
+      note(this._mechKeys(key), MECH_SCALE_FACTOR);
       return { id, mech, key };
     });
-    const enemyInk = this._inkUnion(built.flatMap((b) => this._mechKeys(b.key)));
-    this._group('ENEMY MECHS (#446 — one shared scale, so chassis sizes compare)',
-      built.map((b) => this._mechCell(`${ENEMIES[b.id].name ?? b.id}\n${b.id}`, b.key, b.mech, { ink: enemyInk })));
+    // Normalized: one shared ink across the mech row, so chassis sizes compare within it. TRUE:
+    // the shared scale already does that job across the WHOLE tab, and each mech re-centres on
+    // its own ink.
+    const enemyInk = on ? null : this._inkUnion(built.flatMap((b) => this._mechKeys(b.key)));
+
+    this._group(`VEHICLE KINDS (hull + turret, as the arena stacks them)${on ? ' — TRUE SCALE' : ''}`, cells);
+    this._group(on
+      ? 'ENEMY MECHS (#446) — TRUE SCALE, shared with the vehicles above'
+      : 'ENEMY MECHS (#446 — one shared scale, so chassis sizes compare)',
+    built.map((b) => this._mechCell(`${ENEMIES[b.id].name ?? b.id}\n${b.id}`, b.key, b.mech, {
+      ink: enemyInk, factor: on ? MECH_SCALE_FACTOR : null,
+    })));
   }
 
-  _vehicleCell(label, key, def) {
-    const hullKey = def.legFrames ? `${key}_hull_0` : `${key}_hull`;
-    const turretKey = def.turretFrames ? `${key}_turret_0` : `${key}_turret`;
+  // `factor` non-null puts the cell on the tab's shared TRUE scale (#468) at that game-scale
+  // multiple; null (the default) fits the art to its own cell.
+  _vehicleCell(label, key, def, { factor = null } = {}) {
+    const [hullKey, turretKey] = this._vehicleTexKeys(key, def);
     return {
       label,
       build: (holder, box) => {
@@ -561,7 +649,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
         if (!live.length) return 'missing';
         const u = this._inkUnion(live);
         if (!u) return 'blank';
-        const s = this._fit(u.w, u.h, box);
+        const s = this._unitScale(u, box, factor);
         const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
         const hullSprite = this.add.sprite(ox, oy, hullKey).setScale(s);
         holder.add(hullSprite);
@@ -571,7 +659,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
           holder.add(turretSprite);
           if (def.turretFrames) this._animSprites.push({ sprite: turretSprite, prefix: `${key}_turret_`, count: def.turretFrames });
         }
-        return `${Math.round(u.w)}×${Math.round(u.h)} ink · game ${(def.scale ?? 1.15).toFixed(2)}×`;
+        return `${Math.round(u.w)}×${Math.round(u.h)} ink · game ${vehicleScaleFactor(def).toFixed(2)}×`;
       },
     };
   }
@@ -596,13 +684,13 @@ export default class ArtPreviewScene extends Phaser.Scene {
   // `ink` lets a whole ROW share one scale (pass the union across every mech in it) — without
   // that, a damage progression re-zooms at each step and the mech never looks like it's losing
   // parts, and enemy mechs can't be compared to each other by size.
-  _mechCell(label, key, mech, { frame = 0, animate = false, ink = null } = {}) {
+  _mechCell(label, key, mech, { frame = 0, animate = false, ink = null, factor = null } = {}) {
     return {
       label,
       build: (holder, box) => {
         const u = ink ?? this._inkUnion(this._mechKeys(key));
         if (!u) return 'missing';
-        const s = this._fit(u.w, u.h, box);
+        const s = this._unitScale(u, box, factor);
         this._poseMech(holder, key, mech, s, frame, (u.texW / 2 - u.cx) * s, (u.texH / 2 - u.cy) * s, { animate });
         return `${Math.round(u.w)}×${Math.round(u.h)} ink · ${mech.chassisId}`;
       },

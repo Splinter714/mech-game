@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   HEX_BLEED, HEX_TEX_W, HEX_TEX_H, BASE_INFRA_COLOR, terrainFillColor,
-  buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId,
+  buildHexTextures, COVER_CANOPY_IDS, canopyTexKey, isCoverCanopyId, BOUNDARY_ONLY_IDS,
 } from './hexArt.js';
+import { BIOMES, BIOME_IDS } from '../data/biomes.js';
 import { HEX_SIZE, hexCorners, hexToPixel } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
 
@@ -138,5 +139,31 @@ describe('cover terrain ground/canopy texture split (#289)', () => {
     // canopy key is ever baked for it.
     expect(scene._registered.has('hex_grass')).toBe(true);
     expect(scene._registered.has('hex_grass_canopy')).toBe(false);
+  });
+});
+
+// #464 (playtest, owner: "I'm still seeing the art for the deep hexes, which we talked about not
+// needing"). The five world-boundary-only ids are the biomes' `deep` role. #222's 4th pass stopped
+// placing ring tiles in the arena entirely (the ring is one flat camera-background fill), so their
+// baked tiles had no renderer left except the art gallery — where they showed as five flat swatches.
+// The tiles are gone; the PAL fill they were drawn from stays, because that IS the background fill.
+describe('world-boundary "deep" terrain has no baked tile (#464)', () => {
+  it('bakes no ground texture for any boundary-only id', () => {
+    const scene = fakeGraphicsScene();
+    buildHexTextures(scene);
+    for (const id of BOUNDARY_ONLY_IDS) {
+      expect(scene._registered.has(`hex_${id}`), id).toBe(false);
+      expect(scene._registered.has(TERRAIN[id].tex), id).toBe(false);
+    }
+  });
+
+  it('still exposes each boundary id\'s fill colour for the camera background', () => {
+    for (const id of BOUNDARY_ONLY_IDS) {
+      expect(typeof terrainFillColor(id), id).toBe('number');
+    }
+  });
+
+  it('every biome\'s deep role is a boundary-only id, so no biome loses a rendered tile', () => {
+    for (const bid of BIOME_IDS) expect(BOUNDARY_ONLY_IDS.has(BIOMES[bid].deep), bid).toBe(true);
   });
 });
