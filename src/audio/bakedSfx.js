@@ -381,15 +381,18 @@ export const BAKED_SFX = {
   // #479: the FOOTSTEP (foot-plant) cue — a 4-VARIANT FILE pool (#195), one entry per
   // "FEETMisc_STEP-Hard Step_HY_PC-00N.wav" (N = 1, 2, 4, 5 — 003 deliberately dropped) from the
   // Helton Yan pack. REPLACES the earlier synthesised footstep pool. Played back as the FULL file
-  // (startMs 0, no trim → play to the end — the tuner export's 0→2500ms window IS the whole clip):
-  // no fade, no pitch/filter/reverb, unity gain — the cleanest passthrough. Playback
+  // (startMs 0, no trim → play to the end — the tuner export's 0→2500ms window IS the whole clip).
+  // #479 follow-up: Jackson re-tuned the plant with a NON-DESTRUCTIVE #172 processing chain (the
+  // audio files are unchanged — pitch/filter/reverb are playback-time DSP, not baked into the
+  // .m4a): pitched DOWN -1170 cents, a 1420Hz/Q1 lowpass to dull the top end, and a light 0.16
+  // wet / 0.4s reverb. IDENTICAL across all 4 variants. No trim/fade/volume change. Playback
   // (pickBakedVariant) picks uniformly at random among the 4 decoded variants, exactly like
   // mechDestroyed, so a walk cycle rotates through the four instead of repeating one.
   'footstep::play': [
-    { asset: footstepHardStep1, startMs: 0 },
-    { asset: footstepHardStep2, startMs: 0 },
-    { asset: footstepHardStep4, startMs: 0 },
-    { asset: footstepHardStep5, startMs: 0 },
+    { asset: footstepHardStep1, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
+    { asset: footstepHardStep2, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
+    { asset: footstepHardStep4, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
+    { asset: footstepHardStep5, startMs: 0, processing: { detune: -1170, filterType: 'lowpass', filterFreq: 1420, filterQ: 1, reverbMix: 0.16, reverbSize: 0.4 } },
   ],
   // #479: the LEG-MOVEMENT (leg-lift) cue — a 6-VARIANT FILE pool (#195), one entry per
   // "DSGNMisc_MOVEMENT-Tire Screech_HY_PC-00N.wav" (N = 1..6) from the Helton Yan pack. REPLACES
