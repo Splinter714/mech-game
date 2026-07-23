@@ -86,7 +86,14 @@ export function getOverrideRowState(id, stage) {
     // record exists yet to read from. Editing any control seeds a real live override from this
     // SAME bake (see sfxOverrides.js's seedOverrideFromBaked, wired up in weaponSfxPanel.js) —
     // until then, this is a read-only preview of what's actually shipping.
-    const statusText = 'file override: (baked) shipped sound — edit any control to customize';
+    // #479: a SYNTH bake (the gait cues — a `{ synth }` pool with NO source file) must not be
+    // mislabeled as a "file override: (baked) shipped sound" row — it has no file, so that text
+    // reads as another cue's loaded file. Label it as what it actually is: a procedural synth
+    // variant with nothing to load. File-backed bakes keep the original "(baked) shipped sound"
+    // wording (still matches the /baked/i the panel-state test asserts).
+    const statusText = baked.isSynth
+      ? 'baked synth variant (procedural — no file)'
+      : 'file override: (baked) shipped sound — edit any control to customize';
     const fullSec = Math.max(baked.buffer?.duration ?? 0, 0.01);
     const startSec = clamp(baked.startMs != null ? baked.startMs / 1000 : 0, 0, fullSec);
     const endSec = clamp(baked.trimMs != null ? startSec + baked.trimMs / 1000 : fullSec, startSec, fullSec);

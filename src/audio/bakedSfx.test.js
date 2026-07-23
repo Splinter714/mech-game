@@ -475,4 +475,19 @@ describe('bakedSfx (#173 baked-in SFX assets)', () => {
       expect(seen).toEqual(new Set(['DAMAGED1', 'DAMAGED2', 'DAMAGED3', 'DAMAGED4']));
     });
   });
+
+  // #479: getBaked flags whether a resolved bake is a SYNTH pool (the gait cues — `{ synth }`,
+  // no source file) vs a file-backed bake (`asset`). The tuner reads this to avoid mislabeling
+  // the fileless gait pool as a "file override: (baked) shipped sound" row.
+  describe('getBaked isSynth flag (#479)', () => {
+    beforeEach(() => _resetForTest());
+
+    it('reports isSynth:true for a synth pool (footstep) and isSynth:false for a file bake', () => {
+      // footstep::play is the real GAIT synth pool; plasmaLance::fire is a real file bake.
+      _setBakedBufferForTest('footstep', 'play', { duration: 0.18 });
+      _setBakedBufferForTest('plasmaLance', 'fire', { duration: 1.2 });
+      expect(getBaked('footstep', 'play').isSynth).toBe(true);
+      expect(getBaked('plasmaLance', 'fire').isSynth).toBe(false);
+    });
+  });
 });

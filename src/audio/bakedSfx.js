@@ -439,6 +439,12 @@ export function getBaked(weaponId, stage) {
   if (!buffer) return null;
   return {
     buffer,
+    // #479: whether this bake is a SYNTHESISED pool (the gait cues — `{ synth }`, rendered
+    // offline, NO source file) vs a file-backed bake (an `asset` import). The tuner panel reads
+    // this to render an honest variant-row label — a fileless synth pool must NOT be presented
+    // as a "file override: (baked) shipped sound" row (which reads as some other cue's file); it
+    // has no file at all. Defaults false for every pre-#479 file bake, unchanged.
+    isSynth: !!entry.synth,
     startMs: entry.startMs ?? null,
     trimMs: entry.trimMs ?? null,
     processing: entry.processing ?? null,
