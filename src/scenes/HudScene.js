@@ -1029,6 +1029,24 @@ export default class HudScene extends Phaser.Scene {
       return;
     }
 
+    // #483: a destructible HEX (a base structure or its rubble) or a WALL span. Both are a single
+    // baked terrain texture — a hex tile (`hex_<terrainId>`, driven off the live terrain id so a
+    // collapsed structure shows its rubble) or the shared `hex_wall` block for a span, shown head-on
+    // like the overhead view the arena uses. These are SHARED baked textures (like a vehicle kind's,
+    // never a per-unit mech set), so the release lifecycle follows the vehicle branch — not the
+    // mech's ink-drop-on-damage path — and `texPrefix` still names it for the #465 release rule.
+    if (t.kind === 'hex' || t.kind === 'wall') {
+      if (!this.textures.exists(t.texKey)) return;
+      const u = this.ink.union([t.texKey]);
+      if (!u) return;
+      const s = fitScale(u.w, u.h, box);
+      const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
+      const sprite = this.add.sprite(ox, oy, t.texKey).setScale(s);
+      panel.podArt.add(sprite);
+      panel.podAnim = { texPrefix: t.texKey, hull: sprite };
+      return;
+    }
+
     const keys = vehiclePreviewKeys(t.texKey, t);
     const live = [keys.hull, keys.turret].filter((k) => this.textures.exists(k));
     if (!live.length) return;

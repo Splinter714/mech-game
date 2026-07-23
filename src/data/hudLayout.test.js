@@ -328,11 +328,33 @@ describe('hudTargetSnapshot — the readout can only ever show what the reticle 
     expect(hudTargetSnapshot({ convergeTarget: dead })).toBe(null);
   });
 
-  it('names a destructible hex / wall span, which has no body to read', () => {
+  it('falls back to a bare structure shape for an un-enriched static pick (scene doubles)', () => {
     expect(hudTargetSnapshot({ convergeTarget: { x: 1, y: 2, hexKey: '3,4' } }))
       .toEqual({ kind: 'structure', name: 'STRUCTURE', pools: null });
     expect(hudTargetSnapshot({ convergeTarget: { x: 1, y: 2, edgeKey: 'e1' } }).name)
       .toBe('WALL SECTION');
+  });
+
+  it('#483: draws an enriched destructible HEX from its baked texture with an HP-only ring', () => {
+    const t = { x: 1, y: 2, hexKey: '3,4', hud: { kind: 'hex', texKey: 'hex_dockClosed', name: 'DOCK', hpFrac: 0.5, damageSig: 'dockClosed' } };
+    const s = hudTargetSnapshot({ convergeTarget: t });
+    expect(s.kind).toBe('hex');
+    expect(s.name).toBe('DOCK');
+    expect(s.texKey).toBe('hex_dockClosed');
+    expect(s.damageSig).toBe('dockClosed');
+    expect(s.pools.hp).toBeCloseTo(0.5, 5);
+    // structures have no armor/shield — those tracks stay empty, same as a plated-less enemy
+    expect(s.pools.hasArmor).toBe(false);
+    expect(s.pools.hasShield).toBe(false);
+  });
+
+  it('#483: draws an enriched WALL span from the shared wall block, HP clamped to [0,1]', () => {
+    const t = { x: 1, y: 2, edgeKey: 'e1', hud: { kind: 'wall', texKey: 'hex_wall', name: 'WALL', hpFrac: 1.4, damageSig: '' } };
+    const s = hudTargetSnapshot({ convergeTarget: t });
+    expect(s.kind).toBe('wall');
+    expect(s.name).toBe('WALL');
+    expect(s.texKey).toBe('hex_wall');
+    expect(s.pools.hp).toBe(1);   // clamped
   });
 
   it('is what hudPlayerSnapshot publishes as `target`, alongside the chevron\'s point', () => {

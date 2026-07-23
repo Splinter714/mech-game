@@ -435,6 +435,44 @@ describe('HudScene ammo readout (#451)', () => {
   });
 });
 
+describe('HudScene _buildPodArt — the target disc art (#483: hexes + walls join enemies)', () => {
+  // A pod scene: a stub panel + the two managers `_buildPodArt` reads (ink bounds, texture
+  // existence) and an `add.sprite` that records what was posed. Deliberately minimal — the mech
+  // branch (poseMechInto over real chassis art) is out of scope here; this pins the vehicle path is
+  // untouched and the new hex/wall path sprites the right baked texture.
+  function podScene() {
+    const sprites = [];
+    const panel = { podArt: stub({ kind: 'container' }), pod: { art: { w: 100, h: 100 } } };
+    const scene = Object.assign(Object.create(HudScene.prototype), {
+      ink: { union: () => ({ w: 40, h: 40, texW: 64, texH: 64, cx: 32, cy: 32 }), drop() {} },
+      textures: { exists: () => true },
+      add: {
+        sprite: (x, y, key) => { const o = stub({ x, y, key, kind: 'sprite' }); sprites.push(o); return o; },
+      },
+    });
+    return { scene, panel, sprites };
+  }
+
+  it('sprites a destructible HEX from its live baked terrain texture', () => {
+    const { scene, panel, sprites } = podScene();
+    scene._buildPodArt(panel, { kind: 'hex', texKey: 'hex_dockClosed', name: 'DOCK', damageSig: 'dockClosed' });
+    expect(sprites.map((s) => s.key)).toEqual(['hex_dockClosed']);
+    expect(panel.podAnim.texPrefix).toBe('hex_dockClosed');
+  });
+
+  it('sprites a WALL span from the shared wall block', () => {
+    const { scene, panel, sprites } = podScene();
+    scene._buildPodArt(panel, { kind: 'wall', texKey: 'hex_wall', name: 'WALL', damageSig: '' });
+    expect(sprites.map((s) => s.key)).toEqual(['hex_wall']);
+  });
+
+  it('leaves the enemy VEHICLE path exactly as it was — hull + turret, not the hex branch', () => {
+    const { scene, panel, sprites } = podScene();
+    scene._buildPodArt(panel, { kind: 'vehicle', texKey: 'kind_tank', art: 'tank' });
+    expect(sprites.map((s) => s.key)).toEqual(['kind_tank_hull', 'kind_tank_turret']);
+  });
+});
+
 describe('HudScene health readout modes (#448)', () => {
   const modeScene = () => {
     const built = fakeScene([snap(0)]);

@@ -7,6 +7,7 @@ import {
   getTerrain, terrainSpeedFactor, isPassable, damageBuilding, rubbleFor,
   shotBlockedAt, flameCoverDamage, coverBlocksForRay, isSoftCover,
   clearedSoftCoverFor, SOFT_COVER_CLEAR_HP, SOFT_COVER_CATCH_DAMAGE,
+  buildingHp as terrainStartHp, terrainDisplayName,
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
@@ -1019,6 +1020,41 @@ export const WorldMixin = {
       if (Math.hypot(mx - x, my - y) <= maxDist) pts.push({ x: mx, y: my, edgeKey: e.key, edge: e });
     }
     return pts;
+  },
+
+  // #483: enrich a STATIC lock candidate (a destructible hex or a wall span — never an enemy) with
+  // what the top-left target readout needs to draw it: the baked texture to sprite, a display name,
+  // and its live HP fraction. Attached as `t.hud` so the pure `hudTargetSnapshot` (data/hudLayout.js)
+  // can shape the disc snapshot without reaching into scene state. Called from `_updateLock` right
+  // after the pick, on the SAME per-frame candidate object `_destructibleTargetsNear` built, so it
+  // always reflects this frame's live terrain id / span HP (a hex that has just collapsed to rubble
+  // is re-read here as rubble; a chewed-down span reports its current HP). Enemy picks carry `.mech`
+  // and never come here.
+  _describeStaticTarget(t) {
+    if (!t) return t;
+    if (t.edgeKey) {
+      const e = t.edge;
+      const maxHp = (e && e.maxHp) || 1;
+      const hpFrac = e ? Math.max(0, Math.min(1, Math.max(0, e.hp) / maxHp)) : 0;
+      // A span reads as one baked WALL block viewed head-on (`hex_wall`, hexArt.js) — the same
+      // raised-plate art the wall's own tile once used — regardless of role/HP; the HP ring, not
+      // the sprite, shows how chewed-down it is. A gate leaf just relabels.
+      t.hud = { kind: 'wall', texKey: 'hex_wall', name: e && e.role === 'gate' ? 'GATE' : 'WALL', hpFrac, damageSig: '' };
+    } else if (t.hexKey) {
+      const id = this.terrain.get(t.hexKey);
+      const def = getTerrain(id);
+      const store = this.buildingHp.has(t.hexKey) ? this.buildingHp
+        : (this.coverHp.has(t.hexKey) ? this.coverHp : null);
+      const cur = store ? Math.max(0, store.get(t.hexKey) ?? 0) : 0;
+      const maxHp = terrainStartHp(id) || cur || 1;
+      // `damageSig` is the live terrain id, so the pod re-skins the instant a hex swaps texture
+      // (a standing structure → its rubble). The HP within one id is carried by the ring, not the art.
+      t.hud = {
+        kind: 'hex', texKey: def.tex, name: terrainDisplayName(id),
+        hpFrac: Math.min(1, cur / maxHp), damageSig: id ?? '',
+      };
+    }
+    return t;
   },
 
   // #317: is the destructible terrain hex `key` still STANDING? Membership in either HP map is

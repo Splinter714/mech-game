@@ -499,6 +499,29 @@ export function rubbleFor(id) {
   return (t && t.rubbleId) || RUBBLE;
 }
 
+// #483: a short, human-readable display name for a terrain id — what the top-left target readout
+// prints under the disc when the reticle is locked onto a destructible hex (a base structure, or
+// its rubble once it collapses). No per-entry `name` field is carried on TERRAIN (there are dozens
+// of ids and only a handful are ever lockable), so this is a small override table plus a generic
+// camelCase → 'SPACED CAPS' humaniser for anything not called out. Pure; unit-tested.
+const TERRAIN_DISPLAY_NAMES = {
+  dockClosed: 'DOCK',
+  alertTower: 'ALERT TOWER',
+  objective: 'OBJECTIVE',
+  rubble: 'RUBBLE',
+  forest: 'FOREST',
+  scrub: 'SCRUB',
+  drift: 'SNOWDRIFT',
+  wreck: 'WRECKAGE',
+  fumarole: 'FUMAROLE',
+};
+export function terrainDisplayName(id) {
+  if (!id) return 'STRUCTURE';
+  if (TERRAIN_DISPLAY_NAMES[id]) return TERRAIN_DISPLAY_NAMES[id];
+  // e.g. 'alertTower' → 'ALERT TOWER', 'grassB' → 'GRASS B'
+  return id.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toUpperCase();
+}
+
 // #251: is this destructible hex a genuine assault objective (may be picked as THE mission
 // objective, world.js `buildingHp` bucket) rather than atmospheric base-infrastructure
 // set-dressing (e.g. `dockClosed`/`alertTower`)? Purely the `destructible && !setDressing`

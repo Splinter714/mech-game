@@ -422,16 +422,35 @@ function damageSignature(body) {
 // — the single pick targeting.js makes each frame — so the readout and the red reticle can never
 // be pointed at different things.
 //
-// Three shapes come back: a `vehicle`/`mech` (a live enemy, with the texture keys its art is
-// assembled from and this frame's condition), a `structure` (the lock also takes destructible
-// hexes and wall spans, which have no body to read), or null for nothing targeted at all. The
-// live `mech` handle rides along ONLY for the mech case, because posing its parts needs the real
-// chassis layout; everything else here is plain data.
+// Four shapes come back: a `vehicle`/`mech` (a live enemy, with the texture keys its art is
+// assembled from and this frame's condition), a `hex`/`wall` (#483 — the lock also takes
+// destructible hexes and wall spans, rendered from a baked terrain texture with an HP-only ring),
+// or null for nothing targeted at all. The live `mech` handle rides along ONLY for the mech case,
+// because posing its parts needs the real chassis layout; everything else here is plain data.
+//
+// #483: a static (hex/wall) pick has no body to read, so the scene resolves its texture/name/HP in
+// `_describeStaticTarget` (arena/world.js) and hangs the result on the pick as `t.hud`; here it is
+// shaped into the same snapshot fields the disc reads for every other kind — a HP-only `pools`
+// (structures have no armor/shield, so those tracks stay empty exactly as a plated-less enemy's do).
+// The bare `structure` fallback survives for scene doubles that never ran the scene enrichment.
 export function hudTargetSnapshot(p) {
   const t = p?.convergeTarget;
   if (!t) return null;
   const body = t.mech;
-  if (!body) return { kind: 'structure', name: t.edgeKey ? 'WALL SECTION' : 'STRUCTURE', pools: null };
+  if (!body) {
+    const h = t.hud;
+    if (!h) return { kind: 'structure', name: t.edgeKey ? 'WALL SECTION' : 'STRUCTURE', pools: null };
+    return {
+      kind: h.kind,
+      name: h.name,
+      texKey: h.texKey,
+      damageSig: h.damageSig ?? '',
+      pools: {
+        hp: Math.max(0, Math.min(1, h.hpFrac ?? 0)),
+        armor: 0, hasArmor: false, shield: 0, hasShield: false,
+      },
+    };
+  }
   if (body.isDestroyed?.()) return null;
   const isMech = t.kind === 'mech';
   const def = t.kindDef ?? null;

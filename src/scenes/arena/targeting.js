@@ -93,6 +93,12 @@ export const TargetingMixin = {
     // `aimEnemy` stays the "is the current pick a live enemy" view of the same decision (read by
     // the HUD/FX paths that only care about enemy targets), rather than a separately-scored pick.
     player.aimEnemy = player.convergeTarget?.mech ? player.convergeTarget : null;
+    // #483: a STATIC pick (destructible hex / wall span) gets described for the top-left target
+    // readout — texture, name and live HP — attached onto the pick itself so the pure HUD snapshot
+    // can draw it. Enemy picks carry `.mech` and are shaped by the snapshot directly.
+    if (player.convergeTarget && !player.convergeTarget.mech) {
+      this._describeStaticTarget?.(player.convergeTarget);
+    }
 
     // Reticle slide (#252): ease the drawn position toward the live aim point each frame rather
     // than snapping. Null when there's nothing targeted (nothing drawn); a fresh acquisition

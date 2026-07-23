@@ -3,7 +3,7 @@ import {
   TERRAIN, getTerrain, terrainSpeedFactor, isPassable, blocksLOS,
   isDestructible, buildingHp, damageBuilding, RUBBLE, rubbleFor,
   isSoftCover, shotBlockedAt, FLAME_COVER_MULT, flameCoverDamage,
-  isWaterTerrain, isMissionObjective,
+  isWaterTerrain, isMissionObjective, terrainDisplayName,
   SLOW_MOVEMENT_FACTOR, movementTier, coverTier, isBaseCategory,
   coverBlocksForRay, NATURAL_TERRAIN_DESTRUCTIBLE,
   clearedSoftCoverFor, softCoverStopsShot, softCoverHexBlockChance,
@@ -861,5 +861,24 @@ describe('#313 destructible-structure HP retune (owner-confirmed values)', () =>
     for (const id of ['dockClosed', 'objective']) {
       expect(buildingHp(id)).toBeGreaterThanOrEqual(CHEAPEST_UNIT_TOUGHNESS);
     }
+  });
+});
+
+describe('terrainDisplayName (#483 — the target-readout label for a locked hex)', () => {
+  it('uses friendly overrides for the lockable base structures and rubble', () => {
+    expect(terrainDisplayName('dockClosed')).toBe('DOCK');
+    expect(terrainDisplayName('alertTower')).toBe('ALERT TOWER');
+    expect(terrainDisplayName('objective')).toBe('OBJECTIVE');
+    expect(terrainDisplayName('rubble')).toBe('RUBBLE');
+  });
+
+  it('humanises camelCase ids that have no override', () => {
+    expect(terrainDisplayName('grassB')).toBe('GRASS B');
+    expect(terrainDisplayName('deepWater')).toBe('DEEP WATER');
+  });
+
+  it('is a safe non-empty label for a missing id', () => {
+    expect(terrainDisplayName(undefined)).toBe('STRUCTURE');
+    expect(terrainDisplayName(null)).toBe('STRUCTURE');
   });
 });
