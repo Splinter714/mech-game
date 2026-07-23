@@ -365,6 +365,20 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   }
 
   // Hip skirts over the inner-top of each leg (read as "legs tuck under the body").
+  // #438 follow-up: the plates now FOLLOW THE LEGS. Their outer edge is derived from the leg's
+  // own outer edge in `mechLayout` (which is `legSpread`/`legW`-driven), so a future stance
+  // change carries the skirts along instead of leaving them at the default width. The INNER
+  // edge stays pinned to the pelvis: sliding the whole plate out 1:1 with the stance would open
+  // a gap between hip and pelvis and break the "leg tucks UNDER the body" read, so a wider
+  // stance STRETCHES the plate outward instead — which is also what makes the hips read wider.
+  // Fractions are of bodyWid; the derived numbers reproduce the old literals exactly at the
+  // default stance (legSpread 1, legW 1 → leg outer edge 0.29W → outer-top 0.27W, bottom 0.215W).
+  const legOuter = (Math.abs(lay.leftLeg.x) + lay.leftLeg.w / 2) / a.bodyWid;
+  const SKIRT_INNER = 0.02;    // pelvis-side edge — fixed; this is the tuck anchor
+  const SKIRT_INSET = 0.02;    // keep the plate just inside the leg's outer edge
+  const SKIRT_TUCK = 0.055;    // how far the outer-BOTTOM corner draws back in (the tuck)
+  const skirtOuterTop = Math.max(SKIRT_INNER + 0.06, legOuter - SKIRT_INSET);
+  const skirtOuterBot = Math.max(SKIRT_INNER + 0.03, skirtOuterTop - SKIRT_TUCK);
   for (const dx of [-1, 1]) {
     // #446: the enemy's hip used to be a stack of four ellipses (a shoulder-of-ham blob over each
     // leg). Both factions now use the angular tucked skirt below — the silhouette that actually
@@ -376,15 +390,18 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     // OUTER-bottom corner draws in (the tuck), giving the slope without the sideways jut.
     // W = a.bodyWid, L = a.bodyLen. `g` insets/expands the outer edge for each shade layer.
     const skirt = (g) => [
-      [dx * a.bodyWid * (0.02 - g),  a.bodyLen * (0.055 - g)],   // inner-top (over pelvis)
-      [dx * a.bodyWid * (0.27 + g),  a.bodyLen * (0.055 - g)],   // outer-top (≈ leg outer edge)
-      [dx * a.bodyWid * (0.215 + g), a.bodyLen * (0.17 + g)],    // outer-bottom (tucked in)
-      [dx * a.bodyWid * (0.02 - g),  a.bodyLen * (0.17 + g)],    // inner-bottom
+      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (0.055 - g)],  // inner-top (over pelvis)
+      [dx * a.bodyWid * (skirtOuterTop + g), a.bodyLen * (0.055 - g)],  // outer-top (≈ leg outer edge)
+      [dx * a.bodyWid * (skirtOuterBot + g), a.bodyLen * (0.17 + g)],   // outer-bottom (tucked in)
+      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (0.17 + g)],   // inner-bottom
     ];
     if (T.legibilityHalo) poly(sg, skirt(0.02), HALO);
     poly(sg, skirt(0.01), T.outline);
     poly(sg, skirt(0), T.faceMid);
-    rectC(sg, dx * a.bodyWid * 0.145, a.bodyLen * 0.08, a.bodyWid * 0.22, Math.max(0.8, 0.6 * s), T.rim);
+    // Rim highlight spans the plate's top edge, so it stretches with it.
+    const rimMid = (SKIRT_INNER + skirtOuterTop) / 2;
+    rectC(sg, dx * a.bodyWid * rimMid, a.bodyLen * 0.08,
+      a.bodyWid * (skirtOuterTop - SKIRT_INNER) * 0.88, Math.max(0.8, 0.6 * s), T.rim);
   }
 }
 
