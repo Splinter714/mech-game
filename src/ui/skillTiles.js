@@ -23,7 +23,44 @@ export const TILE_UI = {
   // visually from the plain warm/red "empty but actively regenerating" look so the player
   // isn't left wondering why the bar isn't creeping back up.
   cooldown: '#5e7ce0', cooldownHex: 0x5e7ce0,
+  // #452: the button now reads as a physical KEY on a console rather than a flat swatch —
+  // rounded corners, a lit top bevel (the same "dark face, rim on the lit edge" language the mech
+  // art itself is drawn in) and a soft halo just outside the edge so it pops off the console
+  // plate behind it. Deliberately a small move: this is still the same tile, better lit.
+  radius: 9,          // corner rounding
+  edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
+  bevel: 0x6d8299,    // the lit top/left inner bevel
+  halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
 };
+
+// Paint one tile's PLATE — the rounded body, its lit bevel, its edge and the halo just outside
+// it. A Graphics rather than a Rectangle purely because Phaser's Rectangle cannot round its
+// corners; the tile's hit area is still the plain rect (see `drawSkillTile`).
+export function paintTilePlate(g, rect, { selected = false } = {}) {
+  const { x, y, w, h } = rect;
+  const r = Math.min(TILE_UI.radius, w / 4);
+  g.clear();
+  // Outside-the-edge halo: two fading passes, since plain Graphics has no blur (the same stacked-
+  // silhouette stand-in the HUD's chevron glow and shield bar use).
+  const haloCol = selected ? TILE_UI.sel : TILE_UI.halo;
+  for (const [pad, a] of [[3.5, selected ? 0.20 : 0.07], [1.5, selected ? 0.40 : 0.16]]) {
+    g.lineStyle(2, haloCol, a);
+    g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r + pad);
+  }
+  // The plate itself.
+  g.fillStyle(selected ? TILE_UI.cardSel : TILE_UI.card, 1);
+  g.fillRoundedRect(x, y, w, h, r);
+  // Lit top bevel — a highlight along the top edge only, so the button reads as catching light
+  // from above like every other plated surface in the game.
+  g.lineStyle(1.5, TILE_UI.bevel, selected ? 0.55 : 0.34);
+  g.beginPath();
+  g.moveTo(x + r, y + 1.5);
+  g.lineTo(x + w - r, y + 1.5);
+  g.strokePath();
+  // Crisp outer edge.
+  g.lineStyle(selected ? 2 : 1.25, selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
+  g.strokeRoundedRect(x, y, w, h, r);
+}
 
 // A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`.
 export function tileRow(x, w, { y, bottom, n = TILE_ORDER.length, gap = 12, maxSize = 132 } = {}) {
@@ -39,8 +76,13 @@ export function tileRow(x, w, { y, bottom, n = TILE_ORDER.length, gap = 12, maxS
 // iconAlpha, ammoFrac, emptyLabel }.
 export function drawSkillTile(scene, parent, rect, opts) {
   const cx = rect.x + rect.w / 2;
-  const bg = scene.add.rectangle(rect.x, rect.y, rect.w, rect.h, TILE_UI.card)
-    .setOrigin(0, 0).setStrokeStyle(1, TILE_UI.edge);
+  // #452: the visible body of the tile is `plate` (a Graphics, so it can round its corners and
+  // carry a halo). `bg` survives as an INVISIBLE rectangle covering the same box — it is the hit
+  // area the garage attaches its click handler to (`refs.bg.setInteractive(...)`), which a
+  // Graphics has no implicit shape for.
+  const plate = scene.add.graphics();
+  const bg = scene.add.rectangle(rect.x, rect.y, rect.w, rect.h, TILE_UI.card, 0)
+    .setOrigin(0, 0);
   const bind = scene.add.text(cx, rect.y + 6, '', {
     fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.13)}px`, color: TILE_UI.accent,
   }).setOrigin(0.5, 0);
@@ -60,19 +102,19 @@ export function drawSkillTile(scene, parent, rect, opts) {
   }).setOrigin(0.5, 0);
   const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
   const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
-  parent.add([bg, bind, icon, plus, subtitle, barTrack, bar]);
-  const refs = { rect, bg, bind, icon, plus, subtitle, barTrack, bar };
+  parent.add([plate, bg, bind, icon, plus, subtitle, barTrack, bar]);
+  const refs = { rect, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
   updateSkillTile(refs, opts);
   return refs;
 }
 
 // Apply dynamic state to a tile built by drawSkillTile.
 export function updateSkillTile(refs, opts) {
-  const { rect, bg, bind, icon, plus, subtitle, barTrack, bar } = refs;
+  const { rect, plate, bind, icon, plus, subtitle, barTrack, bar } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
     iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0 } = opts;
 
-  bg.setFillStyle(selected ? TILE_UI.cardSel : TILE_UI.card).setStrokeStyle(selected ? 2 : 1, selected ? TILE_UI.sel : TILE_UI.edge);
+  paintTilePlate(plate, rect, { selected });
   bind.setText(mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
   if (itemId) {

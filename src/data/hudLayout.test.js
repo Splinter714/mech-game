@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, hudPlayerSnapshot, lockPointOf,
   HUD_COLUMN_W, integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER,
+  consoleLayout, targetPodAnchor, targetPodLayout, bodyPools, hudTargetSnapshot,
 } from './hudLayout.js';
 import { LOCATIONS } from './anatomy.js';
 
@@ -159,6 +160,157 @@ describe('integrityLayout — the bottom-corner bar block', () => {
       expect(l.barW).toBeGreaterThan(2);
       expect(l.segments).toHaveLength(INTEGRITY_ORDER.length);
     }
+  });
+});
+
+// ── #452 — the console shell and the target readout ──────────────────────────────────────────
+//
+// What is easy to get silently wrong here: the pod landing ON TOP of player 2's integrity block in
+// co-op (the corner it would naturally want is taken), and the target's bars drifting out of the
+// language the player's own block is drawn in.
+describe('consoleLayout — the shell that frames the whole bottom band', () => {
+  it('spans the screen and runs flush to the bottom edge', () => {
+    const c = consoleLayout(1280, 800, 676);
+    expect(c.x).toBeGreaterThan(0);
+    expect(c.x + c.w).toBe(1280 - c.x);
+    expect(c.y + c.h).toBe(800 - c.x);   // the same gap all the way round the three outer edges
+  });
+
+  it('wraps whatever the band\'s tallest readout is, never less', () => {
+    const c = consoleLayout(1280, 800, 676);
+    expect(c.y).toBeLessThan(676);
+  });
+});
+
+describe('targetPodAnchor — where the target readout hangs', () => {
+  it('takes the far bottom-RIGHT in solo, mirroring the integrity block', () => {
+    expect(targetPodAnchor(0, 1, 1280)).toEqual({ anchorX: 1280 - 16, side: 'right' });
+  });
+
+  it('moves BOTH pods inboard in co-op, clear of player 2\'s right-hand integrity block', () => {
+    const [a, b] = [targetPodAnchor(0, 2, 1280), targetPodAnchor(1, 2, 1280)];
+    // Player 2's block hangs off the right edge (hudLayout co-op panel 1), so nothing else may.
+    const p2 = hudLayout(2, 1280).panels[1];
+    expect(a.anchorX).toBeLessThan(p2.columnX);
+    expect(b.anchorX).toBeLessThan(p2.columnX);
+    // ...and the two pods sit either side of the centre line, never overlapping each other.
+    expect(a.side).toBe('right');
+    expect(b.side).toBe('left');
+    expect(a.anchorX).toBeLessThan(b.anchorX);
+  });
+});
+
+describe('targetPodLayout — the target reads in the player\'s own bar language', () => {
+  const pod = targetPodLayout({ anchorX: 1264, bottomY: 790, availW: 400, side: 'right' });
+
+  it('hangs off its anchor edge and shares the tile row\'s baseline', () => {
+    expect(pod.x + pod.w).toBeCloseTo(1264, 5);
+    expect(pod.bars.bottom).toBe(790 - INTEGRITY_BARS.labelH);
+    expect(pod.bars.barH).toBe(INTEGRITY_BARS.barH);   // same bar length as the player's own
+  });
+
+  it('keeps HP left of armor, with the shield rightmost — exactly the integrity block\'s order', () => {
+    const seg = pod.bars.segments[0];
+    expect(seg.hpX).toBeLessThan(seg.armorX);
+    expect(pod.bars.shield.x).toBeGreaterThan(seg.armorX);
+    expect(pod.bars.shield.x + pod.bars.shield.w).toBeCloseTo(pod.x + pod.w, 5);
+  });
+
+  it('puts the preview bay inboard of the bars, inside the pod', () => {
+    expect(pod.showArt).toBe(true);
+    expect(pod.art.x).toBe(pod.x);
+    expect(pod.art.x + pod.art.w).toBeLessThanOrEqual(pod.bars.x);
+  });
+
+  it('gives up its art rather than squeezing it to nothing in a cramped co-op half', () => {
+    const tight = targetPodLayout({ anchorX: 400, bottomY: 790, availW: 50, side: 'right' });
+    expect(tight.showArt).toBe(false);
+    expect(tight.w).toBeCloseTo(tight.bars.w, 5);
+  });
+
+  it('mirrors onto a left anchor without reordering the bars', () => {
+    const left = targetPodLayout({ anchorX: 600, bottomY: 790, availW: 400, side: 'left' });
+    expect(left.x).toBe(600);
+    expect(left.bars.segments[0].hpX).toBeLessThan(left.bars.segments[0].armorX);
+  });
+});
+
+describe('bodyPools — one target\'s condition, whatever kind of body it has', () => {
+  it('reads a flat single-pool body (a vehicle) off its own fields', () => {
+    const p = bodyPools({ hp: 20, maxHp: 40, armor: 10, maxArmor: 40 });
+    expect(p.hp).toBe(0.5);
+    expect(p.armor).toBe(0.25);
+    expect(p.hasArmor).toBe(true);
+    expect(p.hasShield).toBe(false);
+  });
+
+  it('sums a part-shaped body (a mech) across its locations', () => {
+    const p = bodyPools({ parts: { a: { hp: 10, maxHp: 20, armor: 0, maxArmor: 10 }, b: { hp: 20, maxHp: 20, armor: 5, maxArmor: 10 } } });
+    expect(p.hp).toBe(0.75);
+    expect(p.armor).toBe(0.25);
+  });
+
+  it('reports a shield only when the body actually has one', () => {
+    const none = bodyPools({ hp: 1, maxHp: 1, hasShield: () => false, shield: { max: 0, hp: 0 } });
+    expect(none.hasShield).toBe(false);
+    expect(none.shield).toBe(0);
+    const shielded = bodyPools({ hp: 1, maxHp: 1, hasShield: () => true, shield: { max: 50, hp: 25 } });
+    expect(shielded.shield).toBe(0.5);
+  });
+
+  it('survives an armorless body without reporting a phantom empty armor bar', () => {
+    expect(bodyPools({ hp: 5, maxHp: 10 }).hasArmor).toBe(false);
+  });
+});
+
+describe('hudTargetSnapshot — the readout can only ever show what the reticle is on', () => {
+  const vehicle = {
+    kind: 'tank', texKey: 'kind_tank_armored', kindDef: { art: 'tank' },
+    mech: { name: 'Tank', hp: 30, maxHp: 40, armor: 0, maxArmor: 20, isDestroyed: () => false },
+  };
+
+  it('is null with nothing targeted', () => {
+    expect(hudTargetSnapshot({ id: 0 })).toBe(null);
+    expect(hudTargetSnapshot(null)).toBe(null);
+  });
+
+  it('describes a live vehicle from the SAME pick the reticle uses', () => {
+    const s = hudTargetSnapshot({ convergeTarget: vehicle });
+    expect(s.kind).toBe('vehicle');
+    expect(s.name).toBe('TANK');
+    expect(s.texKey).toBe('kind_tank_armored');   // the CURRENT (plated) set, not the bare one
+    expect(s.pools.hp).toBeCloseTo(0.75, 5);
+    expect(s.mech).toBe(null);                    // only a mech needs its live handle, for posing
+  });
+
+  it('hands a mech target its live handle, since posing needs the real chassis', () => {
+    const mech = {
+      name: 'Raider', parts: { leftArm: { hp: 1, maxHp: 1, armor: 0, maxArmor: 0 } },
+      isDestroyed: () => false, isPartDestroyed: (loc) => loc === 'leftArm',
+    };
+    const s = hudTargetSnapshot({ convergeTarget: { kind: 'mech', key: 'enemy3', mech } });
+    expect(s.kind).toBe('mech');
+    expect(s.mech).toBe(mech);
+    expect(s.texKey).toBe('enemy3');
+    expect(s.damageSig).toMatch(/1/);   // a lost location changes the signature, so the art rebuilds
+  });
+
+  it('goes null the instant the targeted unit dies — the pod goes idle, it does not freeze', () => {
+    const dead = { ...vehicle, mech: { ...vehicle.mech, isDestroyed: () => true } };
+    expect(hudTargetSnapshot({ convergeTarget: dead })).toBe(null);
+  });
+
+  it('names a destructible hex / wall span, which has no body to read', () => {
+    expect(hudTargetSnapshot({ convergeTarget: { x: 1, y: 2, hexKey: '3,4' } }))
+      .toEqual({ kind: 'structure', name: 'STRUCTURE', pools: null });
+    expect(hudTargetSnapshot({ convergeTarget: { x: 1, y: 2, edgeKey: 'e1' } }).name)
+      .toBe('WALL SECTION');
+  });
+
+  it('is what hudPlayerSnapshot publishes as `target`, alongside the chevron\'s point', () => {
+    const s = hudPlayerSnapshot({ id: 0, color: 1, mech: null, convergeTarget: vehicle });
+    expect(s.target.name).toBe('TANK');
+    expect(hudPlayerSnapshot({ id: 0, color: 1, mech: null }).target).toBe(null);
   });
 });
 

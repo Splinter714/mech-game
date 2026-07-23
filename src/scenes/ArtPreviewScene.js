@@ -9,10 +9,13 @@ import { ENEMY_KINDS, ENEMY_KIND_IDS } from '../data/enemyKinds.js';
 import { ENEMIES } from '../data/enemies.js';
 import { Mech } from '../data/Mech.js';
 import {
-  buildMechTextures, buildVehicleTextures, ARMORED_SUFFIX, partSpriteTransform,
-  MUZZLE_GLOW_SUFFIX, PIVOT_LOCATIONS, ART_SCALE, mountIconKey, itemFxKey,
+  buildMechTextures, buildVehicleTextures, ARMORED_SUFFIX, ART_SCALE, mountIconKey, itemFxKey,
 } from '../art/index.js';
 import { vehicleHasArmorArt } from '../art/vehicles/index.js';
+// #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
+// target readout renders an enemy by the exact same rules rather than a second copy of them.
+import { InkCache, texSize, fitScale } from '../art/inkBounds.js';
+import { mechPreviewKeys, poseMechInto } from '../art/preview.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { CHASSIS_IDS } from '../data/chassis/index.js';
 import { WEAPON_IDS } from '../data/weapons.js';
@@ -109,6 +112,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this._chassisIndex = -1;    // -1 = the player's own saved chassis (MECH view)
     this._damageStep = 0;
 
+    this.ink = new InkCache(this.textures);
     this.chrome = this.add.container(0, 0).setDepth(20);
     // Per-view chrome that must NOT scroll with the gallery (the live-fire catalog's header
     // bar). Separate from `chrome` because that gets rebuilt on every control click, and
@@ -304,9 +308,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // Textures this scene bakes are re-drawn in place on every rebuild (a chassis switch changes
     // the mech's whole silhouette), so their cached ink bounds must go with them. The game's own
     // boot textures never change, so those stay cached for the life of the scene.
-    for (const k of this._inkCache?.keys() ?? []) {
-      if (k.startsWith(TEX_PREFIX)) this._inkCache.delete(k);
-    }
+    this.ink.drop(TEX_PREFIX);
 
     if (this.view === 'HEXES') this._buildHexes();
     else if (this.view === 'ENEMIES') this._buildEnemies();
@@ -359,79 +361,16 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this.content.add(label);
   }
 
-  // Fit a box of w×h into `box`, returning the sprite scale. Upscaling is allowed on purpose —
-  // every texture here is super-sampled (ART_SCALE), so blowing it up is exactly how you judge
-  // edge quality, and Phaser's pixelArt mode keeps it crisp rather than smeared.
-  _fit(w, h, box) { return Math.min(box / w, box / h); }
+  // Fit a box of w×h into `box`, and the inked bounds of one texture / a stack of them. All three
+  // live in art/inkBounds.js since #452 — the HUD's target readout needs the identical rule (see
+  // that module's header for WHY fitting the canvas is wrong), and one copy can't drift.
+  _fit(w, h, box) { return fitScale(w, h, box); }
 
-  _texSize(key) {
-    const src = this.textures.exists(key) ? this.textures.get(key).getSourceImage() : null;
-    return src ? { w: src.width, h: src.height } : null;
-  }
+  _texSize(key) { return texSize(this.textures, key); }
 
-  // The INKED bounds of a texture — the box around its non-transparent pixels, not the canvas.
-  // This is what makes the gallery a detail view rather than a contact sheet: nearly every
-  // texture here is a fixed-size canvas (mech parts are a 256px square; a vehicle hull is the
-  // same square whatever the unit's real footprint), so fitting the CANVAS renders infantry as
-  // a speck and a mech at half size. Fitting the ink instead means every cell is filled by the
-  // art. Scanned once per key and cached; falls back to the full canvas if pixels aren't
-  // readable. Returned in texture px, with the ink's centre so layers can be re-centred on it.
-  _ink(key) {
-    this._inkCache ??= new Map();
-    if (this._inkCache.has(key)) return this._inkCache.get(key);
-    const src = this.textures.exists(key) ? this.textures.get(key).getSourceImage() : null;
-    if (!src) return null;
-    const W = src.width, H = src.height;
-    let box = { x: 0, y: 0, w: W, h: H, cx: W / 2, cy: H / 2 };
-    try {
-      const data = src.getContext?.('2d')?.getImageData(0, 0, W, H)?.data;
-      if (data) {
-        let x0 = W, y0 = H, x1 = -1, y1 = -1;
-        for (let y = 0; y < H; y++) {
-          for (let x = 0; x < W; x++) {
-            if (data[(y * W + x) * 4 + 3] > 8) {
-              if (x < x0) x0 = x;
-              if (x > x1) x1 = x;
-              if (y < y0) y0 = y;
-              if (y > y1) y1 = y;
-            }
-          }
-        }
-        if (x1 < x0) {
-          // Scanned successfully and found NOTHING — a fully transparent texture, which is
-          // exactly what a DESTROYED part bakes to. It must not contribute to a union (the
-          // full-canvas fallback would silently blow every damage cell up to 256×256).
-          this._inkCache.set(key, null);
-          return null;
-        }
-        box = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, cx: (x0 + x1 + 1) / 2, cy: (y0 + y1 + 1) / 2 };
-      }
-    } catch {
-      // A canvas the browser won't let us read back — the full-canvas fallback above is fine.
-    }
-    box.texW = W; box.texH = H;
-    this._inkCache.set(key, box);
-    return box;
-  }
+  _ink(key) { return this.ink.bounds(key); }
 
-  // Union of several layers' inked bounds, each optionally shifted (texture px). All layers in
-  // one cell share a canvas size, so compositing in texture space is exact.
-  _inkUnion(keys, offsets = []) {
-    let u = null;
-    keys.forEach((k, i) => {
-      const b = this._ink(k);
-      if (!b) return;
-      const o = offsets[i] ?? { x: 0, y: 0 };
-      const x0 = b.x + o.x, y0 = b.y + o.y, x1 = x0 + b.w, y1 = y0 + b.h;
-      u = u ? { x0: Math.min(u.x0, x0), y0: Math.min(u.y0, y0), x1: Math.max(u.x1, x1), y1: Math.max(u.y1, y1), texW: b.texW, texH: b.texH }
-            : { x0, y0, x1, y1, texW: b.texW, texH: b.texH };
-    });
-    if (!u) return null;
-    return {
-      w: u.x1 - u.x0, h: u.y1 - u.y0, cx: (u.x0 + u.x1) / 2, cy: (u.y0 + u.y1) / 2,
-      texW: u.texW, texH: u.texH,
-    };
-  }
+  _inkUnion(keys, offsets = []) { return this.ink.union(keys, offsets); }
 
   // A cell showing one or more textures stacked at a shared scale (hex + canopy, hull + turret).
   // `offsets` optionally shifts a layer, in TEXTURE px, before the shared scale is applied.
@@ -632,36 +571,16 @@ export default class ArtPreviewScene extends Phaser.Scene {
   // side torsos and two arms pivoted at their joints via partSpriteTransform, the player-only
   // muzzle-glow overlays (#433) sharing each part's transform, then the turret on top.
 
-  // At angle -π/2 partSpriteTransform reproduces each part's baked-in placement exactly, so the
-  // whole assembled mech lives in the parts' shared texture frame — which means the union of
-  // their inked bounds IS the mech's real silhouette box, and `ox/oy` re-centres it in the cell.
-  _mechKeys(key) {
-    return [`${key}_hull_0`, `${key}_hull_1`, `${key}_hull_2`, `${key}_hull_3`, `${key}_turret`,
-      ...PIVOT_LOCATIONS.map((loc) => `${key}_${loc}`)].filter((k) => this.textures.exists(k));
-  }
+  // At the shared preview facing (-π/2) partSpriteTransform reproduces each part's baked-in
+  // placement exactly, so the whole assembled mech lives in the parts' shared texture frame —
+  // which means the union of their inked bounds IS the mech's real silhouette box, and `ox/oy`
+  // re-centres it in the cell. Both halves live in art/preview.js since #452, so the HUD's target
+  // readout poses an enemy mech with the identical stack.
+  _mechKeys(key) { return mechPreviewKeys(this.textures, key); }
 
   _poseMech(holder, key, mech, scale, frame, ox, oy, { animate = false } = {}) {
-    const hull = this.add.sprite(ox, oy, `${key}_hull_${frame}`).setScale(scale);
-    holder.add(hull);
+    const { hull } = poseMechInto(this, holder, key, mech, scale, frame, ox, oy);
     if (animate) this._animSprites.push({ sprite: hull, prefix: `${key}_hull_`, count: 4 });
-
-    const glows = [];
-    for (const loc of ['leftTorso', 'rightTorso', 'leftArm', 'rightArm']) {
-      const t = partSpriteTransform(mech, loc, -Math.PI / 2, scale);
-      const s = this.add.sprite(0, 0, `${key}_${loc}`).setScale(scale)
-        .setOrigin(t.ox, t.oy).setPosition(ox + t.dx, oy + t.dy);
-      s.rotation = t.rot;
-      holder.add(s);
-      const gk = `${key}_${loc}${MUZZLE_GLOW_SUFFIX}`;
-      if (this.textures.exists(gk)) {
-        const g = this.add.sprite(0, 0, gk).setScale(scale)
-          .setOrigin(t.ox, t.oy).setPosition(ox + t.dx, oy + t.dy);
-        g.rotation = t.rot;
-        glows.push(g);
-      }
-    }
-    for (const g of glows) holder.add(g);
-    holder.add(this.add.sprite(ox, oy, `${key}_turret`).setScale(scale));
   }
 
   // `ink` lets a whole ROW share one scale (pass the union across every mech in it) — without

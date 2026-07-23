@@ -26,6 +26,9 @@ function stubScene() {
       },
       image: () => chainable({}),
       rectangle: () => chainable({}),
+      // #452: the tile's rounded plate is a Graphics layer now (a Rectangle cannot round its
+      // corners), painted alongside the same text/icon objects this test inspects.
+      graphics: () => chainable({}),
     },
   };
 }

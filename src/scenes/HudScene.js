@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import { LOCATION_INFO } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
+import { InkCache, fitScale } from '../art/inkBounds.js';
+import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
+import { HULL_FRAMES } from '../art/index.js';
 import { POWERUPS, durationMs } from '../data/powerups.js';
 import { isPointInView, edgeArrowPosition } from '../data/wayfinding.js';
 import { miniProjector, clampToBox } from '../data/minimap.js';
@@ -10,6 +13,7 @@ import { rendererLabel, gpuRendererString, probeGl, perfLines } from '../data/pe
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
   integrityLayout, INTEGRITY_BARS, INTEGRITY_ORDER, HUD_COLUMN_W,
+  CONSOLE, consoleLayout, targetPodAnchor, targetPodLayout,
 } from '../data/hudLayout.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
@@ -62,6 +66,9 @@ function drawChevronGlow(g, x, y, angle, size, color, alpha) {
 // garage, in a row along the BOTTOM, with each weapon's live ammo (and each ability's
 // cooldown) read right on its button. The per-part integrity readout is a block of vertical
 // bars in the BOTTOM-LEFT corner beside them (#448), sharing their baseline.
+// #452 (stage 3) frames all of that: one CONSOLE shell spans the bottom edge with the integrity
+// block, the tile row and a new bottom-right TARGET readout recessed into it as bays, so the
+// bottom of the screen reads as a single instrument panel rather than three floating widgets.
 // Runs as its own scene so it lays out in logical screen space without fighting the arena's
 // follow camera; tiles are built once and updated in place each frame.
 // #238: `cooldown` matches skillTiles.js's TILE_UI.cooldown so the subtitle text and the
@@ -152,6 +159,48 @@ function drawShieldBar(g, x, bottom, w, fh) {
   g.fillRect(x, y, w, 1.5);
 }
 
+// ── #452: the CONSOLE ────────────────────────────────────────────────────────────────────────
+//
+// The skill tiles and the integrity block used to float on the bottom edge as two unrelated
+// widgets. They now sit in ONE mech-style instrument shell that runs the width of the screen —
+// a plated body with a lit top rail and bolt heads, with each readout recessed into it as a BAY.
+// That shell is what physically connects the integrity block (bottom-left), the buttons (centre)
+// and the new target readout (bottom-right): they are bays in the same panel, not neighbours.
+// All geometry comes from data/hudLayout.js `consoleLayout`; this is only the paint.
+const CONSOLE_COL = {
+  shell: 0x171d25,      // the plate body
+  shellEdge: 0x39475a,  // its lit outer edge
+  rail: 0x5ec8e0,       // the accent rail along the top lip
+  bolt: 0x55637a,
+  bay: 0x0b0e13,        // a recessed bay's floor
+  bayEdge: 0x2a333f,
+};
+const CONSOLE_ALPHA = 0.78;   // the shell is a shade translucent, so the fight still reads behind it
+
+// Recess one bay into the console plate: a dark floor plus (optionally) a hairline frame. The
+// tile bay skips the frame — the tiles carry their own edge + halo now, and a second outline
+// around them read as a box in a box.
+function drawBay(g, rect, { framed = true } = {}) {
+  g.fillStyle(CONSOLE_COL.bay, framed ? 0.55 : 0.38);
+  g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, CONSOLE.bayRadius);
+  if (!framed) return;
+  g.lineStyle(1, CONSOLE_COL.bayEdge, 0.85);
+  g.strokeRoundedRect(rect.x, rect.y, rect.w, rect.h, CONSOLE.bayRadius);
+}
+
+// #452: the target readout's own colours. The name line takes the reticle's red so the panel and
+// the bracket drawn around the unit in the world read as the same lock.
+const POD_LIVE = '#e2533a';
+const POD_BAY_FILL = 0x0a0d12;
+// How fast the pod spins a rotor overlay, per enemy art kind — the SAME rates the arena drives
+// them at (arena/enemies.js `_updateVehicle`), which is what makes the preview read as the unit
+// you are looking at rather than a generic idle loop.
+const POD_ROTOR_SPIN = { drone: 40, helicopter: 26 };
+// Cadence of the posed mech's walk cycle in the pod. The arena advances an enemy's gait by its
+// real ground speed, which a HUD panel has no business guessing at; a steady stride reads as
+// "this thing walks" without pretending to know how fast it is currently moving.
+const POD_STEP_MS = 160;
+
 // #116/#383: corner-minimap palette (numeric, for the Graphics layer). The corridor silhouette is
 // a light steel that stands off the near-opaque dark backing; the player rides a brightened accent,
 // the objective the shared amber wayfinding highlight (so it matches the edge arrow / world marker),
@@ -180,17 +229,11 @@ export default class HudScene extends Phaser.Scene {
     this.cameras.main.setZoom(dpr);
     this.cameras.main.setOrigin(0, 0);
 
-    // #449: the top-left 'ARENA' title is gone — it named the screen you are obviously looking at.
-    // #296: the control-hints line and the debug d-pad/keys cheat sheet are dev-only playtest
-    // aids, never a shipped HUD feature — gated behind `import.meta.env.DEV` (Vite's build-time
-    // flag, stripped/dead-code-eliminated in `npm run build`; same pattern as the hex labels in
-    // ArenaScene.js and the shop-unlock skip in GarageScene.js).
-    if (import.meta.env.DEV) {
-      this.add.text(16, 36, 'WASD/L-stick: move  ·  mouse/R-stick: aim  ·  LMB/RMB/Q/E + Space: skills  ·  pad: LT/RT/LB/RB+L3  ·  M: mute  ·  G/B: garage',
-        { fontFamily: 'monospace', fontSize: '12px', color: C.dim });
-      this.add.text(16, 54, 'debug d-pad:  ↑ add  ↓ reset  ← move  → fire   ·   keys:  N add · R reset · [ move · ] fire',
-        { fontFamily: 'monospace', fontSize: '11px', color: C.dim });
-    }
+    // #449 took the top-left 'ARENA' title; #463 takes the last thing that was up there — the
+    // controls hint line and the debug d-pad/keys cheat sheet (Jackson: "all the 'controls' help
+    // text on top left should also be removed"). The top-left corner is now empty by design. The
+    // per-slot BINDS are untouched: every skill tile still shows the button that fires it, which
+    // is where a player actually needs that information.
 
     // #66: objective line, reading the live Mission published to the registry each frame.
     // #449: it moved out of the old top-LEFT text block (which also carried an 'ARENA' title, an
@@ -282,21 +325,28 @@ export default class HudScene extends Phaser.Scene {
     // here at construction: that is what makes a mid-sortie START join on gamepad 2 grow the
     // second HUD immediately (#348's ground-ring fix had exactly this bug, and the fix was the
     // same — ask the rule every frame).
+    // #452: the console shell every panel's readouts are recessed into. Its own layer, painted on
+    // a panel rebuild rather than per frame (it only moves when the player count does), and
+    // explicitly BEHIND everything else in the band.
+    this.consoleGfx = this.add.graphics().setDepth(-1);
+    // #452: the target readout poses real enemy art in a HUD bay, and every texture in this game
+    // is a fixed-size square canvas — so the art has to be fitted to its INKED bounds or a drone
+    // renders as a speck in the corner. Shared with the art gallery (art/inkBounds.js).
+    this.ink = new InkCache(this.textures);
+
     this.panels = [];
     this._panelCount = 0;
     this._syncPanels();
 
     // #80 follow-up: per-edge margins for the wayfinding arrow, so it clamps clear of the
-    // reserved HUD chrome instead of the literal screen edge. Bottom excludes the skill-tile
-    // toolbar (its top edge + a little breathing room — #448's integrity block shares that
-    // baseline and its bars are shorter than the tiles are tall, so the same margin clears
-    // them); top excludes the hints/objective text block.
-    // #366: `_tileTop` is published by the panel build (the tile row's own top edge), and the
-    // left/right insets come from the layout — a second, right-hand column has to be cleared too.
-    const tileTop = this._tileTop;
+    // reserved HUD chrome instead of the literal screen edge. #452: the bottom margin is now the
+    // whole CONSOLE shell (which wraps the tiles, the integrity block and the target readout), not
+    // just the tile row's top edge — one number for one panel.
+    // #366: the left/right insets come from the layout — a second, right-hand column has to be
+    // cleared too. Top clears the corner minimap.
     this.wayMargins = {
       top: 116, right: this._layout.margins.right,
-      bottom: this.H - tileTop + 12, left: this._layout.margins.left,
+      bottom: this.H - this._consoleTop + 6, left: this._layout.margins.left,
     };
     // #260: the lock-target arrow uses the same margins, bumped out a further 16px on every edge —
     // if the objective and the live lock target ever sit in the same off-screen direction at once,
@@ -400,8 +450,64 @@ export default class HudScene extends Phaser.Scene {
       this.panels.push(this._makePanel(spec, count, snapshots[spec.index]));
     }
     this._panelCount = this._layout.panels.length;
-    this._tileTop = this.panels[0].tileTop;
+    // #452: the shell wraps whatever the panels just laid out, so it is painted from them rather
+    // than from its own idea of where they are — and it must be painted BEFORE the chrome layout,
+    // which reads `_consoleTop` for the wayfinding margins.
+    this._paintConsole();
     this._applyChromeLayout();
+  }
+
+  // #452: paint the console shell + one recessed bay per readout. Called on a panel rebuild only
+  // (the shell is a function of the player count and the window size, neither of which changes
+  // per frame). Every number comes from the panels' own layouts, so a bay can never drift off
+  // what it frames.
+  _paintConsole() {
+    // The band's top edge, which the wayfinding margins clamp to. Defaulted first so a panel-less
+    // frame (or a scene double with no Graphics) can never leave it undefined.
+    this._consoleTop = this.H - 10;
+    const g = this.consoleGfx;
+    if (!g) return;
+    g.clear();
+    if (!this.panels.length) return;
+    const pad = CONSOLE.bayPad;
+    // The band's content ceiling: the highest thing any panel put in it (in practice the integrity
+    // header line, which sits a little above the tile row).
+    let contentTop = Infinity;
+    for (const p of this.panels) {
+      contentTop = Math.min(contentTop, p.tileTop, p.bars.headerY, p.pod ? p.pod.top : Infinity);
+    }
+    const c = consoleLayout(this.W, this.H, contentTop);
+    this._consoleTop = c.y;
+
+    // The plate: rounded along the TOP only — the bottom is flush with the screen edge, which is
+    // what makes it read as a console built into the frame rather than a floating card.
+    const corners = { tl: CONSOLE.radius, tr: CONSOLE.radius, bl: 4, br: 4 };
+    g.fillStyle(CONSOLE_COL.shell, CONSOLE_ALPHA);
+    g.fillRoundedRect(c.x, c.y, c.w, c.h, corners);
+    g.lineStyle(1, CONSOLE_COL.shellEdge, 0.8);
+    g.strokeRoundedRect(c.x, c.y, c.w, c.h, corners);
+    // Lit top rail + bolt heads at each end — the whole "mech-style" read, in three strokes.
+    g.lineStyle(2, CONSOLE_COL.rail, 0.35);
+    g.beginPath();
+    g.moveTo(c.x + CONSOLE.railInset, c.y + 3.5);
+    g.lineTo(c.x + c.w - CONSOLE.railInset, c.y + 3.5);
+    g.strokePath();
+    // The bolts ride the RAIL's own line (the bays below start only a few px down, and would
+    // otherwise paint straight over them).
+    g.fillStyle(CONSOLE_COL.bolt, 0.9);
+    for (const bx of [c.x + CONSOLE.boltInset, c.x + c.w - CONSOLE.boltInset]) {
+      g.fillCircle(bx, c.y + 3.5, CONSOLE.boltR);
+    }
+
+    const bottom = this.H - 10 + pad;
+    for (const panel of this.panels) {
+      const b = panel.bars;
+      drawBay(g, { x: b.x - pad, y: b.headerY - 2, w: b.w + pad * 2, h: bottom - (b.headerY - 2) });
+      const t = panel.tileBox;
+      if (t) drawBay(g, { x: t.x - pad, y: t.y - pad, w: t.w + pad * 2, h: bottom - (t.y - pad) }, { framed: false });
+      const pod = panel.pod;
+      if (pod) drawBay(g, { x: pod.x - pad, y: pod.headerY - 2, w: pod.w + pad * 2, h: bottom - (pod.headerY - 2) });
+    }
   }
 
   // Reposition the SHARED chrome that has to move out of a second panel's way. Guarded on each
@@ -413,7 +519,7 @@ export default class HudScene extends Phaser.Scene {
       .setOrigin(shared.objectiveOriginX, 0);
     if (!this.wayMargins) return;   // first build: create() sets these itself, just below
     this.wayMargins = {
-      top: 116, right: margins.right, bottom: this.H - this._tileTop + 12, left: margins.left,
+      top: 116, right: margins.right, bottom: this.H - this._consoleTop + 6, left: margins.left,
     };
     this.lockWayMargins = {
       top: this.wayMargins.top + 16, right: this.wayMargins.right + 16,
@@ -477,7 +583,10 @@ export default class HudScene extends Phaser.Scene {
     // A downed player must read as DOWN — WAITING/RESPAWN, not as a stale or zeroed block. The
     // bars themselves keep showing the wreck truthfully; this line says why nothing is happening
     // and how long it has left (data/hudLayout.js `panelStatusText`, off data/respawn.js's clock).
-    panel.statusText = this.add.text(bars.x, bars.statusY, '', {
+    // #452: it sits ON the header's line and hides the header while it shows — the two are
+    // mutually exclusive states, and a second stacked text row made the console taller for a line
+    // nobody ever sees at the same time as the other.
+    panel.statusText = this.add.text(bars.x, bars.headerY, '', {
       fontFamily: 'monospace', fontSize: '11px', color: C.bad,
     }).setVisible(false);
 
@@ -488,12 +597,63 @@ export default class HudScene extends Phaser.Scene {
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
     }
     panel.tileTop = tiles.length ? tiles[0].y : this.H - 10;
+    // The row's outer box, so the console can recess a bay behind exactly what the tiles occupy.
+    panel.tileBox = tiles.length
+      ? { x: tiles[0].x, y: tiles[0].y, w: last.x + last.w - tiles[0].x, h: last.h }
+      : null;
+
+    this._makeTargetPod(panel, spec, count, tiles);
     return panel;
   }
 
+  // ── #452: the TARGET readout ──────────────────────────────────────────────────────────────
+  //
+  // The far end of the console: an ANIMATED preview of the unit this player currently has locked
+  // — the same `convergeTarget` the red reticle is drawn on, so the two can never disagree — with
+  // its health / armor / shield beside it in the identical bars-and-no-numbers language the
+  // player's own integrity block uses (the bars are literally laid out by `integrityLayout` and
+  // painted by the same functions). Bottom-right in solo; in co-op both pods move inboard to the
+  // gap between the two tile rows, because the right edge belongs to player 2's integrity block
+  // — see `targetPodAnchor`.
+  _makeTargetPod(panel, spec, count, tiles) {
+    const anchor = targetPodAnchor(spec.index, count, this.W);
+    const first = tiles[0], last = tiles[tiles.length - 1];
+    // Room between the pod's outer edge and this panel's own tile row.
+    const availW = anchor.side === 'right'
+      ? anchor.anchorX - ((last ? last.x + last.w : 0) + INTEGRITY_BARS.tileClear)
+      : ((first ? first.x : this.W) - INTEGRITY_BARS.tileClear) - anchor.anchorX;
+    const pod = targetPodLayout({
+      anchorX: anchor.anchorX, side: anchor.side, bottomY: this.H - 10, availW,
+    });
+    // A window narrow enough that the pod would overlap the tiles gets no pod at all rather than
+    // a squashed one — the tiles and the integrity block are the readouts you cannot lose.
+    if (pod.w > Math.max(0, availW)) return;
+    panel.pod = pod;
+    panel.podGfx = this.add.graphics();
+    panel.podArt = this.add.container(pod.art.x + pod.art.w / 2, pod.art.y + pod.art.h / 2);
+    panel.podName = this.add.text(pod.x, pod.headerY, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: C.dim,
+    });
+    // Same two-letter labels under the bars as the integrity block's segments: what the bar is,
+    // never how much of it.
+    const L = pod.bars;
+    panel.podLabels = [
+      this.add.text(L.segments[0].cx, L.labelY, 'TGT', {
+        fontFamily: 'monospace', fontSize: '10px', color: C.dim,
+      }).setOrigin(0.5, 0),
+      this.add.text(L.shield.x + L.shield.w / 2, L.labelY, 'SH', {
+        fontFamily: 'monospace', fontSize: '10px', color: C.accent,
+      }).setOrigin(0.5, 0).setVisible(false),
+    ];
+    panel.podSig = undefined;   // identity of the art currently built (undefined = nothing built)
+    panel.podAnim = null;
+  }
+
   _destroyPanel(panel) {
+    panel.podArt?.removeAll(true);
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
+      panel.podGfx, panel.podArt, panel.podName, ...(panel.podLabels ?? []),
       ...Object.values(panel.partLabels), ...panel.extras,
     ];
     for (const o of objs) o?.destroy();
@@ -510,11 +670,13 @@ export default class HudScene extends Phaser.Scene {
 
   // One panel's per-frame refresh. `snapshot` missing = that player left the field (the panel is
   // about to be rebuilt away next frame anyway) — hide rather than draw stale numbers.
-  _updatePanel(panel, snapshot) {
+  _updatePanel(panel, snapshot, delta = 16) {
     const mech = snapshot?.mech;
     const present = !!mech;
     panel.skillBar.setVisible(present);
     panel.statusText.setVisible(false);
+    panel.header.setVisible(present);
+    this._updateTargetPod(panel, present ? snapshot : null, delta);
     if (!present) {
       panel.partBarsGfx.clear();
       return;
@@ -559,7 +721,141 @@ export default class HudScene extends Phaser.Scene {
     // waiting on. Everything else in the panel keeps reading true.
     const status = panelStatusText(snapshot);
     panel.skillBar.setAlpha(snapshot.dead ? 0.3 : 1);
-    if (status) panel.statusText.setText(status).setVisible(true);
+    // #452: the downed line takes the header's place rather than stacking above it.
+    if (status) {
+      panel.statusText.setText(status).setVisible(true);
+      panel.header.setVisible(false);
+    }
+  }
+
+  // The target pod's per-frame refresh: rebuild its posed art when the locked unit changes, redraw
+  // its bars, and advance whatever that unit is doing (rotors, walk cycle, bay doors).
+  _updateTargetPod(panel, snapshot, delta) {
+    const pod = panel.pod;
+    if (!pod) return;
+    // A downed player has no live pick — the same rule the off-screen lock chevron follows.
+    const t = snapshot && !snapshot.dead ? (snapshot.target ?? null) : null;
+    const sig = t ? `${t.kind}|${t.texKey}|${t.damageSig}` : null;
+    if (sig !== panel.podSig) {
+      panel.podSig = sig;
+      this._buildPodArt(panel, t);
+    }
+
+    // The name line — the unit you are locked on, in the reticle's own red; a dim 'NO TARGET'
+    // when there is nothing, so the pod reads as idle instead of vanishing.
+    const wide = Math.max(4, Math.floor(pod.w / 6.7));
+    panel.podName.setText(t ? t.name.slice(0, wide) : 'NO TARGET').setColor(t ? POD_LIVE : C.dim);
+
+    const g = panel.podGfx;
+    const L = pod.bars;
+    g.clear();
+    // The preview bay, always drawn: an empty recess reads as "nothing locked", where hiding it
+    // would collapse the pod's shape every time a target dies.
+    if (pod.showArt) {
+      const a = pod.art;
+      g.fillStyle(POD_BAY_FILL, 0.75);
+      g.fillRoundedRect(a.x, a.y, a.w, a.h, 6);
+      g.lineStyle(1, BAR_EDGE, 0.9);
+      g.strokeRoundedRect(a.x, a.y, a.w, a.h, 6);
+      if (!t) {
+        // Idle: a faint crosshair where the unit would stand.
+        const cx = a.x + a.w / 2, cy = a.y + a.h / 2, r = 7;
+        g.lineStyle(1, BAR_EDGE, 0.9);
+        g.beginPath();
+        g.moveTo(cx - r, cy); g.lineTo(cx + r, cy);
+        g.moveTo(cx, cy - r); g.lineTo(cx, cy + r);
+        g.strokePath();
+      }
+    }
+
+    // ...and the bars, in exactly the language the player's own block uses: HP left, armor right,
+    // shield last, every track drawn full height whether or not there is anything to put in it.
+    const seg = L.segments[0];
+    const p = t?.pools ?? null;
+    drawBarTrack(g, seg.hpX, L.top, L.barW, L.barH);
+    drawBarTrack(g, seg.armorX, L.top, L.barW, L.barH);
+    drawBarTrack(g, L.shield.x, L.top, L.shield.w, L.barH);
+    if (p) {
+      drawHpBar(g, seg.hpX, L.top, L.barW, L.barH, p.hp);
+      if (p.hasArmor) drawArmorBar(g, seg.armorX, L.top, L.barW, L.barH, p.armor);
+      if (p.hasShield) drawShieldBar(g, L.shield.x, L.bottom, L.shield.w, L.barH * p.shield);
+    }
+    panel.podLabels[1].setVisible(!!p?.hasShield);
+
+    this._animatePod(panel, t, delta);
+  }
+
+  // Build the posed sprites for one locked unit. Vehicles are the hull + turret pair the arena
+  // stacks; mechs are the full six-sprite pose. Both are fitted to their INKED bounds rather than
+  // their canvas — see art/inkBounds.js for why that is the whole ball game here.
+  _buildPodArt(panel, t) {
+    panel.podArt.removeAll(true);
+    panel.podAnim = null;
+    if (!t || !panel.pod.showArt || !t.texKey) return;
+    const a = panel.pod.art;
+    const box = Math.min(a.w, a.h) - a.inset * 2;
+    if (box <= 0) return;
+
+    if (t.kind === 'mech') {
+      if (!t.mech) return;
+      // A mech re-skins IN PLACE as it loses parts (same keys, new pixels), so its cached ink
+      // bounds have to be dropped when its DAMAGE changes — but only then. Re-acquiring the same
+      // undamaged mech (sweeping the reticle back and forth across a fight) must not re-scan nine
+      // 256px canvases every time; that is the one genuinely expensive thing this pod can do.
+      this._podInkSig ??= new Map();
+      if (this._podInkSig.get(t.texKey) !== t.damageSig) {
+        this._podInkSig.set(t.texKey, t.damageSig);
+        this.ink.drop(`${t.texKey}_`);
+      }
+      const u = this.ink.union(mechPreviewKeys(this.textures, t.texKey));
+      if (!u) return;
+      const s = fitScale(u.w, u.h, box);
+      const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
+      const { hull } = poseMechInto(this, panel.podArt, t.texKey, t.mech, s, 0, ox, oy);
+      panel.podAnim = { hull, prefix: `${t.texKey}_hull_`, frames: HULL_FRAMES, frame: 0, acc: 0 };
+      return;
+    }
+
+    const keys = vehiclePreviewKeys(t.texKey, t);
+    const live = [keys.hull, keys.turret].filter((k) => this.textures.exists(k));
+    if (!live.length) return;
+    const u = this.ink.union(live);
+    if (!u) return;
+    const s = fitScale(u.w, u.h, box);
+    const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
+    const anim = { spin: 0, rotor: POD_ROTOR_SPIN[t.art] ?? 0 };
+    if (this.textures.exists(keys.hull)) {
+      anim.hull = this.add.sprite(ox, oy, keys.hull).setScale(s);
+      panel.podArt.add(anim.hull);
+      if (t.legFrames) Object.assign(anim, { prefix: `${t.texKey}_hull_`, frames: t.legFrames, frame: 0, acc: 0 });
+    }
+    if (this.textures.exists(keys.turret)) {
+      anim.turret = this.add.sprite(ox, oy, keys.turret).setScale(s);
+      panel.podArt.add(anim.turret);
+      anim.turretPrefix = t.turretFrames ? `${t.texKey}_turret_` : null;
+    }
+    panel.podAnim = anim;
+  }
+
+  // Advance the posed unit. Rotors spin at the arena's own rates, a legged/walking unit steps
+  // through its baked cycle, and a multi-frame turret (the carrier's bay doors) simply renders
+  // whatever frame the live unit is on — so what the pod shows is what that thing is doing.
+  _animatePod(panel, t, delta) {
+    const a = panel.podAnim;
+    if (!a) return;
+    if (a.rotor && a.turret) {
+      a.spin += (delta / 1000) * a.rotor;
+      a.turret.rotation = a.spin;
+    }
+    if (a.prefix && a.frames > 1 && a.hull) {
+      a.acc += delta;
+      if (a.acc >= POD_STEP_MS) {
+        a.acc = 0;
+        a.frame = (a.frame + 1) % a.frames;
+        a.hull.setTexture(`${a.prefix}${a.frame}`);
+      }
+    }
+    if (a.turretPrefix && a.turret) a.turret.setTexture(`${a.turretPrefix}${t?.turretFrame ?? 0}`);
   }
 
   // Dev overlay label for the active input scheme. #346 added a third one, 'touch';
@@ -569,7 +865,9 @@ export default class HudScene extends Phaser.Scene {
     return m === 'pad' ? 'CONTROLLER' : m === 'touch' ? 'TOUCH' : 'MOUSE + KB';
   }
 
-  update() {
+  // `delta` (ms since the last frame) drives the #452 target readout's animation — the pod's
+  // rotors/walk cycle are the only thing in this scene that moves under its own steam.
+  update(time, delta = 16) {
     // #366: re-ask the player list EVERY frame — this is what picks up a mid-sortie START join
     // (or a garage co-op deploy) and grows the second panel without a redeploy.
     const snapshots = this._syncPanels();
@@ -588,7 +886,7 @@ export default class HudScene extends Phaser.Scene {
     // #366: one pass per PANEL — its own tiles/ammo, its own integrity bars, its own shield row,
     // its own downed-and-waiting line. Solo runs this exactly once, over the
     // same objects at the same coordinates the singleton HUD used.
-    for (const panel of this.panels) this._updatePanel(panel, snapshots[panel.index]);
+    for (const panel of this.panels) this._updatePanel(panel, snapshots[panel.index], delta);
 
     // #449: the standalone `ENEMIES alive/total` readout and the `OBJECTIVES n  SCRAP n` run line
     // are both gone. The enemy tally was not deleted, it MOVED: `baseClearLabel` below already

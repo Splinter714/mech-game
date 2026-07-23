@@ -40,12 +40,18 @@ function stub(extra = {}) {
     setFillStyle() { return o; },
     setTexture() { return o; },
     setDisplaySize() { return o; },
+    setInteractive() { return o; },
     add() { return o; },
+    removeAll() { return o; },
     clear() { return o; },
     fillStyle() { return o; },
     fillRect() { return o; },
     lineStyle() { return o; },
     strokeRect() { return o; },
+    // #452: the console shell, the recessed bays and the rounded skill-tile plates.
+    fillRoundedRect() { return o; },
+    strokeRoundedRect() { return o; },
+    fillCircle() { return o; },
     beginPath() { return o; },
     moveTo() { return o; },
     lineTo() { return o; },
@@ -165,7 +171,7 @@ describe('HudScene panels — the mid-sortie join (START on gamepad 2)', () => {
     // The mechanism above only works if update() actually calls it each frame — pinned against
     // the source because that is precisely the line whose removal reintroduces #348's bug.
     const src = readFileSync(new URL('./HudScene.js', import.meta.url), 'utf8');
-    const update = src.slice(src.indexOf('\n  update() {'));
+    const update = src.slice(src.indexOf('\n  update(time'));
     expect(update.slice(0, update.indexOf('\n  }'))).toMatch(/this\._syncPanels\(\)/);
   });
 });
