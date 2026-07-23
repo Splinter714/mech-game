@@ -8,7 +8,7 @@ import {
   garageAction, garageActionLabel, garageStatusText, advanceEditing, joinPlayer, canJoin,
   playerTabs,
 } from '../data/coopGarage.js';
-import { playerColor } from '../data/players.js';
+import { playerAccent, playerColor } from '../data/players.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -114,7 +114,7 @@ export default class GarageScene extends Phaser.Scene {
     this.dollW = this.W - this.previewW - 60;
     this._rowBottom = this.H - 22;                  // tile-row bottom edge
 
-    buildMechTextures(this, 'garageMech', this.mech);
+    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
 
     // The catalog starts below the two-line SCRAP/last-run readout (right-anchored, see below)
     // rather than right under the tab bar, so the two never share a horizontal band at narrow
@@ -219,6 +219,17 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshPlayerTabs();
   }
 
+  // #404 follow-up: the art options the lab preview is baked with. The preview used to be built
+  // with NO opts at all, so it fell back to the untinted base player palette — the mech read grey
+  // in the lab and azure the instant it deployed. It now carries the rim accent of whoever is
+  // BUILDING RIGHT NOW (`session.editing`), through the very same PLAYER_ACCENTS table the arena
+  // uses (data/players.js), so the two surfaces cannot disagree: solo shows player 1's colour, and
+  // in the sequential co-op flow the preview re-tints to player 2's colour the moment the handoff
+  // rebinds the editing surface to their slot.
+  _previewArt() {
+    return { theme: 'player', accent: playerAccent(this.session.editing) };
+  }
+
   _refreshPlayerTabs() {
     this.tabsLayer?.removeAll(true);
     const tabW = 34, tabH = 24, gap = 6, x0 = 20, y = this.tabsY;
@@ -286,7 +297,12 @@ export default class GarageScene extends Phaser.Scene {
       this.allMechs[prevKey] = this.mech;      // commit the outgoing player's work
       this.mech = this.allMechs[this.mechKey];
       this.mech.repairAll();
-      reskinMech(this, 'garageMech', this.mech);
+      // A handoff changes the ACCENT as well as the build, and the rim tint runs over the hull
+      // (leg plates, skirts, thruster glow) just as much as the turret — so this is a full
+      // rebuild, not a reskin. reskinMech deliberately skips the hull (it is damage-independent),
+      // which would have left the outgoing player's colour on the legs. Four garage hull frames
+      // re-raster once per handoff; the arena's 16-frame player set is untouched by this path.
+      buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
       this._positionPreviewParts();
       this.selected = null;
       this.list.setIds(this._eligibleIds(null));
@@ -469,7 +485,7 @@ export default class GarageScene extends Phaser.Scene {
     data.chassisId = next;
     this.mech = new Mech(data);
     this.allMechs[this.mechKey] = this.mech;   // #349: whichever player is currently editing
-    buildMechTextures(this, 'garageMech', this.mech);
+    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
     this._positionPreviewParts();  // layout (side-torso/arm placement) changes with the chassis
     saveAllMechs(this.allMechs);
     this._chassisBtn?.t.setText(`⟳ ${this.mech.chassis.name}`);
@@ -657,7 +673,7 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   onChange() {
-    reskinMech(this, 'garageMech', this.mech);
+    reskinMech(this, 'garageMech', this.mech, this._previewArt());
     saveAllMechs(this.allMechs);
     this.refresh();
   }

@@ -49,7 +49,7 @@ describe('#249 Garage repairs the mech on every scene entry, not just on next de
   it('create() repairs BEFORE building the preview/paper-doll textures from this.mech', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
     const repairIdx = create.indexOf(REPAIR_ALL_SLOTS);
-    const textureIdx = create.indexOf("buildMechTextures(this, 'garageMech', this.mech);");
+    const textureIdx = create.indexOf("buildMechTextures(this, 'garageMech', this.mech");
     expect(repairIdx).toBeGreaterThan(-1);
     expect(textureIdx).toBeGreaterThan(-1);
     expect(repairIdx).toBeLessThan(textureIdx);
@@ -62,13 +62,16 @@ describe('#249 Garage repairs the mech on every scene entry, not just on next de
 
   // #349: the handoff swaps `this.mech` to the other player's slot mid-scene, so that path needs
   // the same repair guarantee the entry path has.
-  it('_setSession() repairs the incoming player mech before reskinning the preview from it', () => {
+  // #404 follow-up: the rebake is a FULL buildMechTextures here rather than a reskin, because the
+  // handoff also changes the player ACCENT and the rim tint runs over the hull, which a reskin
+  // skips. The ordering guarantee this test exists for is unchanged.
+  it('_setSession() repairs the incoming player mech before rebaking the preview from it', () => {
     const body = bodyOf(/_setSession\(next\)\s*\{[\s\S]*?\n {2}\}/);
     const repairIdx = body.indexOf('this.mech.repairAll();');
-    const reskinIdx = body.indexOf("reskinMech(this, 'garageMech', this.mech);");
+    const bakeIdx = body.indexOf("buildMechTextures(this, 'garageMech', this.mech");
     expect(repairIdx).toBeGreaterThan(-1);
-    expect(reskinIdx).toBeGreaterThan(-1);
-    expect(repairIdx).toBeLessThan(reskinIdx);
+    expect(bakeIdx).toBeGreaterThan(-1);
+    expect(repairIdx).toBeLessThan(bakeIdx);
   });
 
   it('deploy() still repairs too (belt-and-braces; harmless no-op once create() already healed it)', () => {
