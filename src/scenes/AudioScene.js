@@ -112,6 +112,7 @@ export default class AudioScene extends Phaser.Scene {
     this.sliders = [];
     this.mixRefreshers = [];
     this.triggerBtns = [];
+    this._weaponHeader = null;
     this._destroyPanel();
 
     this._buildSectionSwitch();
@@ -262,6 +263,14 @@ export default class AudioScene extends Phaser.Scene {
     const bottom = this.H - 16;
     const listW = Math.max(280, this.W - 40 - PANEL_W - PANEL_GAP);
     const panelRegion = { x: 20 + listW + PANEL_GAP, y: top, w: PANEL_W - PANEL_GAP, h: bottom - top };
+    // #470 playtest: the section used to open with NOTHING selected — an empty tuner reading
+    // "Select a weapon" next to a wall of same-looking trigger buttons, which didn't read as a
+    // picker at all. Default to the first weapon so the panel always has a subject and the
+    // highlighted button always shows which one it is.
+    if (!this._applySelection) {
+      this.selectedSfxId = WEAPON_IDS[0];
+      this._applySelection = () => this.panel.setWeapon(WEAPON_IDS[0]);
+    }
     this.panel = new WeaponSfxPanel(this, panelRegion);
     this.body.add(this.add.rectangle(panelRegion.x - PANEL_GAP / 2, panelRegion.y, 1, panelRegion.h, UI.panelEdge).setOrigin(0.5, 0));
     // A rebuild (a section switch) re-points the panel at whatever was being worked on, so
@@ -272,9 +281,17 @@ export default class AudioScene extends Phaser.Scene {
     let y = top;
     // Every weapon's fire sound — this block is the selector the garage catalog's cards used
     // to be (#121); the mech lab's catalog is a player-facing shop again, not a tuner input.
-    y += this._triggerBlock(20, y, listW, 'WEAPON SOUNDS', WEAPON_IDS.map((id) => ({
+    // It's framed and accent-headed (unlike the plain trigger rows below) because it IS the
+    // "which weapon am I tuning?" control, and the first pass shipped it looking like just
+    // another row of buttons.
+    this._weaponNames = new Map(WEAPON_IDS.map((id) => [id, getItem(id).name]));
+    const weaponEntries = WEAPON_IDS.map((id) => ({
       id, label: getItem(id).name, size: 10, apply: () => this.panel.setWeapon(id),
-    })), WEAPONS_PER_ROW) + BLOCK_GAP;
+    }));
+    const weaponsH = this._blockHeight(weaponEntries, WEAPONS_PER_ROW);
+    this.body.add(this.add.rectangle(12, y - 10, listW + 16, weaponsH + 20, UI.panel)
+      .setOrigin(0, 0).setStrokeStyle(1, UI.sel));
+    y += this._triggerBlock(20, y, listW, '', weaponEntries, WEAPONS_PER_ROW, { live: true }) + BLOCK_GAP + 10;
 
     // #107: the destruction-explosion size categories, tuned through the same panel with a
     // friendly label instead of the raw `deathExplosion…` id.
@@ -304,10 +321,14 @@ export default class AudioScene extends Phaser.Scene {
 
   // One labelled block of trigger buttons: a header line then `perRow` buttons per row, wrapping.
   // Returns the block's height so the caller can stack the next one under it.
-  _triggerBlock(x, y, w, header, entries, perRow) {
-    this.body.add(this.add.text(x, y, header, {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    }));
+  // `opts.live` marks the WEAPON block: its header is bright and names the current pick, and
+  // it's kept on `this._weaponHeader` so `_paintTriggers` can retitle it on every click.
+  _triggerBlock(x, y, w, header, entries, perRow, opts = {}) {
+    const headerText = this.add.text(x, y, header, {
+      fontFamily: 'monospace', fontSize: opts.live ? '12px' : '11px', color: opts.live ? UI.sel : UI.dim,
+    });
+    this.body.add(headerText);
+    if (opts.live) this._weaponHeader = headerText;
     const cols = Math.max(1, Math.min(perRow, entries.length));
     const bw = Math.floor((w - TRIG_GAP * (cols - 1)) / cols);
     entries.forEach((entry, i) => {
@@ -328,8 +349,14 @@ export default class AudioScene extends Phaser.Scene {
         this._paintTriggers();
       });
       this.body.add([rect, text]);
-      this.triggerBtns.push({ id: entry.id, rect });
+      this.triggerBtns.push({ id: entry.id, rect, text });
     });
+    return this._blockHeight(entries, perRow);
+  }
+
+  // A block's height, known before it's drawn (so a frame can be laid down behind it first).
+  _blockHeight(entries, perRow) {
+    const cols = Math.max(1, Math.min(perRow, entries.length));
     const rows = Math.ceil(entries.length / cols);
     return TRIG_HEADER_H + rows * TRIG_H + (rows - 1) * TRIG_GAP;
   }
@@ -337,7 +364,14 @@ export default class AudioScene extends Phaser.Scene {
   _paintTriggers() {
     for (const b of this.triggerBtns) {
       const on = b.id === this.selectedSfxId;
-      b.rect.setFillStyle(on ? 0x1b2430 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+      b.rect.setFillStyle(on ? 0x2a3446 : UI.btn).setStrokeStyle(on ? 2 : 1, on ? UI.sel : UI.panelEdge);
+      b.text.setColor(on ? '#efc14a' : UI.text);
+    }
+    if (this._weaponHeader) {
+      const name = this._weaponNames?.get(this.selectedSfxId);
+      this._weaponHeader.setText(name
+        ? `TUNING WEAPON:  ${name.toUpperCase()}   — click another to switch`
+        : 'CLICK A WEAPON TO TUNE ITS SOUND');
     }
   }
 
