@@ -161,8 +161,12 @@ export function mechLayout(mech) {
     rightTorso:  { x:  shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
     leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
     rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
-    leftLeg:     { x: -W * 0.17 * sh.legSpread, y:  L * 0.15 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
-    rightLeg:    { x:  W * 0.17 * sh.legSpread, y:  L * 0.15 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
+    // #482: `legDrop` is the leg's front/back OFFSET from the centre-torso centre (−0.05·L),
+    // not an absolute +y multiplier. legDrop 1 (DEFAULT_SHAPE) reproduces the old +0.15·L
+    // exactly, so the enemy medium is byte-identical and light/heavy shift <0.005·L; the player
+    // sets legDrop 0 to sit its legs dead-centre on the torso (front/back symmetric).
+    leftLeg:     { x: -W * 0.17 * sh.legSpread, y: -L * 0.05 + L * 0.20 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
+    rightLeg:    { x:  W * 0.17 * sh.legSpread, y: -L * 0.05 + L * 0.20 * sh.legDrop, w: W * 0.24 * sh.legW,  h: L * 0.32 * sh.legH },
   };
 }
 
@@ -348,9 +352,14 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   const lDir = strideDir(frame, frames);
   const rDir = -lDir;
 
+  // #482: pelvis + hip skirts follow the leg's front/back CENTRE (`legFrac`) so the whole hip
+  // assembly rides with the legs when `legDrop` re-centres them. At the enemy medium's legDrop 1
+  // (legFrac 0.15) every offset below reproduces the old literal exactly.
+  const legFrac = lay.leftLeg.y / a.bodyLen;
+
   // Pelvis block ties the legs together (sits under the torso, tucked up so it's mostly
   // occluded from the top-down view).
-  plate(sg, T, 0, a.bodyLen * 0.10, a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false });
+  plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
     const p = lay[loc];   // legs are animation-only now — never destroyed
@@ -390,11 +399,12 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     // (the old poly reused one un-mirrored point set, which flared asymmetrically). Only the
     // OUTER-bottom corner draws in (the tuck), giving the slope without the sideways jut.
     // W = a.bodyWid, L = a.bodyLen. `g` insets/expands the outer edge for each shade layer.
+    // #482: y-rows are offset from `legFrac` so the plate tracks the legs' front/back centre.
     const skirt = (g) => [
-      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (0.055 - g)],  // inner-top (over pelvis)
-      [dx * a.bodyWid * (skirtOuterTop + g), a.bodyLen * (0.055 - g)],  // outer-top (≈ leg outer edge)
-      [dx * a.bodyWid * (skirtOuterBot + g), a.bodyLen * (0.17 + g)],   // outer-bottom (tucked in)
-      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (0.17 + g)],   // inner-bottom
+      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (legFrac - 0.095 - g)],  // inner-top (over pelvis)
+      [dx * a.bodyWid * (skirtOuterTop + g), a.bodyLen * (legFrac - 0.095 - g)],  // outer-top (≈ leg outer edge)
+      [dx * a.bodyWid * (skirtOuterBot + g), a.bodyLen * (legFrac + 0.02 + g)],   // outer-bottom (tucked in)
+      [dx * a.bodyWid * (SKIRT_INNER - g),   a.bodyLen * (legFrac + 0.02 + g)],   // inner-bottom
     ];
     // #421: the dark contrast edge goes OUTSIDE the bright halo (see mechPrims HALO_EDGE) — the
     // skirt expands by a FRACTION of the body box, so the extra ring is one more step of `g`. The
@@ -410,7 +420,7 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     poly(sg, skirt(0), T.faceMid);
     // Rim highlight spans the plate's top edge, so it stretches with it.
     const rimMid = (SKIRT_INNER + skirtOuterTop) / 2;
-    rectC(sg, dx * a.bodyWid * rimMid, a.bodyLen * 0.08,
+    rectC(sg, dx * a.bodyWid * rimMid, a.bodyLen * (legFrac - 0.07),
       a.bodyWid * (skirtOuterTop - SKIRT_INNER) * 0.88, Math.max(0.8, 0.6 * s), T.rim);
   }
 }

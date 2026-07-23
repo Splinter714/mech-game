@@ -50,9 +50,11 @@ describe('CHASSIS — weight-class movement stats', () => {
     expect(shape.legW).toBeGreaterThan(0.72);           // thicker than the first (skinny) pass
     expect(shape.legW).toBeLessThan(1);                 // ...but not all the way back to baseline
     expect(shape.legH).toBeGreaterThan(1);              // longer legs
-    // ...spent FORWARD: front edge = L*(0.15*legDrop − 0.16*legH) must move toward -y (forward)
-    // relative to the un-shaped baseline, which is what "longer forward also" asks for.
-    const front = (s) => 0.15 * (s.legDrop ?? 1) - 0.16 * (s.legH ?? 1);
+    // ...spent FORWARD: front edge = L*(−0.05 + 0.20*legDrop − 0.16*legH) must move toward -y
+    // (forward) relative to the un-shaped baseline, which is what "longer forward also" asks for.
+    // (#482 re-anchored legDrop as an OFFSET from the torso centre; the un-shaped baseline is
+    // legDrop 1 / legH 1.)
+    const front = (s) => -0.05 + 0.20 * (s.legDrop ?? 1) - 0.16 * (s.legH ?? 1);
     expect(front(shape)).toBeLessThan(front({}));
     // The enemy Warden rides plain medium art — untouched by any of this.
     expect(CHASSIS.medium.art.shape).toBeUndefined();

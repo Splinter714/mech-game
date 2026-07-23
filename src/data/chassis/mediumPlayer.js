@@ -43,18 +43,18 @@ export const MEDIUM_PLAYER_CONFIG = {
   //   legSpread 1.4  — UNCHANGED, the wide set is the part that landed.
   //   legW      0.90 — most of the width back (was 0.72), so they read as load-bearing struts
   //                    rather than sticks, without undoing the first pass entirely.
-  //   legH      1.30 — the leg BOX is 30% longer...
-  //   legDrop   0.86 — ...and its centre rides FORWARD (legDrop scales the leg's +y offset, and
-  //                    -y is forward), so nearly all of that extra length is spent out in FRONT
-  //                    rather than trailing behind. Front edge = L*(0.15*legDrop − 0.16*legH):
-  //                    −0.4 → −3.0 design units, i.e. ~2.6 forward, against ~1.0 added at the
-  //                    heel. The outboard half of each leg sits outside the centre torso's
-  //                    footprint, so that reach is actually visible from directly overhead
-  //                    instead of disappearing under the chest plate.
+  //   legH      1.30 — the leg BOX is 30% longer.
+  //   legDrop   0    — #482 redefined legDrop as the leg's front/back OFFSET from the centre-torso
+  //                    centre (mechArt.mechLayout: y = −0.05·L + 0.20·L·legDrop). 0 sits the legs
+  //                    DEAD-CENTRE on the torso, so the box's extra length is split evenly front/
+  //                    back instead of trailing out the rear. (Was 0.86 under the old absolute
+  //                    +0.15·L·legDrop form, which left ~0.18·L more leg poking out the back than
+  //                    the front — the asymmetry the owner flagged.)
   //
   // Only the player's chassis gets this override; the enemy Warden still rides plain
-  // MEDIUM_CONFIG's art (no shape override = DEFAULT_SHAPE), so its legs are unaffected.
-  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.30, legDrop: 0.86 } },
+  // MEDIUM_CONFIG's art (no shape override = DEFAULT_SHAPE, legDrop 1 → the old +0.15·L), so its
+  // legs are unaffected.
+  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.30, legDrop: 0 } },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
   // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
   // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
