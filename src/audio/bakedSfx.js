@@ -78,6 +78,14 @@ import powerupPickupOverclockPlay from '../assets/sfx/powerupPickupOverclock-pla
 // (startMs 0, trimMs 2602 — the whole 2602ms length, not an actual trim). No fade-out, no pitch
 // shift, no volume change — all defaults, per Jackson's copy-recipe.
 import powerupPickupOverdrivePlay from '../assets/sfx/powerupPickupOverdrive-play-plusDamage.m4a';
+// #480: the UI domain's `powerupPickupShield` cue (#196 split of the powerup-pickup sfx) — the
+// FIRST baked entry for this cue, replacing its procedural sound. "DSGNMisc_INTERFACE-Zap
+// Select_HY_PC-002.wav" from the same Helton Yan pack (STEREO 96kHz 24-bit, 2.5s). Converted with
+// macOS `afconvert` to 48kHz STEREO AAC/.m4a (~192kbps, ~18KB) — kept stereo like the other
+// UI-domain stereo bakes. Played back as the full file (startMs 0, no trim — the export's
+// 0→2500ms window IS the whole 2500ms length). No fade, no pitch/filter/reverb, unity gain, per
+// the tuner export.
+import powerupPickupShieldPlay from '../assets/sfx/powerupPickupShield-play-zapSelect.m4a';
 // #206: the UI domain's `menuNav` cue — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" from
 // the same Helton Yan pack (STEREO 96kHz 24-bit, 2.5s). Converted with macOS `afconvert` to
 // 44.1kHz STEREO AAC/.m4a (~192kbps target) — kept stereo like the other UI-domain stereo bakes
@@ -258,6 +266,15 @@ export const BAKED_SFX = {
     trimMs: 2602,
     processing: null,
     volume: 0.5,
+  },
+  // #480: Helton Yan's Pixel Combat pack — "DSGNMisc_INTERFACE-Zap Select_HY_PC-002.wav" (stereo).
+  // The FULL file (startMs 0, trimMs omitted → play to the end — the tuner export's 0→2500ms
+  // window IS the whole 2500ms length) as the UI domain's powerupPickupShield cue. The FIRST
+  // baked entry for this cue, replacing its procedural sound. No trim, no fade, no processing,
+  // unity gain — the cleanest passthrough, per the tuner export.
+  'powerupPickupShield::play': {
+    asset: powerupPickupShieldPlay,
+    startMs: 0,
   },
   // Helton Yan's Pixel Combat pack — "UIClick_INTERFACE-Strong Click 1_HY_PC-001.wav" (stereo).
   // The first 190ms of the file (#166 start+trim: startMs 0, trimMs 190 — full file is 2500ms)
