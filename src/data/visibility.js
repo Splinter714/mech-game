@@ -4,7 +4,7 @@
 // renderer they shared a header with (data/shadowPolygon.js) is deleted. They are kept, tested, as
 // the general "what can be seen from this hex" utility, and because #337's breach reveal is the
 // same idea at a different cadence. What IS still live is `enemyTargetable` below, as the fallback
-// path when a scene has no fog (`_enemyVisible` is the real gate — arena/visibility.js).
+// path when a scene has no fog (`_enemyLockable` is the real gate — arena/visibility.js).
 //
 // #306: the player's FIELD OF VIEW over the hex grid — "which hexes can I actually see from
 // where I'm standing?" — as pure, testable geometry. This is categorically different from the
@@ -120,7 +120,7 @@ export function hexLineClear(a, b, terrainAt) {
 // #338 PUTS THE FLYER EXCEPTION BACK, as the first line of the function, but sourced from the
 // shared `targetCoverExempt` below rather than written inline here. That distinction is the entire
 // issue: #316 removed this line and firing.js's `ignoreCover` together, but the fog rule
-// (`enemyVisibleInFog`, data/fogRegions.js) went on exempting airborne enemies — so the LIVE
+// (`enemyPerceivableInFog`, data/fogRegions.js) went on exempting airborne enemies — so the LIVE
 // targeting path said yes to a helicopter over a base wall while the shot said no. Routing both
 // through one function makes that disagreement unwriteable.
 //
@@ -139,13 +139,13 @@ export function enemyTargetable(enemy, visible, hexKeyOf) {
 // ── #338: THE ONE PREDICATE ──────────────────────────────────────────────────────────────
 // Jackson's invariant: "you should only be able to lock what you could actually hit." The flyer
 // bug existed because target ELIGIBILITY and the SHOT were derived independently — targeting
-// exempted airborne enemies from the sight gate by rule (here, and `enemyVisibleInFog` rule 1 in
+// exempted airborne enemies from the sight gate by rule (here, and `enemyPerceivableInFog` rule 1 in
 // fogRegions.js), while firing exempted nobody by geometry (#316 deleted firing.js's
 // `ignoreCover`). Two rules in two files, disagreeing by construction: lock says yes, shot says no.
 //
 // This is that rule, written once. Both sides now call it, so flyers are exempt on BOTH or
 // NEITHER and the disagreement is not expressible. Its consumers:
-//   • target eligibility — `enemyTargetable` above (the no-fog fallback) and `enemyVisibleInFog`
+//   • target eligibility — `enemyTargetable` above (the no-fog fallback) and `enemyLockableInFog`
 //     (data/fogRegions.js), which together decide what `_updateLock` may acquire.
 //   • the shot — `_shotIgnoresCover` (scenes/arena/firing.js), gating the hitscan wall trace and
 //     the `ignoresCover` stamp an in-flight round carries.
@@ -165,7 +165,7 @@ export function enemyTargetable(enemy, visible, hexKeyOf) {
 //      see what your left arm cannot shoot past.
 //   3. Partial cover — a mech's head over a wall is visible while a flat shot into it hits stone.
 //
-// `airborne !== false` mirrors `enemyVisibleInFog`: a flying kind that is currently grounded
+// `airborne !== false` mirrors `enemyPerceivableInFog`: a flying kind that is currently grounded
 // (landed/downed) is NOT exempt — it's a ground target while it's on the ground.
 export function targetCoverExempt(target) {
   return !!(target && target.flying && target.airborne !== false);

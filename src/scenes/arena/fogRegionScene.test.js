@@ -245,7 +245,10 @@ describe('breach peek: the cone behind a nearby opening', () => {
   });
 });
 
-describe('the fog feeds drawing and targeting through one gate', () => {
+// #460 v2: drawing and targeting are TWO gates now, but the FOG half is shared — both derive from
+// `enemyPerceivableInFog`, so a compound the player has never entered hides its garrison from the
+// sprite, the minimap and the reticle alike. What the split changed is hard cover only.
+describe('the fog feeds drawing and targeting through one shared rule', () => {
   const bases = [compound('a', { q: 0, r: 0 }, 3)];
 
   it('hides a garrison enemy, and the same call is what targeting asks', () => {
@@ -256,7 +259,8 @@ describe('the fog feeds drawing and targeting through one gate', () => {
     s._updateVisibility(view);
     s._syncEnemyFogVisibility();
     expect(e.view.visible).toBe(false);
-    expect(s._enemyVisible(e)).toBe(false);
+    expect(s._enemyPerceivable(e)).toBe(false);
+    expect(s._enemyLockable(e)).toBe(false);      // fog hides it from targeting too
   });
 
   it('shows it by symmetry the moment it has a lane on him', () => {
@@ -265,7 +269,7 @@ describe('the fog feeds drawing and targeting through one gate', () => {
     const s = makeScene({ bases, enemies: [e] });
     Object.assign(s, at(9, 0));
     s._updateVisibility(view);
-    expect(s._enemyVisible(e)).toBe(true);
+    expect(s._enemyPerceivable(e)).toBe(true);
   });
 
   it('shows every enemy once he has entered', () => {
@@ -274,6 +278,6 @@ describe('the fog feeds drawing and targeting through one gate', () => {
     const s = makeScene({ bases, enemies: [e] });
     Object.assign(s, at(0, 0));
     s._updateVisibility(view);
-    expect(s._enemyVisible(e)).toBe(true);
+    expect(s._enemyPerceivable(e)).toBe(true);
   });
 });

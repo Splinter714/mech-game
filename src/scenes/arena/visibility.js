@@ -44,7 +44,8 @@ import { TARGETING_RANGE } from '../../data/targetingRange.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
-  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes, enemyVisibleInFog,
+  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes,
+  enemyPerceivableInFog, enemyLockableInFog,
   FOG_ALPHA, FOG_FEATHER_PX,
 } from '../../data/fogRegions.js';
 import { DORMANT } from '../../data/awareness.js';
@@ -203,18 +204,31 @@ export const VisibilityMixin = {
     return this._peekVisible(x, y);
   },
 
-  // Can the player SEE this enemy right now? The one gate for both drawing it and targeting it —
-  // "nobody targets what they can't see", and he never gets a lock on something he isn't shown.
-  // #460: `hardCoverLos` is the half rule 3 was missing — see data/fogRegions.js.
-  _enemyVisible(e) {
-    return enemyVisibleInFog(e, {
+  // The two enemy gates. They are NOT the same question — see the long note over
+  // `enemyPerceivableInFog` in data/fogRegions.js for why #460 v1 failed its playtest by fusing
+  // them. Shared argument bundle so the only difference between the two is the extra hard-cover
+  // raycast, and neither can quietly drift from the other's fog rules.
+  _fogArgs(e) {
+    return {
       fogged: this.foggedHexes,
       hexKeyOf: (x, y) => this._hexKeyAt(x, y),
       losClear: e?._losClear === true,
       awake: e?.awareness !== DORMANT,
       peekVisible: (x, y) => this._peekVisible(x, y),
-      hardCoverLos: (t) => this._playerSightClear(t),
-    });
+    };
+  },
+
+  // CAN THE PLAYER SEE IT? Everything that DRAWS an enemy asks this: the sprite, the objective
+  // marker (mission.js) and the minimap dot (#462). Hard cover does not hide — Jackson, on #460
+  // v1: "I should still be able to see them, they just shouldn't be in the list for targeting".
+  _enemyPerceivable(e) {
+    return enemyPerceivableInFog(e, this._fogArgs(e));
+  },
+
+  // MAY THE RETICLE ACQUIRE IT? Perceivable AND a clear hard-cover line (#460). The ONE consumer
+  // is `_updateLock` (targeting.js). Never call this to decide whether to draw something.
+  _enemyLockable(e) {
+    return enemyLockableInFog(e, { ...this._fogArgs(e), hardCoverLos: (t) => this._playerSightClear(t) });
   },
 
   // ── #460: hard-cover sight, player → enemy ───────────────────────────────────────────
@@ -272,14 +286,14 @@ export const VisibilityMixin = {
     }
   },
 
-  // Per-frame, per-enemy (a few dozen): hide anything the fog OR hard cover conceals.
-  // #460 dropped the old `!foggedHexes.size` early-out: with a geometric half to rule 3 there is
-  // now something to re-evaluate even in an arena with no compounds left unentered.
+  // Per-frame, per-enemy (a few dozen): hide only what the FOG conceals — sprites follow the
+  // PERCEIVABLE gate, never the lockable one. The sight raycast is still refreshed here because
+  // this is the one per-frame hook with a `delta`; its answer feeds targeting, not drawing.
   _syncEnemyFogVisibility(delta = 0) {
     if (!this.enemies) return;
     this._refreshPlayerSight(delta);
     for (const e of this.enemies) {
-      if (e.view) e.view.setVisible(this._enemyVisible(e));
+      if (e.view) e.view.setVisible(this._enemyPerceivable(e));
     }
   },
 };

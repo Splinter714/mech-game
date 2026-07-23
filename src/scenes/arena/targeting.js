@@ -69,15 +69,14 @@ export const TargetingMixin = {
     // back. This closes an asymmetry rather than creating one.
     const inRange = (e) => !e.mech.isDestroyed()
       && Math.hypot(e.x - player.x, e.y - player.y) <= TARGETING_RANGE
-      // #337 v2: the fog's per-enemy rule. Live, `_enemyVisible` is ALWAYS the branch taken (the
-      // mixin is unconditional); the `enemyTargetable` fallback survives only for scene doubles in
-      // tests that predate the fog. "Nobody targets what they can't see —
-      // player and enemies alike" (Jackson chose "Full parity"), and the corollary is that anything
-      // the fog DOES show him is lockable: airborne units, wall turrets, and — by symmetry — any
-      // enemy with a live firing lane on him. `_enemyVisible` is the single source of truth for
-      // both what gets drawn and what may be acquired, so the reticle can never grab a shape that
-      // isn't on screen, and a thing shooting him is never un-lockable.
-      && (this._enemyVisible ? this._enemyVisible(e)
+      // #337 v2 / #460: the fog's per-enemy rule, TARGETING half. Live, `_enemyLockable` is ALWAYS
+      // the branch taken (the mixin is unconditional); the `enemyTargetable` fallback survives only
+      // for scene doubles in tests that predate the fog. "Nobody targets what they can't see —
+      // player and enemies alike" (Jackson chose "Full parity"), plus #460's hard-cover raycast, so
+      // the reticle can never grab something a shot would splash on stone. Note this is the STRICTER
+      // of the two gates: `_enemyPerceivable` (what gets DRAWN) is deliberately laxer — a ground
+      // unit behind a boulder is still on screen, it just cannot be locked. Do not swap them.
+      && (this._enemyLockable ? this._enemyLockable(e)
         : enemyTargetable(e, this.visibleHexes, (x, y) => this._hexKeyAt(x, y)));
 
     // #322: ONE pool, ONE rule. Enemies and destructible terrain (hexes AND base wall spans,

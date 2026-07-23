@@ -3,7 +3,7 @@
 // were deleted with it; nothing in the redesign has an open-world concept to test.
 import { describe, it, expect } from 'vitest';
 import {
-  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes, enemyVisibleInFog,
+  buildFogWorld, compoundAt, fogHexes, fogFrontier, fogAlphaFor, peekHexes, enemyPerceivableInFog, enemyLockableInFog,
   FOG_ALPHA, FOG_FEATHER_PX, PEEK_RANGE_PX, PEEK_MAX_DEPTH, peekDepthFor,
 } from './fogRegions.js';
 import { axialKey, hexToPixel, range, distance } from './hexgrid.js';
@@ -114,44 +114,93 @@ describe('fogFrontier / fogAlphaFor — flat fill, feathered edge', () => {
   });
 });
 
-describe('enemyVisibleInFog', () => {
+describe('enemyPerceivableInFog', () => {
   const fogged = new Set([K(0, 0)]);
   const hexKeyOf = () => K(0, 0);                   // every enemy below sits in the fogged hex
   const opts = (extra) => ({ fogged, hexKeyOf, ...extra });
 
   it('hides a ground enemy inside an unentered compound', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts())).toBe(false);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, opts())).toBe(false);
   });
 
   it('always shows an airborne enemy', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0, flying: true }, opts())).toBe(true);
+    expect(enemyPerceivableInFog({ x: 0, y: 0, flying: true }, opts())).toBe(true);
     // grounded flyer is still a ground unit
-    expect(enemyVisibleInFog({ x: 0, y: 0, flying: true, airborne: false }, opts())).toBe(false);
+    expect(enemyPerceivableInFog({ x: 0, y: 0, flying: true, airborne: false }, opts())).toBe(false);
   });
 
   it('always shows a wall turret — it reads from both sides of the ring', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0, spanKey: 'e7' }, opts())).toBe(true);
+    expect(enemyPerceivableInFog({ x: 0, y: 0, spanKey: 'e7' }, opts())).toBe(true);
   });
 
   it('shows anything outside the fogged set, i.e. the whole open world', () => {
-    expect(enemyVisibleInFog({ x: 9e3, y: 9e3 }, opts({ hexKeyOf: () => K(50, 50) }))).toBe(true);
+    expect(enemyPerceivableInFog({ x: 9e3, y: 9e3 }, opts({ hexKeyOf: () => K(50, 50) }))).toBe(true);
   });
 
   it('shows an awake enemy with a firing lane — if it can shoot him, he can see it', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: true }))).toBe(true);
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: false }))).toBe(false);
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, opts({ losClear: false, awake: true }))).toBe(false);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: true }))).toBe(true);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, opts({ losClear: true, awake: false }))).toBe(false);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, opts({ losClear: false, awake: true }))).toBe(false);
   });
 
   it('shows an enemy the breach peek reaches, and only that one', () => {
     const peekVisible = (x) => x === 100;
-    expect(enemyVisibleInFog({ x: 100, y: 0 }, opts({ peekVisible }))).toBe(true);
-    expect(enemyVisibleInFog({ x: 200, y: 0 }, opts({ peekVisible }))).toBe(false);
+    expect(enemyPerceivableInFog({ x: 100, y: 0 }, opts({ peekVisible }))).toBe(true);
+    expect(enemyPerceivableInFog({ x: 200, y: 0 }, opts({ peekVisible }))).toBe(false);
   });
 
   it('gates nothing before any fog exists', () => {
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, { fogged: null, hexKeyOf })).toBe(true);
-    expect(enemyVisibleInFog({ x: 0, y: 0 }, { fogged: new Set(), hexKeyOf })).toBe(true);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, { fogged: null, hexKeyOf })).toBe(true);
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, { fogged: new Set(), hexKeyOf })).toBe(true);
+  });
+
+  // #460 v1 shipped ONE predicate for both questions and failed its playtest — Jackson: "actual
+  // visibility of ground units is now being affected, which is no good". Hard cover must not
+  // reach the perceivable side at all, so it takes no `hardCoverLos` argument to reach it with.
+  it('IGNORES hard cover entirely — a tank behind a boulder is still on screen', () => {
+    const args = { fogged: new Set(), hexKeyOf: () => K(50, 50), hardCoverLos: () => false };
+    expect(enemyPerceivableInFog({ x: 9e3, y: 9e3 }, args)).toBe(true);
+  });
+});
+
+// ── #460 v2: the SPLIT ───────────────────────────────────────────────────────────────
+// The invariant is one-directional — lockable ⊆ perceivable. You may be shown something you
+// cannot lock (a ground unit sheltering behind hard cover); you may never lock something you are
+// not shown (anything inside a compound you have never entered).
+describe('enemyLockableInFog — the targeting half of the split', () => {
+  const open = { fogged: new Set(), hexKeyOf: () => K(50, 50) };            // open ground, no fog
+  const blocked = { ...open, hardCoverLos: () => false };
+  const clear = { ...open, hardCoverLos: () => true };
+  const tank = { x: 9e3, y: 9e3 };
+
+  it('a ground unit behind hard cover is PERCEIVABLE but NOT TARGETABLE', () => {
+    expect(enemyPerceivableInFog(tank, blocked)).toBe(true);
+    expect(enemyLockableInFog(tank, blocked)).toBe(false);
+  });
+
+  it('the same unit with a clear lane is both', () => {
+    expect(enemyPerceivableInFog(tank, clear)).toBe(true);
+    expect(enemyLockableInFog(tank, clear)).toBe(true);
+  });
+
+  it('an enemy in an unentered compound is NEITHER — the fog outranks the raycast', () => {
+    const inFog = { fogged: new Set([K(0, 0)]), hexKeyOf: () => K(0, 0), hardCoverLos: () => true };
+    expect(enemyPerceivableInFog({ x: 0, y: 0 }, inFog)).toBe(false);
+    expect(enemyLockableInFog({ x: 0, y: 0 }, inFog)).toBe(false);
+  });
+
+  it('keeps the three cover exemptions: airborne, wall turret, and already shooting at you', () => {
+    expect(enemyLockableInFog({ x: 9e3, y: 9e3, flying: true }, blocked)).toBe(true);
+    expect(enemyLockableInFog({ x: 9e3, y: 9e3, spanKey: 'e7' }, blocked)).toBe(true);
+    expect(enemyLockableInFog(tank, { ...blocked, losClear: true, awake: true })).toBe(true);
+    // …but a grounded flyer behind cover is a ground unit again.
+    expect(enemyLockableInFog({ x: 9e3, y: 9e3, flying: true, airborne: false }, blocked)).toBe(false);
+  });
+
+  it('with no raycast wired (a scene double) it collapses to the perceivable answer', () => {
+    expect(enemyLockableInFog(tank, open)).toBe(true);
+    expect(enemyLockableInFog({ x: 0, y: 0 }, { fogged: new Set([K(0, 0)]), hexKeyOf: () => K(0, 0) }))
+      .toBe(false);
   });
 });
 

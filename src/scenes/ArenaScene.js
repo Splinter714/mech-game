@@ -301,11 +301,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.registry.set('playerWorlds', this.players.map((p) => ({
       x: p.x, y: p.y, angle: p.turretAngle, color: p.color, dead: !!p.dead,
     })));
-    // #462: gated by the SAME per-enemy visibility rule that draws the sprite and allows a lock
-    // (`_enemyVisible`), so the minimap can no longer reveal a compound's garrison the player has
-    // never laid eyes on. No last-seen memory, no fade — see `minimapEnemyDots` in hudLayout.js.
+    // #462: gated by the SAME per-enemy rule that draws the sprite — `_enemyPerceivable`, NOT the
+    // stricter `_enemyLockable` (#460) — so the minimap can no longer reveal a compound's garrison
+    // the player has never laid eyes on, while a unit he CAN see behind a boulder keeps its dot.
+    // No last-seen memory, no fade — see `minimapEnemyDots` in hudLayout.js.
     this.registry.set('enemyPositions', minimapEnemyDots(
-      this.enemies, this._enemyVisible ? (e) => this._enemyVisible(e) : null,
+      this.enemies, this._enemyPerceivable ? (e) => this._enemyPerceivable(e) : null,
     ));
     // #155: hide map tiles outside the camera's view (+ margin) — see world.js for why this is
     // the single biggest FPS cost in the game. Reuses this same view rect, not a second camera-

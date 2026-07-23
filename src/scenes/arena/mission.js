@@ -209,8 +209,10 @@ export const MissionMixin = {
   // Fog (#337): markers do NOT show through an unentered compound. `WORLD_UI` is deliberately
   // above the fog layer, so a marker inside a black interior would draw the garrison's exact
   // positions on the fog the interior exists to hide. Docks gate on `_pointVisible`, enemies on
-  // `_enemyVisible` — the same two predicates that already decide whether the dock hex and the
-  // enemy sprite itself are visible, so a marker is shown exactly when its subject is.
+  // `_enemyPerceivable` — the same two predicates that already decide whether the dock hex and the
+  // enemy sprite itself are visible, so a marker is shown exactly when its subject is. #460: this
+  // is the PERCEIVABLE gate, not the lockable one — a marked enemy behind hard cover is still on
+  // screen, so its marker must be too.
   _syncClearMarkers(clear) {
     const base = this._objectiveBase;
     const hp = this.buildingHp ?? new Map();
@@ -247,7 +249,7 @@ export const MissionMixin = {
       // A WALL GUN is the exception (#371 follow-up) — it is anchored on its span, not in a hex,
       // and gets no lift at all; the rule lives in `enemyMarkLift` (data/bases.js).
       m.setPosition(e.x, e.y - enemyMarkLift(e));
-      m.setVisible(this._enemyVisible ? this._enemyVisible(e) : true);
+      m.setVisible(this._enemyPerceivable ? this._enemyPerceivable(e) : true);
     }
     for (const [e, m] of this._enemyMarkers) {
       if (!liveEnemies.has(e)) { m.destroy(); this._enemyMarkers.delete(e); }

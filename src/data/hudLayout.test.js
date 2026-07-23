@@ -444,7 +444,7 @@ describe('minimapEnemyDots', () => {
   });
 
   it('co-op: a gate that is true for ANY live player publishes the dot', () => {
-    // The scene's `_enemyVisible` already unions over the live players, so this module asks once.
+    // The scene's `_enemyPerceivable` already unions over the live players, so this module asks once.
     const players = [{ x: 0, y: 0 }, { x: 900, y: 0 }];
     const nearP2 = alive(880, 0);
     const visibleToAny = (e) => players.some((p) => Math.hypot(e.x - p.x, e.y - p.y) < 100);

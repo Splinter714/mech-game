@@ -1,7 +1,7 @@
 // #306: the player's field-of-view pass and the targeting rule it feeds.
 import { describe, it, expect } from 'vitest';
 import { computeVisibleHexes, hexLineClear, enemyTargetable, targetCoverExempt } from './visibility.js';
-import { enemyVisibleInFog } from './fogRegions.js';
+import { enemyPerceivableInFog } from './fogRegions.js';
 import { axialKey, distance, hexToPixel, range } from './hexgrid.js';
 
 // A terrain lookup backed by a plain {key: id} map — everything unlisted is open grass.
@@ -171,9 +171,9 @@ describe('targetCoverExempt (#338)', () => {
     const args = { fogged: new Set(['9,9']), hexKeyOf: () => '9,9' };
     const flyer = { x: 9, y: 9, flying: true };
     const tank = { x: 9, y: 9 };
-    // The exempt one is visible-and-lockable through the fog; the non-exempt one is not.
-    expect(enemyVisibleInFog(flyer, args)).toBe(targetCoverExempt(flyer));
-    expect(enemyVisibleInFog(tank, args)).toBe(targetCoverExempt(tank));
+    // The exempt one is visible through the fog; the non-exempt one is not.
+    expect(enemyPerceivableInFog(flyer, args)).toBe(targetCoverExempt(flyer));
+    expect(enemyPerceivableInFog(tank, args)).toBe(targetCoverExempt(tank));
   });
 });
 

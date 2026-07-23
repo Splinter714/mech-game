@@ -317,7 +317,7 @@ describe('#371 spreading objective markers', () => {
     const enemies = [{ baseId: 'base0', x: 0, y: 0 }];
     const s = sceneAt({
       enemies,
-      _enemyVisible: () => false,
+      _enemyPerceivable: () => false,
       _pointVisible: () => false,
     });
     expect(s._enemyMarkers.get(enemies[0]).visible).toBe(false);

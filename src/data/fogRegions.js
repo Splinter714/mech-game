@@ -267,55 +267,83 @@ export function fogAlphaFor(key, { fogged, peeked } = {}) {
   return peeked?.has(key) ? 0 : FOG_ALPHA;
 }
 
-// ── Entity visibility ────────────────────────────────────────────────────────────────
-// An enemy is drawn (and targetable — "nobody targets what they can't see") when ANY of these hold.
-// Rules 1, 2 and 4 are carried over from v1 unchanged; only rule 3's geography narrowed, from "the
-// whole world outside your reveal disc" to "the interior of a compound you have not entered".
+// ── Entity visibility: TWO predicates, deliberately ──────────────────────────────────
+//
+// ⚠️ These are different questions and MUST NOT be re-merged. #460 shipped as one predicate and
+// failed its playtest — Jackson: "actual visibility of ground units is now being affected, which
+// is no good; I should still be able to see them, they just shouldn't be in the list for
+// targeting". So:
+//
+//   • `enemyPerceivableInFog` — CAN THE PLAYER SEE IT? Drives every RENDERING consumer: the enemy
+//     sprite (`_syncEnemyFogVisibility`), the objective markers (mission.js) and the minimap dots
+//     (#462, `minimapEnemyDots`). Hard cover does NOT hide anything here — a tank behind a boulder
+//     or on the far side of a base wall is still drawn, exactly as it was before #460. The only
+//     thing that conceals is the compound-interior FOG, which is a big black overlay you can see
+//     the edge of, not a per-unit pop.
+//   • `enemyLockableInFog` — MAY THE RETICLE ACQUIRE IT? Perceivable AND a clear hard-cover line.
+//     The #460 fix proper, and the only consumer is `_updateLock` (targeting.js).
+//
+// The invariant that survives the split is one-directional: lockable ⊆ perceivable. You can be
+// shown something you cannot lock (that is the point — you see the tank sheltering behind the
+// rock, you just cannot put a red box on it), but you can never lock something you are not shown.
+//
+// PERCEIVABLE holds when ANY of these do. Rules 1, 2 and 4 are carried over from v1 unchanged;
+// only rule 3's geography narrowed, from "the whole world outside your reveal disc" to "the
+// interior of a compound you have not entered".
 //
 //   1. AIRBORNE. "Hides enemies too except for airborn enemies that have launched into the air."
 //      This is also why #327's z-order (flyers above the dim layer) is intended, not a wart.
 //   2. A WALL TURRET — it sits ON the boundary, visible from either side.
-//   3. Its hex is not fogged at all (the open world, or a compound already entered) AND the player
-//      has a clear HARD-COVER line to it — see #460 below.
+//   3. Its hex is not fogged at all — the open world, or a compound already entered.
 //   4. SYMMETRY: it is awake with a clear firing lane to the player. Jackson: "but if they can shoot
 //      me, they can see me and I can see them, right?" Since #316 every unit needs LOS before it
 //      opens fire, so `losClear && awake` is exactly "could shoot me" — fog conceals BEFORE an
 //      engagement, never during one. Still load-bearing for a garrison firing out through a gate.
 //
-// ── #460: rule 3 grew its missing geometry half ──
+// `peekVisible(x, y)` is the breach peek: the caller's raycast from the player's CURRENT position
+// through whatever openings exist. Consulted last because it is the only one that costs anything.
+// It can only ever be reached for a FOGGED hex (the peek set is a subset of the fogged set), which
+// is why rule 3 may answer `false` outright rather than falling through to it.
+export function enemyPerceivableInFog(enemy, {
+  fogged, hexKeyOf, losClear = false, awake = false, peekVisible = null,
+} = {}) {
+  if (!enemy) return false;
+  // 1 — #338: via the shared predicate (data/visibility.js), so what the fog shows and what a
+  // shot may pass through are literally the same decision rather than two rules that agree today.
+  if (targetCoverExempt(enemy)) return true;
+  if (enemy.spanKey != null) return true;                      // 2 — #426: wall turrets, either side
+  if (losClear && awake) return true;                          // 4
+  const inFog = !!(fogged && fogged.size && fogged.has(hexKeyOf(enemy.x, enemy.y)));
+  if (!inFog) return true;                                     // 3
+  return !!(peekVisible && peekVisible(enemy.x, enemy.y));
+}
+
+// ── #460: the TARGETING half ─────────────────────────────────────────────────────────
 // Since v2 there is NO open-world fog, so "its hex is not fogged" was true for every ground enemy
-// standing anywhere outside an unentered compound — a bare `return true` with no geometric check
-// behind it. That made the red lock reticle appear on a tank sitting behind a boulder or a base
-// wall, while the SHOT stayed correctly blocked (`_shotIgnoresCover`, firing.js, is airborne-only):
+// standing anywhere outside an unentered compound — the lock rule had no geometric check behind it
+// at all. That made the red lock reticle appear on a tank sitting behind a boulder or a base wall,
+// while the SHOT stayed correctly blocked (`_shotIgnoresCover`, firing.js, is airborne-only):
 // muzzles converged, homing rounds tracked, and every round splashed on stone. The indicator lied.
 // `hardCoverLos(enemy)` closes that: the caller's player→enemy hard-cover raycast, wired to the
 // SAME `_wallDistanceLos`/`coverBlocksForRay` machinery the shot uses, so lock and shot now share
 // one geometric answer. Omitting it (a scene double, or any caller with no world to cast through)
-// keeps the old unconditional `true`, so nothing that never had geometry starts refusing locks.
+// makes this identical to `enemyPerceivableInFog`, so nothing that never had geometry starts
+// refusing locks.
+//
+// The three cover EXEMPTIONS (airborne, wall turret, and "it is already shooting at me") skip the
+// raycast for the same reasons they skip the fog — an airborne unit is above hard cover, a wall
+// turret is bolted to it, and something with a live firing lane on you by definition has one back.
 //
 // This does NOT collapse the three lock/shot disagreements catalogued in data/visibility.js — they
 // are all *downstream* of this question and survive untouched: the target can still duck after you
 // fire, the muzzle is still offset from the eye this ray is cast from, and partial cover still
 // leaves a head visible to a ray that a flatter shot loses on the parapet.
-//
-// Rule 4 is evaluated BEFORE rule 3's raycast, purely as an optimisation — an enemy already
-// engaging the player is visible either way, and a CLEAR ray is the expensive case (it runs the
-// full march; a blocked one returns early). The answer is identical in both orders.
-//
-// `peekVisible(x, y)` is the breach peek: the caller's raycast from the player's CURRENT position
-// through whatever openings exist. Consulted last because it is the only one that costs anything.
-// It can only ever be reached for a FOGGED hex (the peek set is a subset of the fogged set), which
-// is why rule 3 may answer `false` outright rather than falling through to it.
-export function enemyVisibleInFog(enemy, {
-  fogged, hexKeyOf, losClear = false, awake = false, peekVisible = null, hardCoverLos = null,
-} = {}) {
-  if (!enemy) return false;
-  // 1 — #338: via the shared predicate (data/visibility.js), so what may be LOCKED and what a
-  // shot may pass through are literally the same decision rather than two rules that agree today.
+export function enemyLockableInFog(enemy, opts = {}) {
+  if (!enemyPerceivableInFog(enemy, opts)) return false;
+  const { losClear = false, awake = false, hardCoverLos = null } = opts;
+  if (!hardCoverLos) return true;
   if (targetCoverExempt(enemy)) return true;
-  if (enemy.spanKey != null) return true;                      // 2 — #426: wall turrets, either side
-  if (losClear && awake) return true;                          // 4 (hoisted — see note above)
-  const inFog = !!(fogged && fogged.size && fogged.has(hexKeyOf(enemy.x, enemy.y)));
-  if (!inFog) return !hardCoverLos || !!hardCoverLos(enemy);   // 3
-  return !!(peekVisible && peekVisible(enemy.x, enemy.y));
+  if (enemy.spanKey != null) return true;
+  if (losClear && awake) return true;
+  return !!hardCoverLos(enemy);
 }

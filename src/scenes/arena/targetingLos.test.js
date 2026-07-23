@@ -3,23 +3,29 @@
 // enemies (#338) and wall turrets (#426) stay targetable regardless.
 //
 // ── Why this file was rewired (#460) ──
-// It used to build its scene doubles with a hand-made `visibleHexes` set and no `_enemyVisible`,
+// It used to build its scene doubles with a hand-made `visibleHexes` set and no fog mixin at all,
 // which meant `_updateLock` fell through to the `enemyTargetable` branch — DEAD CODE in the live
-// game (see the note at targeting.js:72, "`_enemyVisible` is ALWAYS the branch taken"). So the
-// "REFUSES to acquire a ground enemy in an un-sighted hex" case below passed happily while the
-// live path had no geometric check at all: since #337 v2 there is no open-world fog, so
-// `enemyVisibleInFog` rule 3 was a bare `return true` for every ground enemy outside an unentered
-// compound. Red lock on a tank behind a boulder; every shot splashing on the boulder.
+// game. So the "REFUSES to acquire a ground enemy in an un-sighted hex" case below passed happily
+// while the live path had no geometric check at all: since #337 v2 there is no open-world fog, so
+// the lock rule was a bare `return true` for every ground enemy outside an unentered compound. Red
+// lock on a tank behind a boulder; every shot splashing on the boulder.
 //
 // The whole file now drives the REAL wiring — WorldMixin (the `_wallDistanceLos` raycast) +
-// VisibilityMixin (`_enemyVisible`) + TargetingMixin (`_updateLock`) — over real terrain, so
+// VisibilityMixin (`_enemyLockable`) + TargetingMixin (`_updateLock`) — over real terrain, so
 // "un-sighted" means actual hard cover between the player and the target rather than a set the
 // test made up. If the bug comes back, these fail.
+//
+// ── #460 v2: this file tests the TARGETABLE half only ──
+// The first #460 fix used one predicate for "can see" and "can lock" and failed its playtest.
+// Every `_enemyLockable` assertion here is about the RETICLE. The paired assertion — that the same
+// unit is still DRAWN — is `_enemyPerceivable`, checked alongside in the hard-cover cases below and
+// modelled purely in data/fogRegions.test.js.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WorldMixin } from './world.js';
 import { VisibilityMixin } from './visibility.js';
 import { TargetingMixin } from './targeting.js';
 import { makeWallEdgeSet } from '../../data/wallEdges.js';
+import { minimapEnemyDots } from '../../data/hudLayout.js';
 import { axialKey, pixelToHex } from '../../data/hexgrid.js';
 
 const HARD = 'objective';   // hard cover: blocks any ray that isn't endpoint-exempt
@@ -61,7 +67,7 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene();
     sc.enemies = [target];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(target)).toBe(true);
+    expect(sc._enemyLockable(target)).toBe(true);
     expect(sc.aimEnemy).toBe(target);
     expect(sc.convergeTarget).toBe(target);
   });
@@ -72,10 +78,12 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[200, 0]] });
     sc.enemies = [target];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(target)).toBe(false);
+    expect(sc._enemyLockable(target)).toBe(false);
     expect(sc.aimEnemy).toBe(null);
     expect(sc.convergeTarget).toBe(null);
     expect(sc._lockAimPoint()).toBe(null);
+    // …and the #460 playtest correction: he can still SEE it. Only the lock is refused.
+    expect(sc._enemyPerceivable(target)).toBe(true);
   });
 
   // #316 removed #306's flyer exception here ("let's let cover be actual cover"), and this test
@@ -88,7 +96,7 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[200, 0]] });
     sc.enemies = [flyer];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(flyer)).toBe(true);
+    expect(sc._enemyLockable(flyer)).toBe(true);
     expect(sc.aimEnemy).toBe(flyer);
     expect(sc.convergeTarget).toBe(flyer);
   });
@@ -100,8 +108,9 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[200, 0]] });
     sc.enemies = [landed];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(landed)).toBe(false);
+    expect(sc._enemyLockable(landed)).toBe(false);
     expect(sc.aimEnemy).toBe(null);
+    expect(sc._enemyPerceivable(landed)).toBe(true);      // still drawn — #460 v2
   });
 
   // #426: a wall turret sits ON the boundary and stays hittable from either side, so it must stay
@@ -111,7 +120,7 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[200, 0]] });
     sc.enemies = [turret];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(turret)).toBe(true);
+    expect(sc._enemyLockable(turret)).toBe(true);
     expect(sc.aimEnemy).toBe(turret);
   });
 
@@ -136,7 +145,8 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[270, 0]] });
     sc.enemies = [hidden, sighted];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(hidden)).toBe(false);
+    expect(sc._enemyLockable(hidden)).toBe(false);
+    expect(sc._enemyPerceivable(hidden)).toBe(true);      // out of the lock list, not off screen
     expect(sc.aimEnemy).toBe(sighted);
   });
 
@@ -148,7 +158,7 @@ describe('targeting LOS gate (#306, #460)', () => {
     const sc = makeScene({ cover: [[200, 0]] });
     sc.enemies = [shooter];
     sc._updateLock(0.016);
-    expect(sc._enemyVisible(shooter)).toBe(true);
+    expect(sc._enemyLockable(shooter)).toBe(true);
     expect(sc.aimEnemy).toBe(shooter);
   });
 
@@ -164,6 +174,24 @@ describe('targeting LOS gate (#306, #460)', () => {
     sc._refreshPlayerSight(1000);     // one refresh window later
     sc._updateLock(0.016);
     expect(sc.aimEnemy).toBe(target);
+  });
+
+  // #462 + #460 v2: the minimap dots are published through `minimapEnemyDots`, gated by the
+  // PERCEIVABLE predicate — the same one that draws the sprite — not the lockable one. Wired
+  // exactly as ArenaScene wires it, so if that call site is ever swapped to `_enemyLockable` the
+  // corner map starts hiding units the player is looking straight at, and this fails.
+  it('#462: the minimap dot follows PERCEIVABLE, so hard cover does not erase it', () => {
+    const sc = makeScene({ cover: [[200, 0]] });
+    sc.enemies = [target];
+    sc._updateLock(0.016);
+    expect(sc._enemyLockable(target)).toBe(false);
+    expect(minimapEnemyDots(sc.enemies, (e) => sc._enemyPerceivable(e))).toEqual([{ x: 400, y: 0 }]);
+    // …and the #462 rule it must NOT break: an enemy inside a compound never entered gets no dot.
+    const fogged = makeScene();
+    fogged.enemies = [target];
+    fogged.foggedHexes = new Set([fogged._hexKeyAt(target.x, target.y)]);
+    expect(fogged._enemyPerceivable(target)).toBe(false);
+    expect(minimapEnemyDots(fogged.enemies, (e) => fogged._enemyPerceivable(e))).toEqual([]);
   });
 
   // The per-frame cost guard: the raycast is cached per enemy and only recomputed on the staggered
