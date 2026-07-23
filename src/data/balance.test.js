@@ -101,10 +101,12 @@ describe('#299: the player and the enemy medium chassis are genuinely separable'
   it('but they still share medium\'s movement feel verbatim (only the stats forked)', () => {
     // #403: the player's step cadence is quicker than the shared medium (its stepInterval was
     // tuned before #159 doubled maxSpeed) — the ONLY movement field allowed to diverge.
+    // #438: the exact number is a feel dial the owner keeps tuning (250 → 215), so it is
+    // deliberately NOT pinned here. The invariant is the RELATIONSHIP: the player's bounding
+    // gait is quicker than the shared medium's, and nothing else in the movement block forks.
     const { stepInterval: pStep, ...pRest } = CHASSIS.mediumPlayer.movement;
     const { stepInterval: mStep, ...mRest } = CHASSIS.medium.movement;
     expect(pRest).toEqual(mRest);
-    expect(pStep).toBe(250);
     expect(pStep).toBeLessThan(mStep);
     expect(CHASSIS.mediumPlayer.weightClass).toBe('medium');
   });
