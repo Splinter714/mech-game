@@ -3,13 +3,13 @@
 // testable without a Phaser scene: `hullTravelAngle` (hull faces travel, not the player,
 // decoupled from the turret which tracks the player on its own slew), `circleContains`/
 // `groundEnemyRadius` (the circular collision test used to block the player against ground
-// enemies), and `crushDamage` (the outpost-stomp damage-per-frame formula, #41). #92 correction
-// (2026-07-10): tank-crushing is now an instant kill, not a `crushDamage`-based gradual grind —
-// see `crush.test.js` for that behavior.
+// enemies). #92 correction (2026-07-10): tank-crushing is an instant kill, not a gradual grind —
+// see `crush.test.js` for that behavior. #365 (2026-07-22) deleted the last gradual-crush user
+// (building stomp), so `crushDamage` and its cases here went with it.
 import { describe, it, expect } from 'vitest';
 import {
   hullTravelAngle, circleContains, groundEnemyRadius,
-  ENEMY_COLLIDE_RADIUS_MECH, ENEMY_COLLIDE_RADIUS_VEHICLE, crushDamage,
+  ENEMY_COLLIDE_RADIUS_MECH, ENEMY_COLLIDE_RADIUS_VEHICLE,
   crushTriggerRadius, PLAYER_CRUSH_RADIUS_BONUS, DEPTH, unitDepth,
 } from './shared.js';
 
@@ -169,28 +169,3 @@ describe('unitDepth — the #113/#289 ground-unit depth tier selection', () => {
   });
 });
 
-describe('crushDamage — shared stomp/crush-per-frame formula (#92, mirrors #41)', () => {
-  it('is zero-speed-floored, not zero — a gentle press still chips away', () => {
-    const dps = 40, dt = 1;
-    const atRest = crushDamage(dps, dt, 0);
-    expect(atRest).toBeCloseTo(dps * 0.35, 10);
-  });
-
-  it('scales up to the full DPS at full drive-in speed', () => {
-    const dps = 40, dt = 1;
-    expect(crushDamage(dps, dt, 1)).toBeCloseTo(dps, 10);
-  });
-
-  it('is linear in dt (frame-rate independent, like the rest of the arena\'s tuning)', () => {
-    const dps = 50;
-    const half = crushDamage(dps, 0.5, 0.8);
-    const full = crushDamage(dps, 1, 0.8);
-    expect(full).toBeCloseTo(half * 2, 10);
-  });
-
-  it('clamps an out-of-range speedFrac instead of producing negative/over-scaled damage', () => {
-    const dps = 40, dt = 1;
-    expect(crushDamage(dps, dt, -5)).toBeCloseTo(crushDamage(dps, dt, 0), 10);
-    expect(crushDamage(dps, dt, 5)).toBeCloseTo(crushDamage(dps, dt, 1), 10);
-  });
-});

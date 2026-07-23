@@ -22,22 +22,11 @@ import { edgeKey, edgeEndpoints, segmentCrossT, pointSegmentDistance } from './h
 // needing several — that's exactly why it can afford to be this high. Owner: tunable.
 export const WALL_EDGE_HP = 200;
 
-// #288: how much of the normal building-STOMP rate a wall takes when the mech simply leans on it
-// (scenes/arena/world.js `_stompBuildingAt`). A wall is stompable like any other structure — that
-// affordance is unchanged — but a hardened blast wall shouldn't be a shack: at the full stomp rate
-// (STOMP_DPS 45) a span would fall after barely a second of pressing against it, which makes the
-// gate something you drive through rather than something you shoot through. At a quarter rate it's
-// a genuine several-second grind under fire, so shooting stays the sensible route while ramming is
-// still a desperate last resort. #313 re-checked this after WALL_EDGE_HP went 55 → 200, by
-// MEASURING it in the real game (scripts/audit-destructible-313.mjs) rather than modelling it —
-// which matters, because the naive arithmetic (STOMP_DPS 45 × 0.25 ≈ 11 HP/s ⇒ ~18s) is wrong:
-// `_stompBuildingAt` scales its bite by `speedFrac`, and a mech pressed against a wall has
-// STALLED, so the real rate is far below the nominal one. Measured: 51s of flat-out leaning to
-// break a span, vs 1.8s of shooting it with a four-weapon loadout. Ramming is therefore no longer
-// a meaningful last resort at this HP — it reads as "the wall is not stompable." Left at 0.25
-// because #313's brief was HP only, but this is the knob to revisit (or drop the speedFrac scaling
-// for walls) if the owner ever wants ramming to be a real option again. Owner: tunable.
-export const WALL_STOMP_FACTOR = 0.25;
+// #365 (playtest 2026-07-22) removed `WALL_STOMP_FACTOR`. It scaled the #288 wall-ramming rate to
+// a quarter of the building-stomp rate, and became dead the moment structures stopped taking any
+// damage from being leaned on at all. Shooting is now the ONLY way through a span; ramming just
+// blocks. (#313 had already measured ramming at 51s vs 1.8s of shooting, i.e. effectively
+// non-viable — this makes that explicit rather than a very slow grind.)
 
 // How thick a wall reads/collides, in px, centred on the hex boundary — ~30% of a hex edge's own
 // length, so it looks like a substantial blast wall straddling the line without visibly eating into

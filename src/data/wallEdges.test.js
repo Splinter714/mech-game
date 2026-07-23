@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_EDGE_HP, WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, wallSpanOutwardSign,
+  WALL_EDGE_HP, WALL_THICKNESS_PX, isOutwardOfSpan, wallSpanOutwardSign,
   blocksSpan, blocksShot, setGateOpen, gateEdges, SPAN_ROLE_GATE,
   spanFireSegment, gateOpenFrac, GATE_RETRACT_FACTOR,
 } from './wallEdges.js';
@@ -713,17 +713,6 @@ describe('#313 wall-span HP retune — the gate is a commitment, not a speed bum
     expect(damageWallEdge(set, e, 1)).toEqual({ hp: 0, destroyed: true, felled: [e] });
   });
 
-  it('keeps shooting decisively cheaper than ramming (WALL_STOMP_FACTOR unchanged at 0.25)', () => {
-    // #313 check 2. NOTE the number below is the BEST CASE only: `_stompBuildingAt` scales its
-    // bite by `speedFrac`, and a mech pressed against a wall has stalled, so measured reality is
-    // much worse than this bound (scripts/audit-destructible-313.mjs clocked 51s of leaning vs
-    // 1.8s of shooting a span down). All this pins is the design invariant that survived the
-    // retune: ramming must never be the quick way through a gate.
-    const STOMP_DPS = 45;   // scenes/arena/world.js (module-private; mirrored here deliberately)
-    const bestCaseRammingSeconds = WALL_EDGE_HP / (STOMP_DPS * WALL_STOMP_FACTOR);
-    expect(WALL_STOMP_FACTOR).toBe(0.25);
-    expect(bestCaseRammingSeconds).toBeGreaterThan(10);
-  });
 });
 
 // ── #320: collision inflation by body radius ────────────────────────────────────────────

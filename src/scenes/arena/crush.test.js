@@ -2,8 +2,8 @@
 // from stomping the tanks? it should be instant smash." The original crush mechanic applied
 // gradual DPS over several seconds of sustained pressing, which read as "stuck/blocked" rather
 // than "destroying the tank." `_crushGroundEnemyAt` (world.js) must now destroy a tank in ONE
-// call, while the sibling outpost-stomp mechanic (`_stompBuildingAt`, #41) is unaffected — it's
-// not in scope for this fix and should still chip down gradually over multiple calls.
+// call. (The sibling outpost-stomp mechanic `_stompBuildingAt` (#41) that used to live alongside
+// it was deleted by #365 — buildings take no damage from being walked into any more.)
 // #104 (playtest: infantry — the weakest unit in the game — "should be stompable" too) extends
 // the exact same instant-kill treatment to infantry; `_crushGroundEnemyAt` itself is generic (it
 // was renamed from `_crushTankAt`), so the same assertions below are re-run against an infantry
@@ -42,8 +42,8 @@ function makeScene() {
   };
   Object.assign(scene, WorldMixin);
   // Stub out AFTER mixing in WorldMixin so it overrides the mixin's real (Phaser-touching)
-  // implementation — mirrors projectiles.test.js's pattern. Mirrors the real gradual chip-down
-  // behavior against buildingHp for the stomp assertions, without touching terrain/FX.
+  // implementation — mirrors projectiles.test.js's pattern. Keeps terrain damage inert (nothing
+  // in the crush path should reach it) without touching terrain/FX.
   scene._damageBuildingAt = vi.fn(function (x, y, amount) {
     const hp = Math.max(0, (this.buildingHp.get('0,0') ?? 0) - amount);
     this.buildingHp.set('0,0', hp);
@@ -184,81 +184,6 @@ describe('_crushTargetAt — the #112 looser crush-trigger scan (bigger than pla
     expect(scene._crushTargetAt(0, 0)).toBeNull();
   });
 });
-
-describe('_stompBuildingAt — outpost stomp keeps its ORIGINAL gradual behavior, unaffected by '
-  + 'the tank-only instant-kill fix (#41 unchanged)', () => {
-  it('takes multiple calls to flatten a building — a single call does not destroy it outright', () => {
-    const { scene } = makeScene();
-    const dt = 1 / 60; // one frame
-    scene._stompBuildingAt(0, 0, dt);
-    expect(scene.buildingHp.get('0,0')).toBeGreaterThan(0);
-  });
-
-  it('flattens the building over several frames of sustained pressing, not instantly', () => {
-    const { scene } = makeScene();
-    const dt = 1 / 60;
-    let destroyed = false;
-    for (let i = 0; i < 600 && !destroyed; i++) {
-      destroyed = scene.buildingHp.get('0,0') <= 0;
-      if (!destroyed) scene._stompBuildingAt(0, 0, dt);
-    }
-    expect(scene.buildingHp.get('0,0')).toBeLessThanOrEqual(0);
-    expect(i0Calls(scene)).toBeGreaterThan(1);
-  });
-});
-
-// #365: the bite is scaled by the STOMPING player's speed/chassis, not players[0]'s. Before the
-// fix `_stompBuildingAt` read `this.speed`/`this.mech` — co-op phase-1 (#347) accessors onto
-// players[0] — so player 2 crushing while player 1 stood still did zero damage.
-describe('_stompBuildingAt — scales off the stomping player (#365)', () => {
-  function makeCoopScene() {
-    const { scene } = makeScene();
-    // players[0] is stationary; the accessors on the scene delegate to it, as in the real game.
-    scene.players = [
-      { speed: 0, mech: { movement: { maxSpeed: 100 } } },
-      { speed: 999, mech: { movement: { maxSpeed: 100 } } },
-    ];
-    scene.speed = scene.players[0].speed;
-    scene.mech = scene.players[0].mech;
-    return scene;
-  }
-
-  it('player 2 stomping at speed damages the building even though player 1 is stationary', () => {
-    const scene = makeCoopScene();
-    scene._stompBuildingAt(0, 0, 1 / 60, scene.players[1]);
-    expect(scene.buildingHp.get('0,0')).toBeLessThan(60);
-  });
-
-  it('a stationary stomper bites at the minimum rate even while the OTHER player sprints', () => {
-    // Flip it: players[0] is the fast one, the stomper (players[1]) is stopped. crushDamage has
-    // a 0.35 floor at speedFrac 0, so the assertion is that the stopped stomper does strictly
-    // LESS than a sprinting one — not that it does literally nothing.
-    const fast = makeCoopScene();
-    fast._stompBuildingAt(0, 0, 1 / 60, fast.players[1]);
-    const fastDmg = 60 - fast.buildingHp.get('0,0');
-
-    const scene = makeCoopScene();
-    scene.players[0].speed = 999;
-    scene.speed = 999;
-    scene.players[1].speed = 0;
-    scene._stompBuildingAt(0, 0, 1 / 60, scene.players[1]);
-    const slowDmg = 60 - scene.buildingHp.get('0,0');
-
-    expect(slowDmg).toBeLessThan(fastDmg);
-  });
-
-  it('defaults to players[0] when no stomper is passed', () => {
-    const scene = makeCoopScene();
-    scene.players[0].speed = 999;
-    scene._stompBuildingAt(0, 0, 1 / 60);
-    expect(scene.buildingHp.get('0,0')).toBeLessThan(60);
-  });
-});
-
-// How many times _damageBuildingAt was actually invoked (sanity: gradual means "more than once").
-function i0Calls(scene) {
-  return scene._damageBuildingAt.mock.calls.length;
-}
 
 // #106: a crush kill must be TAGGED as such when it enters the damage pipeline, so the powerup
 // drop roll can swap the toughness curve for the flat CRUSH_KILL_DROP_CHANCE (a stomp is free —

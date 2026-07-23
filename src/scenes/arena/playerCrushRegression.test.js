@@ -50,7 +50,6 @@ function makeScene({ enemies = [] } = {}) {
     enemies,
     registry: { set: () => {} },
     _damageEnemyAt: vi.fn((e) => { damageCalls.push(e); e.mech.hp = 0; }),
-    _stompBuildingAt: () => {},
   };
   Object.assign(scene, LocomotionMixin, WorldMixin);
   // Stub AFTER mixing in WorldMixin so these override its real terrain/segment-walking

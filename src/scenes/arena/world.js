@@ -10,7 +10,7 @@ import {
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_THICKNESS_PX, WALL_STOMP_FACTOR, isOutwardOfSpan, blocksShot,
+  WALL_THICKNESS_PX, isOutwardOfSpan, blocksShot,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
@@ -21,22 +21,15 @@ import {
 } from '../../data/worldgen.js';
 import { Audio } from '../../audio/index.js';
 import {
-  DUMMY_HEX, crushDamage, groundEnemyRadius, circleContains, DEPTH,
+  DUMMY_HEX, groundEnemyRadius, circleContains, DEPTH,
   isSmallUnit, crushTriggerRadius, ENEMY_COLLIDE_RADIUS_MECH,
 } from './shared.js';
 import { listenerOf, livePlayersOf } from './players.js';
 
-// #41: how fast a mech crushes an outpost it's stomping (HP/sec at full drive-in speed). Sized
-// against ordinary walk-through cover (forest/wreck 40, scrub/drift/fumarole 30, all unchanged by
-// #313), so ~1s of leaning at speed flattens a bush or a wreck. Base STRUCTURES are a different
-// story after #313's retune — a sealed dock or objective at 200 takes several seconds of leaning,
-// and a wall span takes the extra WALL_STOMP_FACTOR quarter-rate penalty on top. Note the nominal
-// rate here is NOT what a structure actually experiences: `speedFrac` below collapses once the
-// mech stalls against the thing it's pushing on, so real stomp times run far longer than
-// hp/STOMP_DPS suggests (#313 measured 51s to ram a 200hp wall span vs 1.8s to shoot it). That
-// gap is the intent — stomping stays for incidental scenery, shooting is how you take down a
-// fortification. Owner: tunable.
-const STOMP_DPS = 45;
+// #365 (playtest 2026-07-22): building STOMP damage is gone. `STOMP_DPS` / `_stompBuildingAt` /
+// `crushDamage` / `WALL_STOMP_FACTOR` were all deleted with it — a mech leaning on an outpost,
+// a cover hex or a wall span now simply gets blocked, and structures only come down to weapon
+// fire. Ground-unit crushing (`_crushGroundEnemyAt`, #92/#104) is untouched.
 
 // #155: tile-visibility culling. Phaser does no camera-frustum culling of its own, and the
 // whole run's terrain is pre-built as ~20k live Image GameObjects (#111) — rendering all of
@@ -810,8 +803,9 @@ export const WorldMixin = {
     // stops a hair short of the centreline — still counts as hitting it.
     // #427: `blocksShot` so a hit landing on an OPEN gate routes to it — the gate is a fire target
     // now, and its damage must not fall through to the terrain hex under the mouth.
+    // #365: the old `opts.stomp` quarter-rate branch is gone with building stomp damage itself.
     const wall = nearestWallEdge(this.wallEdges, x, y, WALL_THICKNESS_PX, blocksShot);
-    if (wall) return this._damageWallEdge(wall, opts.stomp ? amount * WALL_STOMP_FACTOR : amount);
+    if (wall) return this._damageWallEdge(wall, amount);
     const h = pixelToHex(x, y);
     const k = axialKey(h.q, h.r);
     const store = this.buildingHp.has(k) ? this.buildingHp : (this.coverHp.has(k) ? this.coverHp : null);
@@ -1052,22 +1046,8 @@ export const WorldMixin = {
   // `_isWall`/`_wallDistance`, so the beam stops on it like any other span — no locked-pip special
   // case needed (superseding #412's aim-pip workaround).
 
-  // #41: the mech STOMPING a building it's pressed against. Applies a per-frame bite of crush
-  // damage (a fixed per-second rate scaled by how fast the mech is driving into it) so leaning
-  // on an outpost flattens it in a beat or two rather than instantly. No-op off buildings.
-  // #365: the STOMPING player is passed in — `this.speed`/`this.mech` are co-op phase-1 (#347)
-  // accessors onto players[0], so reading them here scaled every player's crush by player 1's
-  // speed and chassis (P2 stomping while P1 stood still did nothing). Defaults to players[0]
-  // for the single-player/no-arg case.
-  _stompBuildingAt(x, y, dt, stomper = null) {
-    const p = stomper || (this.players && this.players[0]) || this;
-    const speedFrac = Math.min(1, p.speed / Math.max(1, p.mech.movement.maxSpeed));
-    const dmg = crushDamage(STOMP_DPS, dt, speedFrac);
-    // #288: `stomp` marks this as the mech LEANING on the structure rather than shooting it, so a
-    // wall span can scale it down (see WALL_STOMP_FACTOR) without changing how anything else
-    // stomps. Every other destructible reads the flag and ignores it.
-    if (dmg > 0) this._damageBuildingAt(x, y, dmg, { stomp: true });
-  },
+  // #365 removed `_stompBuildingAt` (#41's building crush-on-contact) — see the note at the top
+  // of this file. Nothing calls into `_damageBuildingAt` from locomotion any more.
 
   // Debris + fireball when an outpost is flattened (#41): a bright flash, an expanding shock ring,
   // and a scatter of dust/rubble chunks flung outward, plus a heavy explosion cue. #72: soft cover

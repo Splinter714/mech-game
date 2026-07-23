@@ -685,17 +685,10 @@ export function softCoverUnitTier(target) {
 // exactly tank and infantry (both now `size: 'small'` in enemyKinds.js), so the crush-eligible
 // set is unchanged; this is a pure refactor of HOW the scope is expressed, not what's in it.
 
-// #41: crush/stomp damage for ONE frame of the player leaning into a destructible outpost — DPS
-// scaled by how hard the player is driving in (speedFrac, clamped 0..1), with a floor (0.35) so
-// even a gentle press still chips away instead of doing nothing. PURE — used by world.js
-// `_stompBuildingAt`. #92 (corrected 2026-07-10): tanks used to share this gradual formula via
-// `_crushTankAt`, but playtest feedback ("it should be instant smash") moved tank-crushing (and,
-// per #104, infantry too — see `_crushGroundEnemyAt`) to a one-hit kill instead — buildings are
-// the only thing still using this gradual formula.
-export function crushDamage(dps, dt, speedFrac) {
-  const frac = speedFrac < 0 ? 0 : speedFrac > 1 ? 1 : speedFrac;
-  return dps * dt * (0.35 + 0.65 * frac);
-}
+// #365 (playtest 2026-07-22) removed `crushDamage`. It was the gradual per-frame formula behind
+// #41's building stomp — its last caller (`_stompBuildingAt`) went away when buildings stopped
+// taking damage from being walked into. Ground units never used it: #92/#104 moved tank and
+// infantry crushing to a one-hit kill (`_crushGroundEnemyAt`), which is unchanged.
 
 // #45: mechs don't run backwards at full tilt. Scale a max-speed figure down when the
 // movement-intent vector (mx, my; needn't be normalized) has a net negative component

@@ -323,12 +323,9 @@ export const LocomotionMixin = {
       // #159: swept, not endpoint-only — walks every hex between (ox,oy) and (nx,ny), so a wall
       // this substep would have crossed through (not just ended inside) still blocks correctly.
       if (this._blockedAlongSegment(ox, oy, nx, ny, PLAYER_WALL_COLLIDE_RADIUS) || enemyHit) {
-        // #41: walking INTO a destructible outpost stomps it — the mech crushes buildings by
-        // pressing against them (damage scaled by how hard it's driving in). Once flattened to
-        // rubble the hex becomes passable and the mech rolls over it. Uses `stepDt` (not the full
-        // frame `dt`) since this can now run once per substep — a mech pressed against a building
-        // for the whole frame still accumulates ~`dt` worth of stomp damage total across substeps.
-        this._stompBuildingAt(nx, ny, stepDt, p);
+        // #365 (playtest 2026-07-22): walking into a building no longer damages it. Buildings and
+        // wall spans simply BLOCK — the #41 stomp-crush damage is gone. Ground units (infantry,
+        // tanks) are still crushed on contact above; only structures stopped taking stomp damage.
         if (!groundBlocked(ox, ny)) { nx = ox; p.vx = 0; }
         else if (!groundBlocked(nx, oy)) { ny = oy; p.vy = 0; }
         else { nx = ox; ny = oy; p.vx = 0; p.vy = 0; }
