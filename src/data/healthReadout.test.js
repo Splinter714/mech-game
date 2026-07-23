@@ -3,6 +3,7 @@ import {
   READOUT_MODES, normalizeReadoutMode, nextReadoutMode, readoutLabel,
   paperDollLayout, perimeterRun, PAPER_DOLL,
   mechPools, noneLayout,
+  structureColor, hslToInt, STRUCTURE_RAMP,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
@@ -224,5 +225,73 @@ describe('#448 whole-mech aggregate pools', () => {
 
   it('is null-safe', () => {
     expect(mechPools(null, LOCS).hp).toBe(0);
+  });
+});
+
+// Playtest follow-up (2026-07-23): paper-doll structure is shown by COLOUR, not fill level.
+// A part's colour rides a continuous ramp light blue → purple → red as structure drops.
+describe('#448 structure colour ramp (paper doll)', () => {
+  const rgb = (int) => ({ r: (int >> 16) & 0xff, g: (int >> 8) & 0xff, b: int & 0xff });
+  // Recover the HUE (degrees) from a packed colour — the axis the ramp sweeps (blue ~200 →
+  // purple ~280 → red ~358), so it climbs monotonically as structure drops.
+  const hue = (int) => {
+    const { r, g, b } = rgb(int);
+    const rn = r / 255, gn = g / 255, bn = b / 255;
+    const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn), d = max - min;
+    if (d === 0) return 0;
+    let h;
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    return h < 0 ? h + 360 : h;
+  };
+
+  it('endpoints hit the ramp anchors exactly', () => {
+    const top = STRUCTURE_RAMP[0], bot = STRUCTURE_RAMP[STRUCTURE_RAMP.length - 1];
+    expect(structureColor(1)).toBe(hslToInt(top.h, top.s, top.l));   // full → light blue
+    expect(structureColor(0)).toBe(hslToInt(bot.h, bot.s, bot.l));   // dead-low → red
+  });
+
+  it('full structure reads BLUE (blue channel dominant), low reads RED (red channel dominant)', () => {
+    const full = rgb(structureColor(1));
+    const low = rgb(structureColor(0));
+    expect(full.b).toBeGreaterThan(full.r);
+    expect(low.r).toBeGreaterThan(low.b);
+  });
+
+  it('the 0.5 anchor is the purple stop', () => {
+    const mid = STRUCTURE_RAMP.find((s) => s.at === 0.5);
+    expect(structureColor(0.5)).toBe(hslToInt(mid.h, mid.s, mid.l));
+  });
+
+  it('a 70% segment is a DISTINCT in-between colour, not snapped to a neighbour', () => {
+    const c = structureColor(0.7);
+    expect(c).not.toBe(structureColor(1));
+    expect(c).not.toBe(structureColor(0.5));
+    // and its hue sits strictly between its two anchor neighbours (full blue and half purple)
+    expect(hue(c)).toBeGreaterThan(hue(structureColor(1)));
+    expect(hue(c)).toBeLessThan(hue(structureColor(0.5)));
+  });
+
+  it('marches monotonically blue→purple→red as structure drops (continuous, no banding)', () => {
+    const samples = [1, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1, 0];
+    const hues = samples.map((f) => hue(structureColor(f)));
+    for (let i = 1; i < hues.length; i++) {
+      expect(hues[i]).toBeGreaterThan(hues[i - 1]);   // hue climbs 200→358 as frac decreases
+    }
+  });
+
+  it('clamps out-of-range fractions to the endpoints', () => {
+    expect(structureColor(1.4)).toBe(structureColor(1));
+    expect(structureColor(-0.3)).toBe(structureColor(0));
+  });
+
+  it('hslToInt produces the expected pure primaries (sanity check on the converter)', () => {
+    expect(hslToInt(0, 1, 0.5)).toBe(0xff0000);     // red
+    expect(hslToInt(120, 1, 0.5)).toBe(0x00ff00);   // green
+    expect(hslToInt(240, 1, 0.5)).toBe(0x0000ff);   // blue
+    expect(hslToInt(0, 0, 1)).toBe(0xffffff);       // white
+    expect(hslToInt(0, 0, 0)).toBe(0x000000);       // black
   });
 });

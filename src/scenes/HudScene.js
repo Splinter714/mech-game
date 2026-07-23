@@ -19,7 +19,7 @@ import {
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
-  paperDollLayout, perimeterRun, mechPools, noneLayout,
+  paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
 } from '../data/healthReadout.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
@@ -113,6 +113,10 @@ const C = {
 // never getting back).
 const BAR_TRACK = 0x0e1218;
 const BAR_EDGE = 0x2a333f;
+// #448 paper doll: a DESTROYED segment's dead cell — a dark, spent tone that reads as "gone", kept
+// deliberately distinct from the bright danger-red of a low-but-alive part (which uses the structure
+// ramp's red). The red cross is still drawn on top; this is what sits under it.
+const DOLL_DEAD_CELL = 0x1a1114;
 const ARMOR_PLATE = 0x3a4250;
 const ARMOR_SEAM = 0x1b212b;
 const ARMOR_RIM = 0x566273;
@@ -1411,10 +1415,11 @@ export default class HudScene extends Phaser.Scene {
   }
 
   // PAPER DOLL: one rounded rect per damage-tracked location, arranged as a mech silhouette.
-  // Per-segment FILL = that part's structure, per-segment OUTLINE = that part's armor, and ONE
-  // outline around the whole doll = the mech's shield — exactly the three-layer reading the issue
-  // asked for. An outline can only carry a fraction if it DRAINS around the frame, which is what
-  // `perimeterRun` is for: the dim full perimeter is the track, the lit run over it is what's left.
+  // Per-segment COLOUR = that part's structure (a fully-filled cell whose hue rides the health ramp
+  // light blue → purple → red as structure drops, `structureColor`), per-segment OUTLINE = that
+  // part's armor, and ONE outline around the whole doll = the mech's shield. An outline can only
+  // carry a fraction if it DRAINS around the frame, which is what `perimeterRun` is for: the dim
+  // full perimeter is the track, the lit run over it is what's left.
   _paintDollReadout(panel, mech) {
     const g = panel.partBarsGfx;
     const L = panel.bars;
@@ -1426,16 +1431,16 @@ export default class HudScene extends Phaser.Scene {
       const destroyed = mech.isPartDestroyed(seg.loc);
       const hpFrac = part.maxHp > 0 ? Math.max(0, Math.min(1, part.hp / part.maxHp)) : 0;
       const armorFrac = part.maxArmor > 0 ? Math.max(0, Math.min(1, part.armor / part.maxArmor)) : 0;
-      // The empty body: a dark cell showing how much of this part is already gone.
-      g.fillStyle(BAR_TRACK, 1);
-      g.fillRoundedRect(seg.x, seg.y, seg.w, seg.h, R);
-      // FILL = structure, rising from the bottom of the part.
-      const fh = seg.h * hpFrac;
-      if (fh > 0) {
-        g.fillStyle(HP_COLOR, 1);
-        g.fillRect(seg.x, seg.y + seg.h - fh, seg.w, fh);
-        g.fillStyle(HP_CAP, 0.9);
-        g.fillRect(seg.x, seg.y + seg.h - fh, seg.w, 1.5);
+      // FILL = structure by COLOUR, not level: the cell is always full, and its hue slides along the
+      // health ramp. A DESTROYED part is the dead end-state — a dark, spent cell (plus the red cross
+      // below), deliberately distinct from a low-but-ALIVE part, which glows bright danger-red so a
+      // segment about to die still reads as urgent rather than already gone.
+      if (destroyed) {
+        g.fillStyle(DOLL_DEAD_CELL, 1);
+        g.fillRoundedRect(seg.x, seg.y, seg.w, seg.h, R);
+      } else {
+        g.fillStyle(structureColor(hpFrac), 1);
+        g.fillRoundedRect(seg.x, seg.y, seg.w, seg.h, R);
       }
       // OUTLINE = armor: the whole perimeter dim as the track, the surviving run lit over it.
       g.lineStyle(2, BAR_EDGE, 0.9);

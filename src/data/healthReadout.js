@@ -10,10 +10,11 @@
 //   'bars'      — the bar block (laid out by hudLayout.js `integrityLayout`; named here only
 //                 so the mode cycle has something to return to).
 //   'paperdoll' — one rounded rect per damage-tracked location, arranged as a mech silhouette
-//                 (arm, torso, torso, arm). Per-segment FILL = that part's HP, per-segment OUTLINE
-//                 = that part's armor (drawn as a perimeter that drains around the frame, so an
-//                 outline can show a FRACTION at all), and ONE outline around the whole doll = the
-//                 mech's shield, exactly as the issue describes it.
+//                 (arm, torso, torso, arm). Each segment stays FULLY FILLED and its COLOUR rides a
+//                 health ramp for that part's STRUCTURE (light yellow → orange → red as it drops,
+//                 `structureColor`); per-segment OUTLINE = that part's armor (drawn as a perimeter
+//                 that drains around the frame, so an outline can show a FRACTION at all), and ONE
+//                 outline around the whole doll = the mech's shield, exactly as the issue describes.
 //
 // A fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and DELETED after
 // it (Jackson: "remove the circle option") — layout, fill polygon, paint path and tests, so no dead
@@ -141,6 +142,69 @@ export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'le
     // The shield IS that outline, so it needs no caption of its own down on the label line.
     shieldLabel: null,
   };
+}
+
+// ── STRUCTURE COLOUR RAMP (paper doll) ─────────────────────────────────────────────────────────
+//
+// Playtest follow-up (2026-07-23): in the paper doll a part's STRUCTURE is no longer a drain/fill
+// level — the segment stays fully filled and its COLOUR slides along a health gradient as structure
+// drops. Full structure is light blue, it cools through purple, and empties to red; the destroyed
+// end-state is drawn separately (dark dead cell + the red cross), so this ramp only colours a LIVE
+// part and never has to double as the "gone" state.
+//
+// Jackson asked for "more steps than just 3 colors", i.e. a CONTINUOUS gradient rather than three
+// snapped bands — at 70% structure a part must read as a distinct in-between colour. We interpolate
+// in HSL, sweeping the HUE from blue (~200°) up through purple (~280°) to red (~358°). A straight
+// RGB lerp from blue to red passes through a muddy grey midpoint (the blue and red channels cross
+// with nothing between them), whereas riding the hue keeps every midpoint a saturated blue-violet /
+// violet / magenta-red — no dead zone. Saturation and lightness are lerped alongside the hue so the
+// low end reads as a heavier, more urgent red than the bright light-blue top.
+//
+// Anchor stops (structure fraction → HSL). More than the three named colours only to SHAPE the
+// curve — the output is continuous between them:
+export const STRUCTURE_RAMP = [
+  { at: 1.0, h: 200, s: 0.85, l: 0.66 },   // full structure  → light blue
+  { at: 0.5, h: 278, s: 0.68, l: 0.56 },   // half            → purple
+  { at: 0.0, h: 358, s: 0.82, l: 0.50 },   // near-dead        → red
+];
+
+// HSL (h in degrees 0..360, s/l in 0..1) → 0xRRGGBB integer, the form Phaser's fillStyle wants.
+export function hslToInt(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = (((h % 360) + 360) % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x; }
+  else if (hp < 2) { r = x; g = c; }
+  else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; }
+  else if (hp < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  const m = l - c / 2;
+  const to = (v) => Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+  return (to(r) << 16) | (to(g) << 8) | to(b);
+}
+
+// The paper-doll structure colour for a part at `frac` (structure / maxStructure, 0..1). Continuous:
+// endpoints hit the ramp's own extremes exactly, and any value between two anchors is the HSL lerp
+// between them, so the colour marches monotonically from light yellow down to red as a part is worn
+// away — no discrete banding.
+export function structureColor(frac) {
+  const f = Math.max(0, Math.min(1, frac));
+  const stops = STRUCTURE_RAMP;   // ordered high `at` → low `at`
+  // At or above the top anchor, and at or below the bottom, clamp to that anchor.
+  if (f >= stops[0].at) return hslToInt(stops[0].h, stops[0].s, stops[0].l);
+  const last = stops[stops.length - 1];
+  if (f <= last.at) return hslToInt(last.h, last.s, last.l);
+  for (let i = 0; i < stops.length - 1; i++) {
+    const hi = stops[i], lo = stops[i + 1];
+    if (f <= hi.at && f >= lo.at) {
+      const t = (f - lo.at) / (hi.at - lo.at);   // 0 at the low anchor, 1 at the high one
+      const lerp = (a, b) => b + (a - b) * t;    // a = hi (t→1), b = lo (t→0)
+      return hslToInt(lerp(hi.h, lo.h), lerp(hi.s, lo.s), lerp(hi.l, lo.l));
+    }
+  }
+  return hslToInt(last.h, last.s, last.l);
 }
 
 // A rectangle's perimeter, walked for the first `frac` of its length, as a polyline. This is what
