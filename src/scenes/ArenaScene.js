@@ -358,19 +358,6 @@ export default class ArenaScene extends Phaser.Scene {
     // #348: per player — each has its own turret, so each picks its own target and draws its
     // own reticle. Nothing about the pick is shared any more.
     for (const player of this.players) this._updateLock(dt, player);
-    // #260: live target's world position (or null), republished each frame so HudScene can
-    // draw a matching off-screen arrow for the CURRENT target — same channel pattern as
-    // `objectiveWorld` above. Reuses `_lockAimPoint()` (targeting.js), the same query the
-    // homing/reticle code already reads, so the arrow can never disagree with what's actually
-    // targeted (hides itself the instant the target dies or there's no target, same as that query).
-    // #368: the per-player twin is `hudPlayers[i].lock` (published above via hudPlayerSnapshot),
-    // which is what the HUD actually draws chevrons from now. This singleton stays as the
-    // primary-only fallback for the pre-`hudPlayers` path (see HudScene `_playerSnapshots`).
-    const lockPt = this._lockAimPoint();
-    this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
-    // #366/#368: the per-player HUD snapshot — panels AND off-screen lock chevrons — published
-    // here so each player's `lock` is this frame's pick, not last frame's.
-    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p)));
     for (const player of this.players) this._stepGait(dt, player);
     this._updatePlayerMarkers();   // #348: keep each identifying ring under its own mech
     for (const player of this.players) {
@@ -417,6 +404,37 @@ export default class ArenaScene extends Phaser.Scene {
     // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
     // the run on mission-complete, or end it on player destruction.
     this._updateRun();
+
+    // ── THE HUD'S VIEW OF THE WORLD IS PUBLISHED HERE, AFTER EVERY KILL PATH ────────────────
+    // These are the only channels that describe ANOTHER OBJECT (the locked target) rather than
+    // the player, so they are the only ones a kill can falsify. They used to be published up
+    // beside `_updateLock` — BEFORE this frame's firing, enemy AI, projectiles, beams and fire
+    // patches resolved — which handed HudScene a PRE-COMBAT view: an enemy killed by this frame's
+    // shot still read as a live lock target, with a live reticle chevron and a live target
+    // readout, until the publish two frames later caught up.
+    //
+    // Worth knowing before moving this back up: Phaser's SceneManager UPDATES scenes in REVERSE
+    // order (SceneManager.js) and renders them forward, so HudScene.update runs BEFORE this
+    // method every frame. The HUD is therefore ALWAYS drawing the snapshot published on the
+    // previous frame — publishing late shortens that lag by a frame, it does not remove it, and
+    // nothing may be built on the assumption that the HUD sees this frame's world.
+    //
+    // In particular this is NOT what fixes #465 (the target-pod freeze): a texture destroyed here
+    // lands after HudScene has already updated and before anything renders, so no publish
+    // ordering could have saved it. That is fixed where the resource lives — HudScene's
+    // `_onTextureRemoved`. This is only about not showing the player a dead unit as a live one.
+    //
+    // Placed after `_updateRun` because that is the last thing that can tear an enemy down (a
+    // stage change). Everything below is pure drawing plus the player's own ammo/shield regen,
+    // and the panels read the LIVE `mech` handle rather than a copy, so nothing is a frame late.
+    //
+    // #260/#368: `lockWorld` is the primary-only fallback channel for the off-screen chevron
+    // (HudScene `_playerSnapshots`); `hudPlayers` is the per-player twin the HUD actually draws
+    // from — panels, chevrons and the target readout. Both come from the same live pick, so they
+    // can never disagree about what is targeted.
+    const lockPt = this._lockAimPoint();
+    this.registry.set('lockWorld', lockPt ? { x: lockPt.x, y: lockPt.y } : null);
+    this.registry.set('hudPlayers', this.players.map((p) => hudPlayerSnapshot(p)));
 
     // #136: subtle facing line (shared wayfinding highlight colour) — always drawn (no lock
     // needed) so the mouse/stick-vs-turret slew gap is visible at a glance. Drawn before the

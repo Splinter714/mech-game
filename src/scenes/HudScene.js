@@ -18,6 +18,11 @@ import {
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
 
+// #465: Phaser's TextureManager fires this (with the key) synchronously the moment a texture is
+// destroyed — `Phaser.Textures.Events.REMOVE`. Written as the literal string rather than reached
+// through the namespace so it stays readable in the tests that stub the `phaser` module.
+const TEXTURE_REMOVE_EVENT = 'removetexture';
+
 // #80: a simple filled chevron/triangle, drawn pointing along `angle` with its tip at (x, y) —
 // the edge-direction arrow's actual mark. A free function (no scene state needed) so it's easy
 // to reuse if a second indicator ever wants the same shape.
@@ -333,6 +338,17 @@ export default class HudScene extends Phaser.Scene {
     // is a fixed-size square canvas — so the art has to be fitted to its INKED bounds or a drone
     // renders as a speck in the corner. Shared with the art gallery (art/inkBounds.js).
     this.ink = new InkCache(this.textures);
+    // Reset alongside the cache it gates (#465): Phaser REUSES this scene instance across
+    // sorties, while the arena's enemy keys restart at `enemy0` every deploy — so a signature
+    // left over from the last run would be answering about a different unit's art.
+    this._podInkSig = new Map();
+    // #465: the pod poses art the ARENA owns and destroys. Subscribe to the texture manager's own
+    // teardown signal so those sprites are released in the same call stack that removes their
+    // textures — see `_onTextureRemoved` for why no per-frame check can do this job. The manager
+    // is game-wide and outlives this scene, so the listener is dropped on shutdown (create() runs
+    // again on the next deploy) rather than stacking up one per sortie.
+    this.textures.on(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this);
+    this.events.once('shutdown', () => this.textures.off(TEXTURE_REMOVE_EVENT, this._onTextureRemoved, this));
 
     this.panels = [];
     this._panelCount = 0;
@@ -785,6 +801,46 @@ export default class HudScene extends Phaser.Scene {
     this._animatePod(panel, t, delta);
   }
 
+  // ── #465: RELEASE THE POSED ART THE INSTANT ITS TEXTURES ARE DESTROYED ────────────────────
+  //
+  // THE FREEZE. The pod is the only thing in the game that renders ANOTHER scene's per-instance
+  // art: an enemy MECH owns a texture set keyed on its own id (`enemy31_hull_0`, `enemy31_turret`,
+  // …) and arena/enemies.js `_destroyEnemy` removes that whole set the moment the unit dies.
+  // Phaser's `Texture.destroy()` destroys every Frame, and `Frame.destroy()` nulls `frame.source`
+  // while `Frame.glTexture` is a GETTER that reads `this.source.glTexture`. So a Sprite still
+  // sitting in a display list holding one of those frames throws
+  // `TypeError: null is not an object (evaluating 'this.source.glTexture')` from `batchSprite`
+  // the next time it renders — and that throw comes out of Phaser's requestAnimationFrame
+  // callback, which is NOT rescheduled after an exception (dom/RequestAnimationFrame.js). The
+  // loop stops for good: the game freezes on the last drawn frame. Killing an enemy mech you had
+  // locked did it every single time; only mechs, because a vehicle kind's textures are SHARED
+  // between siblings and deliberately never removed.
+  //
+  // WHY NOTHING ELSE SAVES US. Phaser's SceneManager UPDATES scenes in REVERSE order and RENDERS
+  // them forward, so HudScene.update runs BEFORE ArenaScene.update every frame. The kill — and
+  // the texture removal with it — therefore lands AFTER this scene has finished updating and
+  // BEFORE anything renders. No per-frame liveness check here can ever see it in time, and no
+  // amount of reordering inside ArenaScene.update helps either.
+  //
+  // So the release has to be driven by the texture manager's own teardown, not by a frame tick.
+  // `TextureManager.remove()` emits `removetexture` synchronously right after destroying the
+  // Texture, so this handler runs inside `_destroyEnemy` itself — the pod's sprites are destroyed
+  // in the same call stack that killed their art, long before the frame renders. Order-independent
+  // by construction, and it is a release, not a guard: nothing checks a null at the render site.
+  _onTextureRemoved(key) {
+    // The scan is cheap and the cache would otherwise keep bounds for a texture that no longer
+    // exists (see art/inkBounds.js) — drop it on the same signal.
+    this.ink?.drop(key);
+    for (const panel of this.panels ?? []) {
+      const prefix = panel.podAnim?.texPrefix;
+      // `_destroyEnemy` removes a set key by key, so match the SET, not one key: whichever goes
+      // first releases the whole pose, and the rest of the set then finds nothing to do.
+      if (!prefix || !key.startsWith(prefix)) continue;
+      this._buildPodArt(panel, null);
+      panel.podSig = undefined;   // 'nothing built' — the next frame rebuilds from a live target
+    }
+  }
+
   // Build the posed sprites for one locked unit. Vehicles are the hull + turret pair the arena
   // stacks; mechs are the full six-sprite pose. Both are fitted to their INKED bounds rather than
   // their canvas — see art/inkBounds.js for why that is the whole ball game here.
@@ -812,7 +868,9 @@ export default class HudScene extends Phaser.Scene {
       const s = fitScale(u.w, u.h, box);
       const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
       const { hull } = poseMechInto(this, panel.podArt, t.texKey, t.mech, s, 0, ox, oy);
-      panel.podAnim = { hull, prefix: `${t.texKey}_hull_`, frames: HULL_FRAMES, frame: 0, acc: 0 };
+      // `texPrefix` names the texture SET this pose is assembled from, so `_onTextureRemoved`
+      // can release the whole thing the moment the arena tears any of it down (#465).
+      panel.podAnim = { texPrefix: `${t.texKey}_`, hull, prefix: `${t.texKey}_hull_`, frames: HULL_FRAMES, frame: 0, acc: 0 };
       return;
     }
 
@@ -823,7 +881,11 @@ export default class HudScene extends Phaser.Scene {
     if (!u) return;
     const s = fitScale(u.w, u.h, box);
     const ox = (u.texW / 2 - u.cx) * s, oy = (u.texH / 2 - u.cy) * s;
-    const anim = { spin: 0, rotor: POD_ROTOR_SPIN[t.art] ?? 0 };
+    // A vehicle kind's textures are SHARED across every live unit of that (art, theme) and so are
+    // deliberately never removed (see `_destroyEnemy`) — this pose cannot be pulled out from under
+    // us the way a mech's can. It carries `texPrefix` anyway so the #465 release rule is one rule
+    // rather than a mech special case.
+    const anim = { texPrefix: `${t.texKey}_`, spin: 0, rotor: POD_ROTOR_SPIN[t.art] ?? 0 };
     if (this.textures.exists(keys.hull)) {
       anim.hull = this.add.sprite(ox, oy, keys.hull).setScale(s);
       panel.podArt.add(anim.hull);
