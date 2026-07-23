@@ -275,24 +275,47 @@ export function fogAlphaFor(key, { fogged, peeked } = {}) {
 //   1. AIRBORNE. "Hides enemies too except for airborn enemies that have launched into the air."
 //      This is also why #327's z-order (flyers above the dim layer) is intended, not a wart.
 //   2. A WALL TURRET — it sits ON the boundary, visible from either side.
-//   3. Its hex is not fogged at all: the open world, or a compound already entered.
+//   3. Its hex is not fogged at all (the open world, or a compound already entered) AND the player
+//      has a clear HARD-COVER line to it — see #460 below.
 //   4. SYMMETRY: it is awake with a clear firing lane to the player. Jackson: "but if they can shoot
 //      me, they can see me and I can see them, right?" Since #316 every unit needs LOS before it
 //      opens fire, so `losClear && awake` is exactly "could shoot me" — fog conceals BEFORE an
 //      engagement, never during one. Still load-bearing for a garrison firing out through a gate.
 //
+// ── #460: rule 3 grew its missing geometry half ──
+// Since v2 there is NO open-world fog, so "its hex is not fogged" was true for every ground enemy
+// standing anywhere outside an unentered compound — a bare `return true` with no geometric check
+// behind it. That made the red lock reticle appear on a tank sitting behind a boulder or a base
+// wall, while the SHOT stayed correctly blocked (`_shotIgnoresCover`, firing.js, is airborne-only):
+// muzzles converged, homing rounds tracked, and every round splashed on stone. The indicator lied.
+// `hardCoverLos(enemy)` closes that: the caller's player→enemy hard-cover raycast, wired to the
+// SAME `_wallDistanceLos`/`coverBlocksForRay` machinery the shot uses, so lock and shot now share
+// one geometric answer. Omitting it (a scene double, or any caller with no world to cast through)
+// keeps the old unconditional `true`, so nothing that never had geometry starts refusing locks.
+//
+// This does NOT collapse the three lock/shot disagreements catalogued in data/visibility.js — they
+// are all *downstream* of this question and survive untouched: the target can still duck after you
+// fire, the muzzle is still offset from the eye this ray is cast from, and partial cover still
+// leaves a head visible to a ray that a flatter shot loses on the parapet.
+//
+// Rule 4 is evaluated BEFORE rule 3's raycast, purely as an optimisation — an enemy already
+// engaging the player is visible either way, and a CLEAR ray is the expensive case (it runs the
+// full march; a blocked one returns early). The answer is identical in both orders.
+//
 // `peekVisible(x, y)` is the breach peek: the caller's raycast from the player's CURRENT position
 // through whatever openings exist. Consulted last because it is the only one that costs anything.
+// It can only ever be reached for a FOGGED hex (the peek set is a subset of the fogged set), which
+// is why rule 3 may answer `false` outright rather than falling through to it.
 export function enemyVisibleInFog(enemy, {
-  fogged, hexKeyOf, losClear = false, awake = false, peekVisible = null,
+  fogged, hexKeyOf, losClear = false, awake = false, peekVisible = null, hardCoverLos = null,
 } = {}) {
   if (!enemy) return false;
   // 1 — #338: via the shared predicate (data/visibility.js), so what may be LOCKED and what a
   // shot may pass through are literally the same decision rather than two rules that agree today.
   if (targetCoverExempt(enemy)) return true;
-  if (enemy.spanKey != null) return true;                      // 2
-  if (!fogged || !fogged.size) return true;
-  if (!fogged.has(hexKeyOf(enemy.x, enemy.y))) return true;    // 3
-  if (losClear && awake) return true;                          // 4
+  if (enemy.spanKey != null) return true;                      // 2 — #426: wall turrets, either side
+  if (losClear && awake) return true;                          // 4 (hoisted — see note above)
+  const inFog = !!(fogged && fogged.size && fogged.has(hexKeyOf(enemy.x, enemy.y)));
+  if (!inFog) return !hardCoverLos || !!hardCoverLos(enemy);   // 3
   return !!(peekVisible && peekVisible(enemy.x, enemy.y));
 }

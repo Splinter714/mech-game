@@ -38,7 +38,9 @@
 // threats. And the softness — 0.62 ceiling, a 3-ring gradient ramp — is the one part of the v1 look
 // he did not object to.
 import { DEPTH } from './shared.js';
+import { LOS_REFRESH_MS } from './world.js';
 import { fogOriginOf, fogOriginsOf } from './players.js';
+import { TARGETING_RANGE } from '../../data/targetingRange.js';
 import { HEX_SIZE, axialKey, hexToPixel, pixelToHex, range } from '../../data/hexgrid.js';
 import { blocksSpan } from '../../data/wallEdges.js';
 import {
@@ -203,6 +205,7 @@ export const VisibilityMixin = {
 
   // Can the player SEE this enemy right now? The one gate for both drawing it and targeting it —
   // "nobody targets what they can't see", and he never gets a lock on something he isn't shown.
+  // #460: `hardCoverLos` is the half rule 3 was missing — see data/fogRegions.js.
   _enemyVisible(e) {
     return enemyVisibleInFog(e, {
       fogged: this.foggedHexes,
@@ -210,12 +213,71 @@ export const VisibilityMixin = {
       losClear: e?._losClear === true,
       awake: e?.awareness !== DORMANT,
       peekVisible: (x, y) => this._peekVisible(x, y),
+      hardCoverLos: (t) => this._playerSightClear(t),
     });
   },
 
-  // Per-frame, per-enemy (a few dozen): hide anything the fog conceals.
-  _syncEnemyFogVisibility() {
-    if (!this.foggedHexes?.size || !this.enemies) return;
+  // ── #460: hard-cover sight, player → enemy ───────────────────────────────────────────
+  // The mirror image of `_cachedLosToPlayer` (world.js), which has always answered the enemy's
+  // half of the same question ("do I have a firing lane on him?"). Same raycast
+  // (`_wallDistanceLos` → `coverBlocksForRay`), same 120ms staggered per-enemy refresh
+  // (LOS_REFRESH_MS), same "seed the countdown at a random phase so a batch spawned on one frame
+  // does not all recompute on the same frame" trick. Deliberately NOT a second raycast
+  // implementation and NOT a second caching scheme — only the direction of the ray differs, and
+  // the enemy-side one cannot simply be reused because it is computed inside `_updateEnemy` for
+  // some branches only, from that enemy's own nearest-player target.
+  //
+  // The state lives on the enemy record (`_sightCd`/`_sightClear`) exactly as `_losCd`/`_losClear`
+  // do, so it dies with the enemy and needs no bookkeeping. First touch computes immediately
+  // rather than defaulting to "not visible": this gate DRAWS things, and a freshly-spawned enemy
+  // blinking in a fifth of a second late is a visible artefact, whereas the enemy-side gate can
+  // afford to err toward holding fire.
+  _playerSightClear(e) {
+    if (e._sightCd === undefined) {
+      e._sightCd = Math.random() * LOS_REFRESH_MS;
+      e._sightClear = this._computePlayerSight(e);
+    }
+    return e._sightClear !== false;
+  },
+
+  // The raycast itself. A UNION over live players (#348): if either player can see it, it is on
+  // screen and lockable — the fog has always been a shared, team-wide thing, and one raycast per
+  // player is what the union costs. Cheap early-outs first: no world mixin (a scene double) or a
+  // target past the longest weapon in the game means don't cast at all — nothing beyond
+  // TARGETING_RANGE can be locked anyway, and it is far outside the camera.
+  _computePlayerSight(e) {
+    if (!this._wallDistanceLos) return true;
+    for (const o of fogOriginsOf(this)) {
+      const dx = e.x - o.x, dy = e.y - o.y;
+      const d = Math.hypot(dx, dy);
+      if (d <= 1 || d > TARGETING_RANGE) return true;
+      // #310/#426: a wall turret ignores the span it is bolted to (and only that one). Rule 2
+      // exempts turrets before this is ever reached, but passing it keeps the two rays identical.
+      if (this._wallDistanceLos(o.x, o.y, Math.atan2(dy, dx), d, e.x, e.y, e.spanKey ?? null) === Infinity) return true;
+    }
+    return false;
+  },
+
+  // The staggered refresh tick. Driven by the per-frame `delta` (ms) rather than a wall clock, for
+  // the same reason `_cachedLosToPlayer` is: it behaves identically in a paused game and in a
+  // headless test that steps the loop by hand.
+  _refreshPlayerSight(delta) {
+    for (const e of this.enemies ?? []) {
+      if (e._sightCd === undefined) { this._playerSightClear(e); continue; }   // seeds + computes
+      e._sightCd -= delta;
+      if (e._sightCd > 0) continue;
+      e._sightCd += LOS_REFRESH_MS;                   // preserve sub-frame phase (keeps the stagger)
+      if (e._sightCd <= 0) e._sightCd = LOS_REFRESH_MS;   // guard: a huge delta spike recomputes once
+      e._sightClear = this._computePlayerSight(e);
+    }
+  },
+
+  // Per-frame, per-enemy (a few dozen): hide anything the fog OR hard cover conceals.
+  // #460 dropped the old `!foggedHexes.size` early-out: with a geometric half to rule 3 there is
+  // now something to re-evaluate even in an arena with no compounds left unentered.
+  _syncEnemyFogVisibility(delta = 0) {
+    if (!this.enemies) return;
+    this._refreshPlayerSight(delta);
     for (const e of this.enemies) {
       if (e.view) e.view.setVisible(this._enemyVisible(e));
     }
