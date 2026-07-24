@@ -235,7 +235,10 @@ const POD_STEP_MS = 160;
 // the map still READS on a light biome (snow) instead of washing out — the backing is dark and near-
 // solid, and it carries a bright outer frame so the box edge is crisp on light AND dark terrain.
 const MM = {
-  panelFill: 0x080b0f, panelStroke: 0x8fb4c8, panelInner: 0x1b242d,
+  // #478 playtest: the outer frame ring was too thick + too light (was 0x8fb4c8 bright steel at
+  // width 2) — it competed with the integrity gauge rings. Now a THIN, DARK-grey hairline on both
+  // the minimap and the target disc, so the box edge stays crisp without fighting the gauges.
+  panelFill: 0x080b0f, panelStroke: 0x39434c, panelInner: 0x1b242d,
   corridor: 0x5b6b79, corridorEdge: 0x515e6b,
   player: 0x8fe6f7, enemy: 0xff5a3c,
 };
@@ -917,7 +920,7 @@ export default class HudScene extends Phaser.Scene {
     g.fillCircle(disc.cx, disc.cy, disc.r);
     g.lineStyle(1, MM.panelInner, 0.8);
     g.strokeCircle(disc.cx, disc.cy, disc.r - 1.5);
-    g.lineStyle(2, MM.panelStroke, 0.95);
+    g.lineStyle(0.75, MM.panelStroke, 0.95);   // #478: thin, dark outer frame (matched to the minimap)
     g.strokeCircle(disc.cx, disc.cy, disc.r);
     if (!t) {
       // Idle: a faint crosshair where the unit would stand.
@@ -1299,8 +1302,9 @@ export default class HudScene extends Phaser.Scene {
     g.fillCircle(cx, cy, r);
     g.lineStyle(1, MM.panelInner, 0.8);
     g.strokeCircle(cx, cy, r - 1.5);
-    // Bright outer frame — the high-contrast ring that keeps the map legible on light AND dark ground.
-    g.lineStyle(2, MM.panelStroke, 0.95);
+    // #478: thin, dark outer frame — a hairline box edge that stays out of the gauge rings' way
+    // (matched to the target disc so the two corners read as one pair of instruments).
+    g.lineStyle(0.75, MM.panelStroke, 0.95);
     g.strokeCircle(cx, cy, r);
     // The mask (a filled circle) clips the scrolling content to the disc interior. Painted in logical
     // coords — the HUD camera's zoom=dpr scales it to physical (same pattern as ui/weaponCardList.js).
