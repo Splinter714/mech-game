@@ -160,8 +160,12 @@ export function playerTabs(session) {
 // Duck-typed on purpose: `saved` is a Mech (or a plain build object in tests) and only its build
 // fields are read, so this stays a pure function with no Mech import.
 export function joinerBuild(saved, hostBuild) {
+  // #487: `color` rides along with the build so a drop-in driving their own saved slot keeps the
+  // colour they picked in the garage. The fallback (copy of the host's build) deliberately does
+  // NOT copy the host's colour — `mechColorFor` will resolve the joiner to their own per-index
+  // auto-default instead, so two mechs never share the host's colour.
   if (isUsableBuild(saved)) {
-    return { chassisId: saved.chassisId, mounts: saved.mounts, name: saved.name };
+    return { chassisId: saved.chassisId, mounts: saved.mounts, name: saved.name, color: saved.color };
   }
   return { chassisId: hostBuild?.chassisId, mounts: hostBuild?.mounts, name: hostBuild?.name };
 }

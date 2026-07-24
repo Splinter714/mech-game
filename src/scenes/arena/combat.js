@@ -236,8 +236,10 @@ export const CombatMixin = {
   _reskinPlayerMech(player) {
     const statusSpot = statusSpotColorsFor(this, player);
     player._statusSpotKey = statusSpot.join(',');
+    // #487: preserve the player's chosen colour (player.color) across the damage/repair re-skin,
+    // exactly as the accent was preserved before — a custom pick must not revert on a broken part.
     reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
-      playerMechArt(player.id ?? 0, { statusSpot }));
+      playerMechArt(player.id ?? 0, { statusSpot, accent: player.color }));
   },
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific

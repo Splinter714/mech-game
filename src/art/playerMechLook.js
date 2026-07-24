@@ -27,6 +27,18 @@ import { playerAccent } from '../data/players.js';
 
 // The art options for player `id`'s mech. `statusSpot` defaults to the empty list (no powerup),
 // never to undefined — undefined is the enemy/reactor-purple branch of drawTurret.
-export function playerMechArt(id = 0, { statusSpot = [], hullFrames = PLAYER_HULL_FRAMES } = {}) {
-  return { theme: 'player', accent: playerAccent(id ?? 0), statusSpot: statusSpot ?? [], hullFrames };
+//
+// #487: `accent` is an OPTIONAL override for the rim tint. It exists because a player can now PICK
+// their colour in the garage (data/mechColors.js) instead of taking the auto-assigned one — the
+// pick is passed straight through here so the same rim-tint mechanism paints it. Omitted (the arena
+// default) it falls back to the per-id auto-colour, so nothing that doesn't pass one changes. A
+// caller resolves the value with `mechColorFor(build, id)` — which is exactly `playerAccent(id)`
+// when the slot has no pick, keeping the no-pick path byte-identical.
+export function playerMechArt(id = 0, { statusSpot = [], hullFrames = PLAYER_HULL_FRAMES, accent } = {}) {
+  return {
+    theme: 'player',
+    accent: accent ?? playerAccent(id ?? 0),
+    statusSpot: statusSpot ?? [],
+    hullFrames,
+  };
 }

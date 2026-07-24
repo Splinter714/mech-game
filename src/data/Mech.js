@@ -37,6 +37,14 @@ export class Mech {
     this.chassisId = data.chassisId ?? 'medium';
     this._chassis = getChassis(this.chassisId);
     this.name = data.name ?? this._chassis.name;
+    // #487: the player-chosen identifying COLOUR for this build slot, persisted so each slot
+    // (mech1/mech2/…) remembers its own across sessions. Cosmetic only — it drives the #404 rim
+    // tint + ground ring for whoever deploys this build. `null` means "no pick"; the arena/garage
+    // resolve that to the per-player default (data/mechColors.js `mechColorFor`). Stored as a raw
+    // hex int so it round-trips through toJSON exactly like every other build field. Non-numeric
+    // saved values are ignored here and normalised away by the resolver, so a stale value can
+    // never crash the renderer.
+    this.color = typeof data.color === 'number' ? data.color : null;
 
     // Mounted items per location (array of item ids). Unknown ids — e.g. a weapon
     // removed from the catalog since an old build was saved — are dropped so stale
@@ -451,6 +459,6 @@ export class Mech {
     const damage = {};
     for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
     for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, hp: this.parts[loc].hp };
-    return { chassisId: this.chassisId, name: this.name, mounts, damage };
+    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, damage };
   }
 }

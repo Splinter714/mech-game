@@ -16,6 +16,7 @@ import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
 import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
+import { mechColorFor } from '../../data/mechColors.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
@@ -81,13 +82,21 @@ export const CoopMixin = {
   _makePlayerAt(index, x, y, mech) {
     const textureKey = index === 0 ? 'playerMech' : `playerMech${index}`;
     const player = makePlayer({ id: index, mech, x, y, textureKey });
+    // #487: this player's colour is whatever the deploying BUILD picked in the garage, falling
+    // back to the #348/#404 per-index auto-colour when the slot has no pick (`mechColorFor`). It
+    // drives BOTH the rim tint (below) and the ground ring / HUD / reticle (player.color), so a
+    // custom pick moves every identity cue together — the same guarantee #404 made for the four
+    // auto-colours. Overrides makePlayer's default `color: playerColor(id)`.
+    const color = mechColorFor(mech, index);
+    player.color = color;
     // #404: EVERY player is accent-tinted now, player 1 and single-player included — the rim
     // tint over every segment and the head is simply what a player mech looks like.
     // #435: a PLAYER mech bakes the fine-grained walk cycle (PLAYER_HULL_FRAMES) — it's the only
     // mech that actually cycles its hull frames, so it's the only one that pays for them.
     // #404: the whole player look — accent, powerup status spot, walk-frame count — comes from
     // the one shared definition (art/playerMechLook.js), the same one the garage preview uses.
-    buildMechTextures(this, textureKey, mech, playerMechArt(index));
+    // #487: the resolved colour is threaded in as the accent override.
+    buildMechTextures(this, textureKey, mech, playerMechArt(index, { accent: color }));
     player.view = this._makeMechView(textureKey, x, y, player.angle, true);
     // Created hidden: `_updatePlayerMarkers` owns visibility every frame, and starting hidden
     // means a solo player never sees a one-frame flash of a ring before that rule first runs.
@@ -431,8 +440,10 @@ export const CoopMixin = {
   _reskinPlayer(player) {
     const statusSpot = statusSpotColorsFor(this, player);
     player._statusSpotKey = statusSpot.join(',');
+    // #487: carry the player's chosen colour (player.color, resolved at spawn) through the
+    // re-raster — otherwise a rebuilt hull would revert to the per-index auto-accent.
     buildMechTextures(this, player.textureKey ?? 'playerMech', player.mech,
-      playerMechArt(player.id, { statusSpot }));
+      playerMechArt(player.id, { statusSpot, accent: player.color }));
   },
 
   // The world-space distance from the camera focus at which a player is hard-stopped, published

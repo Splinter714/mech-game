@@ -11,6 +11,7 @@ import {
   playerTabs,
 } from '../data/coopGarage.js';
 import { playerColor } from '../data/players.js';
+import { MECH_SWATCHES, mechColorFor, takenSwatches, canPickSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -237,7 +238,13 @@ export default class GarageScene extends Phaser.Scene {
   // (`strideDir(0, n) === 0`), so it bakes the cheap 4 rather than the arena player's 16 and still
   // shows the exact same legs. Everything else is the arena's own player look, unedited.
   _previewArt() {
-    return playerMechArt(this.session.editing, { hullFrames: HULL_FRAMES });
+    // #487: the preview bakes with the CURRENT builder's chosen colour (their build's pick, or the
+    // per-index auto-default) as the rim-tint accent — so the moment a swatch is clicked, or the
+    // handoff rebinds the surface to the next player, the preview shows that player's colour.
+    return playerMechArt(this.session.editing, {
+      hullFrames: HULL_FRAMES,
+      accent: mechColorFor(this.mech, this.session.editing),
+    });
   }
 
   _refreshPlayerTabs() {
@@ -321,6 +328,9 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     this._bindBuilderPad();
     this._refreshPlayerTabs();
+    // #487: a handoff rebinds the picker to the new builder's colour, and a join changes which
+    // swatches other players hold — both re-run the swatch paint against the new session.
+    this._refreshSwatches();
     this.refresh();
   }
 
@@ -578,13 +588,14 @@ export default class GarageScene extends Phaser.Scene {
   // chassis to fly, "TROOPER" told the player nothing. Only the label was removed; the chassis
   // data + cycleChassis are untouched.
   _buildPreview() {
-    const box = this.bottomH - 56;                              // square preview size
+    const stripTop = this.H - this.bottomH + 6;
+    // #487: the box hugs the TOP of the strip now and is shrunk from the old full-height square,
+    // so the colour-swatch picker seats directly below it in the same right slice. The mech shown
+    // is small but the arena renders the real thing at size — the lab's job here is just to show
+    // the current build (and, now, the current colour) at a glance.
+    const box = 100;                                            // square preview size
     const cx = this.W - this.previewW / 2 - 20;                 // centred in the right slice
-    // #454: the label used to sit in the space below the box, so the box hugged the top of the
-    // strip. With it gone the box keeps its size (same render scale) and is simply centred in the
-    // strip's usable band — the strip's top down to the skill-tile row's bottom edge — so it no
-    // longer reads as hanging above an empty gap.
-    const cy = (this.H - this.bottomH + 6 + this._rowBottom) / 2;
+    const cy = stripTop + box / 2;
     this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
     const scale = (box - 30) / 230;
     this._previewScale = scale;
@@ -599,6 +610,76 @@ export default class GarageScene extends Phaser.Scene {
     this.previewHull = this._preview.hull;
     this.previewTurret = this._preview.turret;
     this._positionPreviewParts();
+    // #487: the colour picker sits just below the preview box.
+    const boxBottom = cy + box / 2;
+    this.add.text(cx, boxBottom + 4, 'COLOR', {
+      fontFamily: 'monospace', fontSize: '10px', color: '#7c8794',
+    }).setOrigin(0.5, 0);
+    this._buildSwatches(cx, boxBottom + 20);
+  }
+
+  // #487: the mech-colour swatch grid, under the preview box in the right slice. Pure geometry
+  // here; `_refreshSwatches` paints the tiles from the current build + co-op distinctness, so a
+  // pick or a handoff just re-runs that rather than rebuilding the layout.
+  _buildSwatches(cx, top) {
+    const cols = 5, sw = 22, gap = 6;
+    const gridW = cols * sw + (cols - 1) * gap;
+    this._swatchGeom = { x0: cx - gridW / 2, y0: top, cols, sw, gap };
+    this.swatchLayer = this.add.container(0, 0);
+    this._refreshSwatches();
+  }
+
+  // The joined players' builds, in player order — what co-op distinctness reads. In solo this is
+  // just `[mech1]`, so `takenSwatches` is empty and P1 picks freely. Each entry is the live Mech
+  // in the roster (the currently-edited one included, since `this.mech` IS `allMechs[mechKey]`).
+  _joinedBuilds() {
+    const builds = [];
+    for (let i = 0; i < this.session.count; i++) builds.push(this.allMechs[PLAYER_MECH_KEYS[i]]);
+    return builds;
+  }
+
+  // Repaint the swatch tiles: the current builder's resolved colour gets the white selection ring;
+  // any swatch HELD BY ANOTHER joined player is dimmed + crossed out and inert (co-op distinctness,
+  // #487). Rebuilt wholesale into the container on every pick / handoff / join.
+  _refreshSwatches() {
+    if (!this.swatchLayer || !this._swatchGeom) return;
+    this.swatchLayer.removeAll(true);
+    const { x0, y0, cols, sw, gap } = this._swatchGeom;
+    const taken = takenSwatches(this._joinedBuilds(), this.session.editing);
+    const current = mechColorFor(this.mech, this.session.editing);
+    MECH_SWATCHES.forEach((hex, i) => {
+      const x = x0 + (i % cols) * (sw + gap);
+      const y = y0 + Math.floor(i / cols) * (sw + gap);
+      const selected = hex === current;
+      const disabled = taken.has(hex) && !selected;   // held by another player
+      const rect = this.add.rectangle(x, y, sw, sw, hex, disabled ? 0.28 : 1).setOrigin(0, 0)
+        .setStrokeStyle(selected ? 3 : 1, selected ? 0xffffff : UI.panelEdge, selected ? 1 : 0.85);
+      this.swatchLayer.add(rect);
+      if (disabled) {
+        const mark = this.add.text(x + sw / 2, y + sw / 2, '✕', {
+          fontFamily: 'monospace', fontSize: '12px', color: '#0d1014',
+        }).setOrigin(0.5);
+        this.swatchLayer.add(mark);
+      } else {
+        rect.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._pickColor(hex));
+      }
+    });
+  }
+
+  // Apply a swatch pick to the current builder's slot. Guarded by `canPickSwatch` so a taken
+  // colour can never be forced in (the UI already disables it; this is the model's own check). A
+  // colour change re-tints the WHOLE mech — hull plates included — so it is a full texture rebuild,
+  // exactly like the handoff path; `reskinMech` skips the hull and would leave the old colour on
+  // the legs. Persists immediately so the pick survives the session.
+  _pickColor(hex) {
+    if (this.mech.color === hex) return;
+    if (!canPickSwatch(this._joinedBuilds(), this.session.editing, hex)) return;
+    this.mech.color = hex;
+    Audio.ui('menuNav');
+    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
+    this._positionPreviewParts();
+    saveAllMechs(this.allMechs);
+    this._refreshSwatches();
   }
 
   // Place + pivot the static preview side-torso + arm sprites at their joints. Poses through the
