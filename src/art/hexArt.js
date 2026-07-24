@@ -6,6 +6,8 @@
 import { gen, scaledGraphics, ART_SCALE } from './_frames.js';
 import { HEX_SIZE, hexCorners, hexToPixel } from '../data/hexgrid.js';
 import { TERRAIN } from '../data/terrain.js';
+import { drawWallSpans } from './wallArt.js';
+import { WALL_THICKNESS_PX } from '../data/wallEdges.js';
 
 const SQRT3 = Math.sqrt(3);
 
@@ -1388,6 +1390,18 @@ export function buildHexTextures(scene) {
     drawHex(sg, 0x1a1e25, 0x12151b, 0.98);          // drop-shadow footprint (the block's cast shadow)
     drawHex(sg, PAL.wall.fill, PAL.wall.edge, 0.86); // wall body, dark cool metal with a lit rim
     drawHex(sg, 0x4b5666, 0x363e49, 0.6);            // raised top plate, stepped in — the ledge
+  });
+
+  // #483 follow-up: a straight WALL SEGMENT for the locked-target preview pod — one clean
+  // horizontal span drawn with the REAL wall art (`drawWallSpans`, the no-clear body of
+  // drawWallEdges), so a targeted span reads as an actual piece of wall rather than the `hex_wall`
+  // hex-TILE block viewed head-on. Baked ONCE here like every other hex texture; the pod just
+  // sprites it (HudScene stays paint-only). drawWallSpans works in raw pixels, so the span coords
+  // and thickness are pre-multiplied by ART_SCALE to super-sample like the rest of the art.
+  gen(scene, 'hex_wallSegment', HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
+    const y = (HEX_TEX_H / 2) * ART_SCALE;
+    const x0 = 6 * ART_SCALE, x1 = (HEX_TEX_W - 6) * ART_SCALE;
+    drawWallSpans(g, [{ x0, y0: y, x1, y1: y, hp: 1, maxHp: 1, role: 'wall' }], WALL_THICKNESS_PX * ART_SCALE);
   });
 
   // #289: a SECOND, separate texture-build pass for each cover terrain's canopy overlay — a

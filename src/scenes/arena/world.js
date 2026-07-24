@@ -1036,10 +1036,11 @@ export const WorldMixin = {
       const e = t.edge;
       const maxHp = (e && e.maxHp) || 1;
       const hpFrac = e ? Math.max(0, Math.min(1, Math.max(0, e.hp) / maxHp)) : 0;
-      // A span reads as one baked WALL block viewed head-on (`hex_wall`, hexArt.js) — the same
-      // raised-plate art the wall's own tile once used — regardless of role/HP; the HP ring, not
-      // the sprite, shows how chewed-down it is. A gate leaf just relabels.
-      t.hud = { kind: 'wall', texKey: 'hex_wall', name: e && e.role === 'gate' ? 'GATE' : 'WALL', hpFrac, damageSig: '' };
+      // #483 follow-up: a span reads as an actual straight WALL SEGMENT (`hex_wallSegment`, baked
+      // in hexArt.js from the real wall art) — a clean piece of wall, not the full `hex_wall`
+      // hex-TILE block viewed head-on. Static regardless of role/HP; the HP ring, not the sprite,
+      // shows how chewed-down it is (`damageSig: ''`). A gate leaf just relabels.
+      t.hud = { kind: 'wall', texKey: 'hex_wallSegment', name: e && e.role === 'gate' ? 'GATE' : 'WALL', hpFrac, damageSig: '' };
     } else if (t.hexKey) {
       const id = this.terrain.get(t.hexKey);
       const def = getTerrain(id);
@@ -1047,10 +1048,14 @@ export const WorldMixin = {
         : (this.coverHp.has(t.hexKey) ? this.coverHp : null);
       const cur = store ? Math.max(0, store.get(t.hexKey) ?? 0) : 0;
       const maxHp = terrainStartHp(id) || cur || 1;
+      // #483 follow-up: a targeted DOCK always previews CLOSED — both the open `dock` and an
+      // already-`dockClosed` id read as the sealed-bay art (`hex_dockClosed`), so a dock reads as
+      // a door rather than an open hole. terrainDisplayName already yields DOCK for both.
+      const texKey = (id === 'dock' || id === 'dockClosed') ? 'hex_dockClosed' : def.tex;
       // `damageSig` is the live terrain id, so the pod re-skins the instant a hex swaps texture
       // (a standing structure → its rubble). The HP within one id is carried by the ring, not the art.
       t.hud = {
-        kind: 'hex', texKey: def.tex, name: terrainDisplayName(id),
+        kind: 'hex', texKey, name: terrainDisplayName(id),
         hpFrac: Math.min(1, cur / maxHp), damageSig: id ?? '',
       };
     }

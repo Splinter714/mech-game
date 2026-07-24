@@ -132,6 +132,14 @@ function drawGate(g, e, hw, timeMs) {
 
 export function drawWallEdges(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 0) {
   g.clear();
+  drawWallSpans(g, edges, thickness, timeMs);
+}
+
+// #483: the span-drawing body of drawWallEdges WITHOUT the leading g.clear(). The live path
+// (drawWallEdges) clears its persistent graphics each frame and then calls this; the target-disc
+// pod bakes a single wall SEGMENT into a fresh gen() canvas by calling this DIRECTLY, where a
+// clear() is both unwanted (the canvas is already blank) and unavailable on the bake graphics.
+export function drawWallSpans(g, edges, thickness = WALL_THICKNESS_PX, timeMs = 0) {
   const hw = thickness / 2;
   // #309: gates are drawn by their own routine below — they have moving parts and a threshold
   // glow, neither of which the plain-span passes know how to express.

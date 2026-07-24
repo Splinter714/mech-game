@@ -16,6 +16,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WorldMixin, LOS_REFRESH_MS } from './world.js';
 import { hexToPixel, pixelToHex, axialKey } from '../../data/hexgrid.js';
+import { getTerrain } from '../../data/terrain.js';
 
 // A tiny deterministic PRNG so the random sweep is reproducible (no flaky test).
 function lcg(seed) {
@@ -210,5 +211,55 @@ describe('_damageBuildingAt — alert-tower damage activation hook (#269)', () =
     const { x, y } = hexToPixel(0, 0);
     scene._damageBuildingAt(x, y, 10);
     expect(scene._onAlertTowerDamaged).not.toHaveBeenCalled();
+  });
+});
+
+// #483 follow-up: the target-disc art picker — a WALL span reads as a wall SEGMENT, a targeted
+// DOCK (open or already-closed) always previews CLOSED, and an ordinary destructible hex keeps its
+// own texture. Enemy (mech/vehicle) targets don't reach this method.
+describe('_describeStaticTarget — wall segment + closed dock (#483)', () => {
+  function staticScene(id) {
+    const terrain = new Map([[axialKey(0, 0), id]]);
+    return Object.assign(
+      { terrain, buildingHp: new Map(), coverHp: new Map(), time: { now: 0 } },
+      WorldMixin,
+    );
+  }
+
+  it('a wall span previews as the wall SEGMENT texture, labelled WALL', () => {
+    const scene = staticScene('grass');
+    const t = scene._describeStaticTarget({ edgeKey: 'e', edge: { hp: 6, maxHp: 10, role: 'wall' } });
+    expect(t.hud.kind).toBe('wall');
+    expect(t.hud.texKey).toBe('hex_wallSegment');
+    expect(t.hud.name).toBe('WALL');
+  });
+
+  it('a gate span relabels to GATE, same segment art', () => {
+    const scene = staticScene('grass');
+    const t = scene._describeStaticTarget({ edgeKey: 'e', edge: { hp: 6, maxHp: 10, role: 'gate' } });
+    expect(t.hud.texKey).toBe('hex_wallSegment');
+    expect(t.hud.name).toBe('GATE');
+  });
+
+  it('a targeted open dock previews CLOSED (hex_dockClosed), labelled DOCK', () => {
+    const scene = staticScene('dock');
+    const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
+    expect(t.hud.kind).toBe('hex');
+    expect(t.hud.texKey).toBe('hex_dockClosed');
+    expect(t.hud.name).toBe('DOCK');
+  });
+
+  it('an already-closed dock also previews hex_dockClosed', () => {
+    const scene = staticScene('dockClosed');
+    const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
+    expect(t.hud.texKey).toBe('hex_dockClosed');
+    expect(t.hud.name).toBe('DOCK');
+  });
+
+  it('an ordinary destructible hex keeps its OWN texture (unchanged)', () => {
+    const scene = staticScene('forest');
+    const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
+    expect(t.hud.texKey).toBe(getTerrain('forest').tex);
+    expect(t.hud.texKey).not.toBe('hex_dockClosed');
   });
 });
