@@ -19,8 +19,9 @@ vi.mock('phaser', () => ({
 const { default: HudScene } = await import('./HudScene.js');
 const { Mech } = await import('../data/Mech.js');
 const { PLAYER_COLORS } = await import('../data/players.js');
-const { hudPlayerSnapshot, CONSOLE, consoleLayout } = await import('../data/hudLayout.js');
+const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await import('../data/hudLayout.js');
 const { getWeapon } = await import('../data/weapons.js');
+const { structureColor } = await import('../data/healthReadout.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -47,7 +48,7 @@ function stub(extra = {}) {
     clear() { return o; },
     fillStyle() { return o; },
     fillRect() { return o; },
-    lineStyle() { return o; },
+    lineStyle(_w, color) { o._lineColor = color; return o; },
     strokeRect() { return o; },
     // #452: the console shell, the recessed bays and the rounded skill-tile plates.
     fillRoundedRect() { return o; },
@@ -56,7 +57,7 @@ function stub(extra = {}) {
     // #448: the paper doll's draining outlines.
     strokeCircle() { return o; },
     fillPoints(pts) { o.filledPoints = pts; return o; },
-    strokePoints(pts) { o.strokedPoints = pts; return o; },
+    strokePoints(pts) { o.strokedPoints = pts; (o.strokeRuns ??= []).push({ color: o._lineColor, pts }); return o; },
     beginPath() { return o; },
     // #452 (style pass): the target disc's gauge arcs, and the circular clip its pose sits in.
     arc() { return o; },
@@ -576,6 +577,34 @@ describe('HudScene health readout modes (#448)', () => {
       expect(() => scene._updateIntegrity(scene.panels[0], mech)).not.toThrow();
       scene._cycleReadout();
     }
+  });
+
+  // #448 playtest: ALL THREE paper-doll layers ride the ONE health ramp, each by its OWN fraction.
+  // Structure fill was already ramped; this pins that the per-segment ARMOR outline and the
+  // whole-doll SHIELD outline now colour through `structureColor` too — a low-armor outline reads
+  // red, a healthy shield reads blue — rather than the old fixed steel/cyan.
+  it('colours the paper-doll armor + shield outlines through the SAME structure ramp', () => {
+    const { scene } = modeScene();
+    scene._cycleReadout();
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('paperdoll');
+    const armorFrac = 0.3, shieldFrac = 0.6;   // distinct so their ramp colours differ
+    const mech = {
+      parts: Object.fromEntries(
+        INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 3, maxArmor: 10 }]),
+      ),
+      isPartDestroyed: () => false,
+      hasShield: () => true,
+      shield: { hp: 6, max: 10 },
+      shieldTotalHp: () => 6,
+    };
+    scene._paintDollReadout(scene.panels[0], mech);
+    const runColors = (scene.panels[0].partBarsGfx.strokeRuns ?? []).map((r) => r.color);
+    // the armor lit run for each live segment is stroked at its armor fraction's ramp colour...
+    expect(runColors).toContain(structureColor(armorFrac));
+    // ...and the shield outline at its own fraction's ramp colour — a different colour, same ramp.
+    expect(runColors).toContain(structureColor(shieldFrac));
+    expect(structureColor(armorFrac)).not.toBe(structureColor(shieldFrac));
   });
 
   // ── #448 follow-up: the NONE readout ───────────────────────────────────────────────────────

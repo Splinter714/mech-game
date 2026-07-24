@@ -1461,12 +1461,15 @@ export default class HudScene extends Phaser.Scene {
         g.fillStyle(structureColor(hpFrac), 1);
         g.fillRoundedRect(seg.x, seg.y, seg.w, seg.h, R);
       }
-      // OUTLINE = armor: the whole perimeter dim as the track, the surviving run lit over it.
+      // OUTLINE = armor: the whole perimeter dim as the track, the surviving run lit over it. The
+      // lit run rides the SAME health ramp as the structure fill (#448 playtest), coloured by the
+      // ARMOR fraction — a low-armor segment's outline reads red, a full one blue — so all three
+      // layers speak one colour language.
       g.lineStyle(2, BAR_EDGE, 0.9);
       g.strokeRect(seg.x, seg.y, seg.w, seg.h);
       const run = perimeterRun(seg, armorFrac);
       if (run.length > 1) {
-        g.lineStyle(2.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 1);
+        g.lineStyle(2.5, destroyed ? ARMOR_SEAM : structureColor(armorFrac), 1);
         g.strokePoints(run, false);
       }
       if (destroyed) {
@@ -1489,11 +1492,14 @@ export default class HudScene extends Phaser.Scene {
       g.strokeRect(L.outline.x, L.outline.y, L.outline.w, L.outline.h);
       const run = perimeterRun(L.outline, p.shield);
       if (run.length > 1) {
+        // The lit shield run rides the SAME health ramp as structure/armor (#448 playtest),
+        // coloured by the SHIELD fraction: a full shield reads blue, a spent one red.
+        const shieldCol = structureColor(p.shield);
         for (const { a } of SHIELD_GLOW) {
-          g.lineStyle(5, SHIELD_BAR_COLOR, a);
+          g.lineStyle(5, shieldCol, a);
           g.strokePoints(run, false);
         }
-        g.lineStyle(2.5, SHIELD_CAP, 0.95);
+        g.lineStyle(2.5, shieldCol, 0.95);
         g.strokePoints(run, false);
       }
     }

@@ -253,6 +253,15 @@ describe('#448 structure colour ramp (paper doll)', () => {
     expect(structureColor(0)).toBe(hslToInt(bot.h, bot.s, bot.l));   // dead-low → red
   });
 
+  it('#448 playtest: the full-health endpoint is a DARK blue (well below the old ~0.66 lightness)', () => {
+    // Jackson asked to "start with a darker blue" — pin that the top anchor's lightness is clearly
+    // darker than the original 0.66 so the ramp never drifts back to the pale endpoint.
+    expect(STRUCTURE_RAMP[0].l).toBeLessThanOrEqual(0.5);
+    // and it is still recognisably BLUE (hue in the blue band), not darkened into something else.
+    expect(STRUCTURE_RAMP[0].h).toBeGreaterThan(180);
+    expect(STRUCTURE_RAMP[0].h).toBeLessThan(240);
+  });
+
   it('full structure reads BLUE (blue channel dominant), low reads RED (red channel dominant)', () => {
     const full = rgb(structureColor(1));
     const low = rgb(structureColor(0));

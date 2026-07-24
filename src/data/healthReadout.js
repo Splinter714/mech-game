@@ -11,10 +11,12 @@
 //                 so the mode cycle has something to return to).
 //   'paperdoll' — one rounded rect per damage-tracked location, arranged as a mech silhouette
 //                 (arm, torso, torso, arm). Each segment stays FULLY FILLED and its COLOUR rides a
-//                 health ramp for that part's STRUCTURE (light yellow → orange → red as it drops,
+//                 health ramp for that part's STRUCTURE (dark blue → purple → red as it drops,
 //                 `structureColor`); per-segment OUTLINE = that part's armor (drawn as a perimeter
 //                 that drains around the frame, so an outline can show a FRACTION at all), and ONE
-//                 outline around the whole doll = the mech's shield, exactly as the issue describes.
+//                 outline around the whole doll = the mech's shield. Since the #448 playtest ALL
+//                 THREE layers ride that same ramp, each by its OWN fraction (armor and shield
+//                 coloured in HudScene, structure here), so the readout speaks one colour language.
 //
 // A fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and DELETED after
 // it (Jackson: "remove the circle option") — layout, fill polygon, paint path and tests, so no dead
@@ -148,7 +150,7 @@ export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'le
 //
 // Playtest follow-up (2026-07-23): in the paper doll a part's STRUCTURE is no longer a drain/fill
 // level — the segment stays fully filled and its COLOUR slides along a health gradient as structure
-// drops. Full structure is light blue, it cools through purple, and empties to red; the destroyed
+// drops. Full structure is a DARK blue, it cools through purple, and empties to red; the destroyed
 // end-state is drawn separately (dark dead cell + the red cross), so this ramp only colours a LIVE
 // part and never has to double as the "gone" state.
 //
@@ -163,7 +165,7 @@ export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'le
 // Anchor stops (structure fraction → HSL). More than the three named colours only to SHAPE the
 // curve — the output is continuous between them:
 export const STRUCTURE_RAMP = [
-  { at: 1.0, h: 200, s: 0.85, l: 0.66 },   // full structure  → light blue
+  { at: 1.0, h: 205, s: 0.85, l: 0.44 },   // full structure  → DARK blue (#448 playtest: was l:0.66)
   { at: 0.5, h: 278, s: 0.68, l: 0.56 },   // half            → purple
   { at: 0.0, h: 358, s: 0.82, l: 0.50 },   // near-dead        → red
 ];
