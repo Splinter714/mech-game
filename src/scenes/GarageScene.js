@@ -631,24 +631,22 @@ export default class GarageScene extends Phaser.Scene {
     this._positionPreviewParts();
   }
 
-  // #487 (second pass): the mech-colour CYCLE control — a back/forward pair of ‹ › arrows flanking
-  // one indicator swatch + the colour's name. The button cycle (gamepad B/X, keyboard '.'/',') is
-  // the point; the arrows just make it mouse-discoverable. #487 (third pass): it moved from under
-  // the preview box UP to the player-tab row, so the persistent objects are built here at a
-  // placeholder position and laid out by `_layoutColorCycle` (called from `_refreshPlayerTabs`,
-  // which trails them off the tabs' current extent); `_refreshColorCycle` repaints the indicator.
+  // #487 (second pass): the mech-colour CYCLE control — one indicator swatch + the colour's name.
+  // The button cycle (gamepad B/X, keyboard '.'/',') is the point; #487 (fourth pass) replaced the
+  // ‹ › arrows with clicking the SWATCH itself (forward-only) as the mouse affordance. #487 (third
+  // pass): it moved from under the preview box UP to the player-tab row, so the persistent objects
+  // are built here at a placeholder position and laid out by `_layoutColorCycle` (called from
+  // `_refreshPlayerTabs`, which trails them off the tabs' extent); `_refreshColorCycle` repaints it.
   _buildColorCycle() {
-    const arrowStyle = { fontFamily: 'monospace', fontSize: '16px', color: '#9aa4b0' };
-    const arrow = (label, dir) => this.add.text(0, 0, label, arrowStyle).setOrigin(0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', function () { this.setColor('#ffffff'); })
-      .on('pointerout', function () { this.setColor('#9aa4b0'); })
-      .on('pointerdown', () => this._cycleColor(dir));
-    this._colorPrevArrow = arrow('‹', -1);
-    this._colorNextArrow = arrow('›', +1);
-    // The indicator: a small swatch on the left, the colour name to its right.
+    // The indicator IS the control: a small swatch on the left, the colour name to its right.
+    // Clicking the swatch cycles FORWARD one colour (wrapping, skipping taken co-op colours);
+    // a hover brighten + hand cursor give it the same "clickable" affordance the old arrows had.
     this._colorSwatch = this.add.rectangle(0, 0, 14, 14, 0xffffff)
-      .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85);
+      .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', () => this._colorSwatch.setStrokeStyle(1, 0xffffff, 1))
+      .on('pointerout', () => this._colorSwatch.setStrokeStyle(1, UI.panelEdge, 0.85))
+      .on('pointerdown', () => this._cycleColor(+1));
     this._colorName = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.text,
     }).setOrigin(0, 0.5);
@@ -657,15 +655,12 @@ export default class GarageScene extends Phaser.Scene {
 
   // Lay the colour-cycle control out from a left edge `leftX`, vertically centred on `cy`, and
   // return its right edge (so the caller can seat the hint after it). A fixed name reserve keeps
-  // the next-arrow position stable as the colour name (up to "CHARTREUSE") changes width.
+  // the returned edge stable as the colour name (up to "CHARTREUSE") changes width.
   _layoutColorCycle(leftX, cy) {
     const NAME_RESERVE = 64;
-    this._colorPrevArrow.setPosition(leftX + 6, cy);
-    this._colorSwatch.setPosition(leftX + 22, cy);
-    this._colorName.setPosition(leftX + 33, cy);
-    const nextX = leftX + 33 + NAME_RESERVE;
-    this._colorNextArrow.setPosition(nextX, cy);
-    return nextX + 6;
+    this._colorSwatch.setPosition(leftX + 8, cy);
+    this._colorName.setPosition(leftX + 19, cy);
+    return leftX + 19 + NAME_RESERVE;
   }
 
   // The joined players' builds, in player order — what co-op distinctness reads. In solo this is
@@ -690,7 +685,7 @@ export default class GarageScene extends Phaser.Scene {
 
   // Advance the current builder's colour one step (`dir` +1 forward / -1 back) to the next
   // AVAILABLE swatch, skipping any a live co-op player already holds (`cycleSwatch`). Bound to the
-  // gamepad (B forward, X back), the keyboard ('.'/','), and the on-screen ‹ › arrows.
+  // gamepad (B forward, X back), the keyboard ('.'/','), and a forward click on the swatch itself.
   _cycleColor(dir) {
     const current = mechColorFor(this.mech, this.session.editing);
     this._applyColor(cycleSwatch(this._joinedBuilds(), this.session.editing, current, dir));
