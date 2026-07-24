@@ -11,7 +11,7 @@ import {
   playerTabs,
 } from '../data/coopGarage.js';
 import { playerColor } from '../data/players.js';
-import { MECH_SWATCHES, mechColorFor, takenSwatches, canPickSwatch } from '../data/mechColors.js';
+import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
@@ -184,6 +184,10 @@ export default class GarageScene extends Phaser.Scene {
     // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
     // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
+    // #487 (second pass): '.'/',' cycle the mech colour forward/back — the < > keys, so they line
+    // up with the on-screen ‹ › arrows. Free keys (the D/ESC binds above are the only garage keys).
+    this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(+1));
+    this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(-1));
     this.events.once('shutdown', () => this.list.destroy());
 
     // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
@@ -328,9 +332,8 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     this._bindBuilderPad();
     this._refreshPlayerTabs();
-    // #487: a handoff rebinds the picker to the new builder's colour, and a join changes which
-    // swatches other players hold — both re-run the swatch paint against the new session.
-    this._refreshSwatches();
+    // #487: a handoff rebinds the picker to the new builder's colour — repaint the indicator.
+    this._refreshColorCycle();
     this.refresh();
   }
 
@@ -410,6 +413,12 @@ export default class GarageScene extends Phaser.Scene {
     // deploy. deploy() itself branches on garageAction, so this is the same call for both.
     if (e.pressed(PAD.START)) { this.deploy(); return; }
     // #248: X/Y chassis-cycle pad shortcut disabled along with the rest of the switcher.
+
+    // #487 (second pass): B advances the mech colour, X steps it back — spatially east/west face
+    // buttons, matching the on-screen ‹ › arrows. Neither collides with the slot binds (LT/RT/LB/RB)
+    // or START. Cycles directly (no catalog-cursor wake gate — this isn't a catalog action).
+    if (e.pressed(PAD.B)) { this._cycleColor(+1); return; }
+    if (e.pressed(PAD.X)) { this._cycleColor(-1); return; }
 
     for (const loc of TILE_ORDER) {
       if (e.pressed(SLOT_BUTTON[loc])) {
@@ -610,23 +619,37 @@ export default class GarageScene extends Phaser.Scene {
     this.previewHull = this._preview.hull;
     this.previewTurret = this._preview.turret;
     this._positionPreviewParts();
-    // #487: the colour picker sits just below the preview box.
+    // #487 (second pass): the colour picker sits just below the preview box. The old 10-swatch
+    // GRID read as garish, so it's a single CURRENT-COLOUR indicator (a small swatch + the colour
+    // name) advanced with a button — gamepad B/X and keyboard '.'/',' (see `_cycleColor`) — with
+    // ‹ › arrows for mouse discoverability.
     const boxBottom = cy + box / 2;
     this.add.text(cx, boxBottom + 4, 'COLOR', {
       fontFamily: 'monospace', fontSize: '10px', color: '#7c8794',
     }).setOrigin(0.5, 0);
-    this._buildSwatches(cx, boxBottom + 20);
+    this._buildColorCycle(cx, boxBottom + 26);
   }
 
-  // #487: the mech-colour swatch grid, under the preview box in the right slice. Pure geometry
-  // here; `_refreshSwatches` paints the tiles from the current build + co-op distinctness, so a
-  // pick or a handoff just re-runs that rather than rebuilding the layout.
-  _buildSwatches(cx, top) {
-    const cols = 5, sw = 22, gap = 6;
-    const gridW = cols * sw + (cols - 1) * gap;
-    this._swatchGeom = { x0: cx - gridW / 2, y0: top, cols, sw, gap };
-    this.swatchLayer = this.add.container(0, 0);
-    this._refreshSwatches();
+  // #487 (second pass): the mech-colour CYCLE control, under the preview box in the right slice.
+  // A back/forward pair of arrows flanks one indicator swatch + the colour's name. The button
+  // cycle (gamepad B/X, keyboard '.'/',') is the point; the arrows just make it mouse-discoverable.
+  // `_refreshColorCycle` repaints the indicator from the current build; the arrows are static.
+  _buildColorCycle(cx, rowY) {
+    const arrowStyle = { fontFamily: 'monospace', fontSize: '18px', color: '#9aa4b0' };
+    const arrow = (x, label, dir) => this.add.text(x, rowY, label, arrowStyle).setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', function () { this.setColor('#ffffff'); })
+      .on('pointerout', function () { this.setColor('#9aa4b0'); })
+      .on('pointerdown', () => this._cycleColor(dir));
+    this._colorPrevArrow = arrow(cx - 64, '‹', -1);
+    this._colorNextArrow = arrow(cx + 64, '›', +1);
+    // The indicator: a small swatch on the left, the colour name to its right.
+    this._colorSwatch = this.add.rectangle(cx - 40, rowY, 14, 14, 0xffffff)
+      .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85);
+    this._colorName = this.add.text(cx - 28, rowY, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: UI.text,
+    }).setOrigin(0, 0.5);
+    this._refreshColorCycle();
   }
 
   // The joined players' builds, in player order — what co-op distinctness reads. In solo this is
@@ -638,48 +661,38 @@ export default class GarageScene extends Phaser.Scene {
     return builds;
   }
 
-  // Repaint the swatch tiles: the current builder's resolved colour gets the white selection ring;
-  // any swatch HELD BY ANOTHER joined player is dimmed + crossed out and inert (co-op distinctness,
-  // #487). Rebuilt wholesale into the container on every pick / handoff / join.
-  _refreshSwatches() {
-    if (!this.swatchLayer || !this._swatchGeom) return;
-    this.swatchLayer.removeAll(true);
-    const { x0, y0, cols, sw, gap } = this._swatchGeom;
-    const taken = takenSwatches(this._joinedBuilds(), this.session.editing);
+  // Repaint the indicator to the current builder's resolved colour + its name. Re-run on every
+  // cycle / handoff / join, so a co-op handoff shows the incoming player's own colour. The cycle
+  // itself enforces co-op distinctness (it only ever lands on a colour the editing player may
+  // hold), so there is nothing to grey out here — the indicator only shows the ONE current pick.
+  _refreshColorCycle() {
+    if (!this._colorSwatch) return;
     const current = mechColorFor(this.mech, this.session.editing);
-    MECH_SWATCHES.forEach((hex, i) => {
-      const x = x0 + (i % cols) * (sw + gap);
-      const y = y0 + Math.floor(i / cols) * (sw + gap);
-      const selected = hex === current;
-      const disabled = taken.has(hex) && !selected;   // held by another player
-      const rect = this.add.rectangle(x, y, sw, sw, hex, disabled ? 0.28 : 1).setOrigin(0, 0)
-        .setStrokeStyle(selected ? 3 : 1, selected ? 0xffffff : UI.panelEdge, selected ? 1 : 0.85);
-      this.swatchLayer.add(rect);
-      if (disabled) {
-        const mark = this.add.text(x + sw / 2, y + sw / 2, '✕', {
-          fontFamily: 'monospace', fontSize: '12px', color: '#0d1014',
-        }).setOrigin(0.5);
-        this.swatchLayer.add(mark);
-      } else {
-        rect.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._pickColor(hex));
-      }
-    });
+    this._colorSwatch.setFillStyle(current, 1);
+    this._colorName.setText(swatchName(current));
   }
 
-  // Apply a swatch pick to the current builder's slot. Guarded by `canPickSwatch` so a taken
-  // colour can never be forced in (the UI already disables it; this is the model's own check). A
-  // colour change re-tints the WHOLE mech — hull plates included — so it is a full texture rebuild,
-  // exactly like the handoff path; `reskinMech` skips the hull and would leave the old colour on
-  // the legs. Persists immediately so the pick survives the session.
-  _pickColor(hex) {
+  // Advance the current builder's colour one step (`dir` +1 forward / -1 back) to the next
+  // AVAILABLE swatch, skipping any a live co-op player already holds (`cycleSwatch`). Bound to the
+  // gamepad (B forward, X back), the keyboard ('.'/','), and the on-screen ‹ › arrows.
+  _cycleColor(dir) {
+    const current = mechColorFor(this.mech, this.session.editing);
+    this._applyColor(cycleSwatch(this._joinedBuilds(), this.session.editing, current, dir));
+  }
+
+  // Commit a colour to the current builder's slot. `hex` is already a valid, available swatch
+  // (cycleSwatch guarantees it); a no-op when it equals the current colour. A colour change
+  // re-tints the WHOLE mech — hull plates included — so it is a full texture rebuild, exactly like
+  // the handoff path; `reskinMech` skips the hull and would leave the old colour on the legs.
+  // Persists immediately so the pick survives the session.
+  _applyColor(hex) {
     if (this.mech.color === hex) return;
-    if (!canPickSwatch(this._joinedBuilds(), this.session.editing, hex)) return;
     this.mech.color = hex;
     Audio.ui('menuNav');
     buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
     this._positionPreviewParts();
     saveAllMechs(this.allMechs);
-    this._refreshSwatches();
+    this._refreshColorCycle();
   }
 
   // Place + pivot the static preview side-torso + arm sprites at their joints. Poses through the

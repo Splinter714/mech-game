@@ -4,7 +4,8 @@
 // with the game's other coloured signals as the four auto-colours already are.
 import { describe, it, expect } from 'vitest';
 import {
-  MECH_SWATCHES, isSwatch, defaultMechColor, mechColorFor, takenSwatches, canPickSwatch,
+  MECH_SWATCHES, MECH_SWATCH_NAMES, swatchName, isSwatch, defaultMechColor, mechColorFor,
+  takenSwatches, canPickSwatch, cycleSwatch,
 } from './mechColors.js';
 import { PLAYER_COLORS } from './players.js';
 import { Mech } from './Mech.js';
@@ -157,6 +158,65 @@ describe('co-op distinctness — takenSwatches / canPickSwatch (#487)', () => {
   it('never lets a non-swatch value be picked', () => {
     expect(canPickSwatch([{ color: null }], 0, 0x010203)).toBe(false);
     expect(canPickSwatch([{ color: null }], 0, null)).toBe(false);
+  });
+});
+
+describe('swatch names (#487 cycle picker)', () => {
+  it('has one name per swatch, all non-empty and distinct', () => {
+    expect(MECH_SWATCH_NAMES.length).toBe(MECH_SWATCHES.length);
+    for (const n of MECH_SWATCH_NAMES) expect(n.length).toBeGreaterThan(0);
+    expect(new Set(MECH_SWATCH_NAMES).size).toBe(MECH_SWATCH_NAMES.length);
+  });
+
+  it('swatchName maps each swatch to its aligned name and returns "" otherwise', () => {
+    MECH_SWATCHES.forEach((hex, i) => expect(swatchName(hex)).toBe(MECH_SWATCH_NAMES[i]));
+    expect(swatchName(0x010203)).toBe('');
+    expect(swatchName(null)).toBe('');
+  });
+});
+
+describe('cycleSwatch — button-advance picker that skips taken colours (#487 second pass)', () => {
+  it('steps to the next / previous swatch in solo, wrapping the palette', () => {
+    const builds = [{ color: MECH_SWATCHES[0] }];
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[0], +1)).toBe(MECH_SWATCHES[1]);
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[1], -1)).toBe(MECH_SWATCHES[0]);
+    // forward past the end wraps to the front
+    const last = MECH_SWATCHES.length - 1;
+    expect(cycleSwatch([{ color: MECH_SWATCHES[last] }], 0, MECH_SWATCHES[last], +1)).toBe(MECH_SWATCHES[0]);
+    // back from the front wraps to the end
+    expect(cycleSwatch([{ color: MECH_SWATCHES[0] }], 0, MECH_SWATCHES[0], -1)).toBe(MECH_SWATCHES[last]);
+  });
+
+  it('SKIPS a colour another live player holds, landing on the next available one', () => {
+    // P1 (editing, index 0) currently on swatch 0. P2 holds swatch 1, so a forward step must
+    // jump straight to swatch 2.
+    const builds = [{ color: MECH_SWATCHES[0] }, { color: MECH_SWATCHES[1] }];
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[0], +1)).toBe(MECH_SWATCHES[2]);
+    // going back from swatch 2 skips the taken swatch 1 and lands on swatch 0
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[2], -1)).toBe(MECH_SWATCHES[0]);
+  });
+
+  it('skips a colour held only by another player\'s DEFAULT, not just an explicit pick', () => {
+    // P2 has made no pick, so it holds its default (PLAYER_COLORS[1] === MECH_SWATCHES[1]).
+    const builds = [{ color: MECH_SWATCHES[0] }, { color: null }];
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[0], +1)).toBe(MECH_SWATCHES[2]);
+  });
+
+  it('returns the current colour unchanged when every OTHER swatch is taken', () => {
+    // Editing player (index 0) sits on swatch 0; phantom co-op players hold every other swatch,
+    // so the only free colour is the editor's own — the cycle lands back on itself, no error.
+    const others = MECH_SWATCHES.filter((c) => c !== MECH_SWATCHES[0]);
+    const builds = [{ color: MECH_SWATCHES[0] }, ...others.map((c) => ({ color: c }))];
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[0], +1)).toBe(MECH_SWATCHES[0]);
+    expect(cycleSwatch(builds, 0, MECH_SWATCHES[0], -1)).toBe(MECH_SWATCHES[0]);
+  });
+
+  it('the result is always a pickable swatch (or the unchanged current)', () => {
+    const builds = [{ color: MECH_SWATCHES[3] }, { color: MECH_SWATCHES[5] }];
+    for (const dir of [+1, -1]) {
+      const next = cycleSwatch(builds, 0, MECH_SWATCHES[3], dir);
+      expect(next === MECH_SWATCHES[3] || canPickSwatch(builds, 0, next)).toBe(true);
+    }
   });
 });
 

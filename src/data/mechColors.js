@@ -43,6 +43,20 @@ export const MECH_SWATCHES = [
   0x0f9c8c, // TEAL       (h173) deep teal        — dark enough to never read as the cyan glows
 ];
 
+// Human-readable name per swatch, aligned index-for-index with MECH_SWATCHES. The cycle picker
+// (#487, second pass) shows the CURRENT colour's name beside a single indicator swatch instead of
+// the old 10-tile grid, so the name lives here as data next to the hex it names.
+export const MECH_SWATCH_NAMES = [
+  'AZURE', 'LIME', 'MAGENTA', 'JADE', 'STEEL',
+  'INDIGO', 'ROSE', 'CHARTREUSE', 'FOREST', 'TEAL',
+];
+
+// The display name for a swatch hex, or '' if it isn't one.
+export function swatchName(color) {
+  const i = MECH_SWATCHES.indexOf(color);
+  return i >= 0 ? MECH_SWATCH_NAMES[i] : '';
+}
+
 // Fast membership test — one Set, built once. A saved Mech.color is only honoured if it is still
 // a real swatch, so trimming/re-picking the palette can never leave a slot showing a colour the
 // picker no longer offers.
@@ -89,4 +103,27 @@ export function takenSwatches(builds, editingIndex) {
 export function canPickSwatch(builds, editingIndex, color) {
   if (!isSwatch(color)) return false;
   return !takenSwatches(builds, editingIndex).has(color);
+}
+
+// ── The cycle picker's resolver (#487, second pass) ───────────────────────────────────────────
+// The garage swatch GRID read as garish, so the picker became a single CURRENT-COLOUR indicator
+// advanced by a button (gamepad + keyboard) and on-screen ‹ › arrows. This is the pure step: from
+// `current`, walk `dir` (+1 forward / -1 back) through the palette and return the FIRST swatch the
+// editing player may actually pick — i.e. skipping any colour a live co-op player already holds
+// (their pick OR default), exactly what `canPickSwatch` gates. Wraps around the palette. If nothing
+// else is available (e.g. solo with a one-colour palette, or every other swatch taken), it returns
+// `current` unchanged — the editing player's own colour is always pickable, so the cycle simply
+// lands back on itself and the pick becomes a no-op rather than an error.
+export function cycleSwatch(builds, editingIndex, current, dir = 1) {
+  const n = MECH_SWATCHES.length;
+  if (n === 0) return current;
+  const step = dir < 0 ? -1 : 1;
+  // Start from `current`'s slot; if it isn't a swatch, a forward step lands on index 0 first.
+  let idx = MECH_SWATCHES.indexOf(current);
+  for (let i = 0; i < n; i++) {
+    idx = (((idx + step) % n) + n) % n;
+    const hex = MECH_SWATCHES[idx];
+    if (canPickSwatch(builds, editingIndex, hex)) return hex;
+  }
+  return current;
 }
