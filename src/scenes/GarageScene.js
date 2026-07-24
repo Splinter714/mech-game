@@ -639,18 +639,29 @@ export default class GarageScene extends Phaser.Scene {
   // `_refreshPlayerTabs`, which trails them off the tabs' extent); `_refreshColorCycle` repaints it.
   _buildColorCycle() {
     // The indicator IS the control: a small swatch on the left, the colour name to its right.
-    // Clicking the swatch cycles FORWARD one colour (wrapping, skipping taken co-op colours);
-    // a hover brighten + hand cursor give it the same "clickable" affordance the old arrows had.
+    // Clicking EITHER cycles FORWARD one colour (wrapping, skipping taken co-op colours); the
+    // swatch + name read as ONE clickable unit — hovering either brightens both (swatch stroke +
+    // name text), and both carry the hand cursor, giving the same affordance the old arrows had.
+    const over = () => this._hoverColorCycle(true);
+    const out = () => this._hoverColorCycle(false);
+    const click = () => this._cycleColor(+1);
     this._colorSwatch = this.add.rectangle(0, 0, 14, 14, 0xffffff)
       .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85)
       .setInteractive({ useHandCursor: true })
-      .on('pointerover', () => this._colorSwatch.setStrokeStyle(1, 0xffffff, 1))
-      .on('pointerout', () => this._colorSwatch.setStrokeStyle(1, UI.panelEdge, 0.85))
-      .on('pointerdown', () => this._cycleColor(+1));
+      .on('pointerover', over).on('pointerout', out).on('pointerdown', click);
     this._colorName = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.text,
-    }).setOrigin(0, 0.5);
+    }).setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerover', over).on('pointerout', out).on('pointerdown', click);
     this._refreshColorCycle();
+  }
+
+  // Brighten (or restore) the whole swatch+name unit together, so hovering either half lights
+  // both — the shared clickable affordance for the forward-cycle click.
+  _hoverColorCycle(on) {
+    this._colorSwatch.setStrokeStyle(1, on ? 0xffffff : UI.panelEdge, on ? 1 : 0.85);
+    this._colorName.setColor(on ? '#ffffff' : UI.text);
   }
 
   // Lay the colour-cycle control out from a left edge `leftX`, vertically centred on `cy`, and
