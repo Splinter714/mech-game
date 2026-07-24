@@ -1048,10 +1048,12 @@ export const WorldMixin = {
         : (this.coverHp.has(t.hexKey) ? this.coverHp : null);
       const cur = store ? Math.max(0, store.get(t.hexKey) ?? 0) : 0;
       const maxHp = terrainStartHp(id) || cur || 1;
-      // #483 follow-up: a targeted DOCK always previews CLOSED — both the open `dock` and an
-      // already-`dockClosed` id read as the sealed-bay art (`hex_dockClosed`), so a dock reads as
-      // a door rather than an open hole. terrainDisplayName already yields DOCK for both.
-      const texKey = (id === 'dock' || id === 'dockClosed') ? 'hex_dockClosed' : def.tex;
+      // #483 follow-up: a targeted DOCK always previews SEALED — both the open `dock` and an
+      // already-`dockClosed` id read as the sealed composite (`hex_dockSealed` = bay + both door
+      // leaves shut, baked in hexArt.js), so a dock reads as a closed metal door rather than the
+      // bare bay (the `hex_dock`/`hex_dockClosed` tiles bake ONLY the black bay; the sealed look
+      // otherwise comes from runtime door sprites). terrainDisplayName already yields DOCK for both.
+      const texKey = (id === 'dock' || id === 'dockClosed') ? 'hex_dockSealed' : def.tex;
       // `damageSig` is the live terrain id, so the pod re-skins the instant a hex swaps texture
       // (a standing structure → its rubble). The HP within one id is carried by the ring, not the art.
       t.hud = {

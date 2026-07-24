@@ -1399,9 +1399,15 @@ export function buildHexTextures(scene) {
   // sprites it (HudScene stays paint-only). drawWallSpans works in raw pixels, so the span coords
   // and thickness are pre-multiplied by ART_SCALE to super-sample like the rest of the art.
   gen(scene, 'hex_wallSegment', HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
+    // #483 follow-up 2: the earlier segment spanned nearly the full tile width (~79px long × 14px
+    // thick, ~5.6:1), so `fitScale` shrank that long-thin ink to a spindly strip that read
+    // "zoomed out". Redraw a SHORTER, THICKER piece — a 44px centred span at 22px thickness (2:1) —
+    // so fitScale blows it up and the thickness reads like an in-game wall seen close. Still the
+    // REAL wall art (`drawWallSpans`); canvas size is irrelevant (the pod fits the INK bounds).
     const y = (HEX_TEX_H / 2) * ART_SCALE;
-    const x0 = 6 * ART_SCALE, x1 = (HEX_TEX_W - 6) * ART_SCALE;
-    drawWallSpans(g, [{ x0, y0: y, x1, y1: y, hp: 1, maxHp: 1, role: 'wall' }], WALL_THICKNESS_PX * ART_SCALE);
+    const half = 22, cx = HEX_TEX_W / 2, thickness = 22;
+    const x0 = (cx - half) * ART_SCALE, x1 = (cx + half) * ART_SCALE;
+    drawWallSpans(g, [{ x0, y0: y, x1, y1: y, hp: 1, maxHp: 1, role: 'wall' }], thickness * ART_SCALE);
   });
 
   // #289: a SECOND, separate texture-build pass for each cover terrain's canopy overlay — a
@@ -1421,4 +1427,17 @@ export function buildHexTextures(scene) {
   // these over a dock hex's black bay and tween them apart to open / together to close.
   gen(scene, DOCK_DOOR_TEX.L, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => dockDoor(scaledGraphics(g), -1));
   gen(scene, DOCK_DOOR_TEX.R, HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => dockDoor(scaledGraphics(g), +1));
+
+  // #483 follow-up 2: a SEALED-dock COMPOSITE for the locked-target preview pod. In play a closed
+  // dock reads as sealed only because the two `hex_dockDoor{L,R}` leaf sprites are slid shut OVER the
+  // bay at runtime — the `hex_dock`/`hex_dockClosed` tiles bake ONLY the black bay (`dockBay`), so the
+  // single-texKey pod showed a bare open shaft. Bake the bay + both leaves fully SHUT into one texture
+  // so a targeted dock reads as the metal grate/doors. `dockDoor(sg, ∓1)` are the closed-position calls
+  // (left leaf [-HALF_W,0], right leaf [0,+HALF_W]) meeting at the central seam.
+  gen(scene, 'hex_dockSealed', HEX_TEX_W * ART_SCALE, HEX_TEX_H * ART_SCALE, (g) => {
+    const sg = scaledGraphics(g);
+    dockBay(sg);
+    dockDoor(sg, -1);
+    dockDoor(sg, +1);
+  });
 }

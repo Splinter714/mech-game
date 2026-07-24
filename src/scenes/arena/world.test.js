@@ -241,18 +241,18 @@ describe('_describeStaticTarget — wall segment + closed dock (#483)', () => {
     expect(t.hud.name).toBe('GATE');
   });
 
-  it('a targeted open dock previews CLOSED (hex_dockClosed), labelled DOCK', () => {
+  it('a targeted open dock previews SEALED (hex_dockSealed), labelled DOCK', () => {
     const scene = staticScene('dock');
     const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
     expect(t.hud.kind).toBe('hex');
-    expect(t.hud.texKey).toBe('hex_dockClosed');
+    expect(t.hud.texKey).toBe('hex_dockSealed');
     expect(t.hud.name).toBe('DOCK');
   });
 
-  it('an already-closed dock also previews hex_dockClosed', () => {
+  it('an already-closed dock also previews hex_dockSealed', () => {
     const scene = staticScene('dockClosed');
     const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
-    expect(t.hud.texKey).toBe('hex_dockClosed');
+    expect(t.hud.texKey).toBe('hex_dockSealed');
     expect(t.hud.name).toBe('DOCK');
   });
 
@@ -260,6 +260,6 @@ describe('_describeStaticTarget — wall segment + closed dock (#483)', () => {
     const scene = staticScene('forest');
     const t = scene._describeStaticTarget({ hexKey: axialKey(0, 0) });
     expect(t.hud.texKey).toBe(getTerrain('forest').tex);
-    expect(t.hud.texKey).not.toBe('hex_dockClosed');
+    expect(t.hud.texKey).not.toBe('hex_dockSealed');
   });
 });
