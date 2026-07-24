@@ -10,7 +10,6 @@ import {
   garageAction, garageActionLabel, garageStatusText, advanceEditing, joinPlayer, canJoin,
   playerTabs,
 } from '../data/coopGarage.js';
-import { playerColor } from '../data/players.js';
 import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
@@ -223,6 +222,11 @@ export default class GarageScene extends Phaser.Scene {
     this.coopHint = this.add.text(0, this.tabsY + 12, '', {
       fontFamily: 'monospace', fontSize: '11px', color: '#efc14a',
     }).setOrigin(0, 0.5);
+    // #487 (third pass): the colour CYCLE control lives WITH the player tabs now (moved up from the
+    // right slice under the preview), so player count, whose turn it is, and their colour are one
+    // grouped cluster. The persistent indicator/arrow objects are built once here; _refreshPlayerTabs
+    // positions them (it trails the tabs' current extent) and _refreshColorCycle repaints them.
+    this._buildColorCycle();
     this._refreshPlayerTabs();
   }
 
@@ -258,7 +262,11 @@ export default class GarageScene extends Phaser.Scene {
     for (const tab of tabs) {
       const x = x0 + tab.index * (tabW + gap);
       if (tab.occupied) {
-        const col = playerColor(tab.index);
+        // #487 (third pass): each occupied tab renders in that player's ACTUAL chosen colour
+        // (their build's pick, or the per-index auto-default) via mechColorFor — not the flat
+        // playerColor default — so the tab row doubles as the colour readout, and the ACTIVE
+        // player's tab repaints LIVE as they cycle (_applyColor re-runs this).
+        const col = mechColorFor(this.allMechs[PLAYER_MECH_KEYS[tab.index]], tab.index);
         const rect = this.add.rectangle(x, y, tabW, tabH, col, tab.active ? 0.32 : 0.14)
           .setOrigin(0, 0).setStrokeStyle(tab.active ? 2 : 1, col, tab.active ? 1 : 0.6);
         const t = this.add.text(x + tabW / 2, y + tabH / 2, `P${tab.index + 1}`, {
@@ -275,13 +283,16 @@ export default class GarageScene extends Phaser.Scene {
         this.tabsLayer.add([g, t]);
       }
     }
-    // The hint sits just right of the last tab. It names whose turn it is once there is more than
-    // one player, and always reminds that START adds another player while slots remain.
-    const endX = x0 + tabs.length * (tabW + gap) + 6;
+    // #487 (third pass): the colour-cycle control seats just right of the last tab (positioned
+    // here, since the tab row is rebuilt wholesale, so it always trails the tabs' current extent).
+    const tabsEndX = x0 + tabs.length * (tabW + gap);
+    const cycleEndX = this._layoutColorCycle(tabsEndX + 10, y + tabH / 2);
+    // The hint follows the colour control. It names whose turn it is once there is more than one
+    // player, and always reminds that START adds another player while slots remain.
     const status = garageStatusText(this.session);
     const addable = canJoin(this.session) ? 'START JOINS' : '';
     const hint = [status, addable].filter(Boolean).join('   ');
-    this.coopHint.setPosition(endX, y + tabH / 2).setText(hint);
+    this.coopHint.setPosition(cycleEndX + 12, y + tabH / 2).setText(hint);
   }
 
   // A dashed-border rectangle (Phaser has no dotted stroke), used for the empty "add player" tab.
@@ -597,14 +608,13 @@ export default class GarageScene extends Phaser.Scene {
   // chassis to fly, "TROOPER" told the player nothing. Only the label was removed; the chassis
   // data + cycleChassis are untouched.
   _buildPreview() {
-    const stripTop = this.H - this.bottomH + 6;
-    // #487: the box hugs the TOP of the strip now and is shrunk from the old full-height square,
-    // so the colour-swatch picker seats directly below it in the same right slice. The mech shown
-    // is small but the arena renders the real thing at size — the lab's job here is just to show
-    // the current build (and, now, the current colour) at a glance.
-    const box = 100;                                            // square preview size
-    const cx = this.W - this.previewW / 2 - 20;                 // centred in the right slice
-    const cy = stripTop + box / 2;
+    // #487 (third pass): the colour CYCLE control moved UP to the player-tab row (see
+    // _buildColorCycle / _refreshPlayerTabs), so the preview is no longer shrunk-and-top-hugged to
+    // seat a picker beneath it — it goes back to the full-size box centred in the strip's usable
+    // band (its state before #487's second pass parked the picker here).
+    const box = this.bottomH - 56;                             // square preview size
+    const cx = this.W - this.previewW / 2 - 20;                // centred in the right slice
+    const cy = (this.H - this.bottomH + 6 + this._rowBottom) / 2;
     this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
     const scale = (box - 30) / 230;
     this._previewScale = scale;
@@ -619,37 +629,43 @@ export default class GarageScene extends Phaser.Scene {
     this.previewHull = this._preview.hull;
     this.previewTurret = this._preview.turret;
     this._positionPreviewParts();
-    // #487 (second pass): the colour picker sits just below the preview box. The old 10-swatch
-    // GRID read as garish, so it's a single CURRENT-COLOUR indicator (a small swatch + the colour
-    // name) advanced with a button — gamepad B/X and keyboard '.'/',' (see `_cycleColor`) — with
-    // ‹ › arrows for mouse discoverability.
-    const boxBottom = cy + box / 2;
-    this.add.text(cx, boxBottom + 4, 'COLOR', {
-      fontFamily: 'monospace', fontSize: '10px', color: '#7c8794',
-    }).setOrigin(0.5, 0);
-    this._buildColorCycle(cx, boxBottom + 26);
   }
 
-  // #487 (second pass): the mech-colour CYCLE control, under the preview box in the right slice.
-  // A back/forward pair of arrows flanks one indicator swatch + the colour's name. The button
-  // cycle (gamepad B/X, keyboard '.'/',') is the point; the arrows just make it mouse-discoverable.
-  // `_refreshColorCycle` repaints the indicator from the current build; the arrows are static.
-  _buildColorCycle(cx, rowY) {
-    const arrowStyle = { fontFamily: 'monospace', fontSize: '18px', color: '#9aa4b0' };
-    const arrow = (x, label, dir) => this.add.text(x, rowY, label, arrowStyle).setOrigin(0.5)
+  // #487 (second pass): the mech-colour CYCLE control — a back/forward pair of ‹ › arrows flanking
+  // one indicator swatch + the colour's name. The button cycle (gamepad B/X, keyboard '.'/',') is
+  // the point; the arrows just make it mouse-discoverable. #487 (third pass): it moved from under
+  // the preview box UP to the player-tab row, so the persistent objects are built here at a
+  // placeholder position and laid out by `_layoutColorCycle` (called from `_refreshPlayerTabs`,
+  // which trails them off the tabs' current extent); `_refreshColorCycle` repaints the indicator.
+  _buildColorCycle() {
+    const arrowStyle = { fontFamily: 'monospace', fontSize: '16px', color: '#9aa4b0' };
+    const arrow = (label, dir) => this.add.text(0, 0, label, arrowStyle).setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerover', function () { this.setColor('#ffffff'); })
       .on('pointerout', function () { this.setColor('#9aa4b0'); })
       .on('pointerdown', () => this._cycleColor(dir));
-    this._colorPrevArrow = arrow(cx - 64, '‹', -1);
-    this._colorNextArrow = arrow(cx + 64, '›', +1);
+    this._colorPrevArrow = arrow('‹', -1);
+    this._colorNextArrow = arrow('›', +1);
     // The indicator: a small swatch on the left, the colour name to its right.
-    this._colorSwatch = this.add.rectangle(cx - 40, rowY, 14, 14, 0xffffff)
+    this._colorSwatch = this.add.rectangle(0, 0, 14, 14, 0xffffff)
       .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85);
-    this._colorName = this.add.text(cx - 28, rowY, '', {
+    this._colorName = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.text,
     }).setOrigin(0, 0.5);
     this._refreshColorCycle();
+  }
+
+  // Lay the colour-cycle control out from a left edge `leftX`, vertically centred on `cy`, and
+  // return its right edge (so the caller can seat the hint after it). A fixed name reserve keeps
+  // the next-arrow position stable as the colour name (up to "CHARTREUSE") changes width.
+  _layoutColorCycle(leftX, cy) {
+    const NAME_RESERVE = 64;
+    this._colorPrevArrow.setPosition(leftX + 6, cy);
+    this._colorSwatch.setPosition(leftX + 22, cy);
+    this._colorName.setPosition(leftX + 33, cy);
+    const nextX = leftX + 33 + NAME_RESERVE;
+    this._colorNextArrow.setPosition(nextX, cy);
+    return nextX + 6;
   }
 
   // The joined players' builds, in player order — what co-op distinctness reads. In solo this is
@@ -693,6 +709,9 @@ export default class GarageScene extends Phaser.Scene {
     this._positionPreviewParts();
     saveAllMechs(this.allMechs);
     this._refreshColorCycle();
+    // #487 (third pass): the active player's TAB is now the colour readout too, so repaint the
+    // tab row live on every cycle (mechColorFor picks up the just-committed colour).
+    this._refreshPlayerTabs();
   }
 
   // Place + pivot the static preview side-torso + arm sprites at their joints. Poses through the
