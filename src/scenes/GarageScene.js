@@ -770,9 +770,9 @@ export default class GarageScene extends Phaser.Scene {
     return tileRow(this.dollX, this.dollW, { bottom: this._rowBottom, maxSize: 150 });
   }
 
-  // #506: the ability diamond + core tile's shared centre — the reserved slice at the right end
-  // of the bottom strip (see `create()`), vertically centred on the same band the tile row and
-  // the mech preview occupy.
+  // The ability tiles + core tile's shared centre — the reserved slice at the right end of the
+  // bottom strip (see `create()`), vertically centred on the same band the tile row and the mech
+  // preview occupy.
   _abilityClusterCenter() {
     const top = this.H - this.bottomH + 6;
     return { cx: this.abilityClusterX + this.abilityClusterW / 2, cy: (top + this._rowBottom) / 2 };
@@ -788,7 +788,7 @@ export default class GarageScene extends Phaser.Scene {
     return coreTileRect(cx, cy, 30);
   }
 
-  // Rebuild the doll: the shared skill-tile row (weapons) plus the ability diamond + core tile,
+  // Rebuild the doll: the shared skill-tile row (weapons) plus the ability tiles + core tile,
   // each click-to-mount / click-to-clear. Also rebuilds the tab bar so Deploy reflects the
   // current build validity, and repaints the pad legend (the catalog-first button map; hidden
   // entirely under mouse/keyboard).

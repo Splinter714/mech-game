@@ -35,7 +35,7 @@ function setButton(scene, i, pressed) {
 // constructor + read() to run without a real Phaser instance.
 function fakeControlsScene({ pads = [] } = {}) {
   const keys = {};
-  for (const k of ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'TWO', 'THREE', 'FOUR']) {
+  for (const k of ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'FOUR']) {
     keys[k] = { isDown: false };
   }
   const pointer = { x: 0, y: 0, worldX: 0, worldY: 0, wasTouch: false, leftButtonDown: () => false, rightButtonDown: () => false };
@@ -147,12 +147,12 @@ describe('Controls / PadEdges — resync a carried-over pad on scene transition 
   });
 });
 
-// #506: the four ability slots replaced Dash's old hardcoded L3/Space bind — every slot reports
-// the SAME press-to-trigger semantics via its own rising-edge one-shot in `ability[slot]`,
-// picked from whichever device is currently the active scheme (unlike #188's old device split,
-// sprintHeld vs. sprintPressed). One slot (abilityY, keyboard '1' / pad Y) stands in for all four
-// here since they share one code path; ability slot count/binding is covered by anatomy.js's own
-// ABILITY_SLOTS/ABILITY_BINDS shape.
+// The ability slots (Y/X, down from four — see anatomy.js) replaced Dash's old hardcoded
+// L3/Space bind — every slot reports the SAME press-to-trigger semantics via its own rising-edge
+// one-shot in `ability[slot]`, picked from whichever device is currently the active scheme
+// (unlike #188's old device split, sprintHeld vs. sprintPressed). One slot (abilityY, keyboard
+// '1' / pad Y) stands in for both here since they share one code path; ability slot
+// count/binding is covered by anatomy.js's own ABILITY_SLOTS/ABILITY_BINDS shape.
 describe('Controls.read — ability intent, press-to-trigger on both devices (#506)', () => {
   it('ability.abilityY is a rising-edge one-shot on keyboard 1 (kbm mode)', () => {
     const scene = fakeControlsScene();
@@ -214,8 +214,8 @@ describe('Controls.read — ability intent, press-to-trigger on both devices (#5
   });
 });
 
-// #506: manual reload moved to L3 / F (was R3 / F, #402) — same rising-edge one-shot semantics,
-// no pad2 alt-bind any more (B/X now belong to the ability diamond above).
+// Manual reload moved to B / F (was L3 / F, then R3 / F before that, #402) — same rising-edge
+// one-shot semantics, no pad2 alt-bind (B was freed up when the ability slots shrank to Y/X).
 describe('Controls.read — reload intent, press-to-trigger on both devices (#402/#506)', () => {
   it('reloadPressed is a rising-edge one-shot on keyboard F (kbm mode)', () => {
     const scene = fakeControlsScene();
@@ -231,17 +231,17 @@ describe('Controls.read — reload intent, press-to-trigger on both devices (#40
     expect(controls.read().reloadPressed).toBe(true);    // press again
   });
 
-  it('reloadPressed is a rising-edge one-shot on gamepad L3 (pad mode)', () => {
+  it('reloadPressed is a rising-edge one-shot on gamepad B (pad mode)', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
-    pad.buttons[PAD.L3] = { pressed: true };
+    pad.buttons[PAD.B] = { pressed: true };
     expect(controls.read().reloadPressed).toBe(true);    // fresh press (also switches mode to pad)
     expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
-    pad.buttons[PAD.L3] = { pressed: false };
+    pad.buttons[PAD.B] = { pressed: false };
     expect(controls.read().reloadPressed).toBe(false);   // released
-    pad.buttons[PAD.L3] = { pressed: true };
+    pad.buttons[PAD.B] = { pressed: true };
     expect(controls.read().reloadPressed).toBe(true);    // press again
   });
 });
@@ -320,7 +320,7 @@ describe('Controls — touch sticks feed the same intent (#346)', () => {
     scene._emit('pointerdown', touchPointer(1, 100, 200));
     const intent = controls.read();
     expect(intent.fire).toEqual({ rightArm: false, leftArm: false, rightTorso: false, leftTorso: false });
-    expect(intent.ability).toEqual({ abilityY: false, abilityB: false, abilityA: false, abilityX: false });
+    expect(intent.ability).toEqual({ abilityY: false, abilityX: false });
   });
 
   it('a touch drag is not mistaken for mouse movement (mode does not flip back to kbm)', () => {

@@ -12,7 +12,7 @@ import { DASH_BURST_DURATION, DASH_COOLDOWN } from '../../data/abilities.js';
 
 function makeScene() {
   const player = {
-    mech: { abilityMounts: { abilityY: 'dash', abilityB: null, abilityA: null, abilityX: null } },
+    mech: { abilityMounts: { abilityY: 'dash', abilityX: null } },
     abilityStates: initAbilityStates(),
   };
   const scene = { registry: { set() {} } };
@@ -21,11 +21,11 @@ function makeScene() {
 }
 
 function press(scene, player, slot, delta) {
-  const ability = { abilityY: false, abilityB: false, abilityA: false, abilityX: false, [slot]: true };
+  const ability = { abilityY: false, abilityX: false, [slot]: true };
   scene._handleAbilities({ ability }, delta, player);
 }
 function release(scene, player, delta) {
-  scene._handleAbilities({ ability: { abilityY: false, abilityB: false, abilityA: false, abilityX: false } }, delta, player);
+  scene._handleAbilities({ ability: { abilityY: false, abilityX: false } }, delta, player);
 }
 
 describe('#506 _handleAbilities — Dash mounted in an ability slot', () => {
@@ -70,7 +70,7 @@ describe('#506 _handleAbilities — Dash mounted in an ability slot', () => {
 
   it('an unmounted slot never activates, however it is pressed', () => {
     const { scene, player } = makeScene();
-    press(scene, player, 'abilityB', 16);
-    expect(player.abilityStates.abilityB.active).toBe(false);
+    press(scene, player, 'abilityX', 16);
+    expect(player.abilityStates.abilityX.active).toBe(false);
   });
 });

@@ -49,21 +49,29 @@ export const MOUNT_LOCATIONS = Object.keys(LOCATION_INFO).filter((id) => LOCATIO
 // The arms — the only locations a melee weapon can mount in.
 export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
-// Ability slots (#506): four independently-bound, non-weapon activated slots — one per
-// gamepad face button (Controls.js ABILITY_BINDS), arranged as a diamond in the HUD/garage.
-// Deliberately NOT a body location: abilities carry no armor/structure and aren't drawn on the
-// mech, so they live in their own list rather than folding into LOCATION_INFO/MOUNT_LOCATIONS.
-// Dash (previously a hardcoded L3/Space built-in every mech always had) is now the first
-// mountable ability — see data/abilities.js — so an ability slot can be empty.
-export const ABILITY_SLOTS = ['abilityY', 'abilityB', 'abilityA', 'abilityX'];
+// Ability slots: independently-bound, non-weapon activated slots — one per gamepad face
+// button (Controls.js ABILITY_BINDS). Deliberately NOT a body location: abilities carry no
+// armor/structure and aren't drawn on the mech, so they live in their own list rather than
+// folding into LOCATION_INFO/MOUNT_LOCATIONS. Dash (previously a hardcoded L3/Space built-in
+// every mech always had) is now the first mountable ability — see data/abilities.js — so an
+// ability slot can be empty.
+//
+// Down from four (Y/B/A/X) to two (Jackson, confirmed): "active core abilities should just be
+// two and bound to X and Y, leaving A for a generic interact we may need, and maybe B for
+// reload." A is RESERVED — no ability, no other function, just left unbound for a future
+// concrete use — and B moved to RELOAD_BIND (Controls.js) instead of an ability. A save with
+// an old abilityA/abilityB mount is handled for free: Mech's constructor only ever iterates
+// THIS list when hydrating `abilityMounts`, so a stale abilityA/abilityB key in saved JSON is
+// simply never read (see Mech.js) — no explicit migration code needed.
+export const ABILITY_SLOTS = ['abilityY', 'abilityX'];
 
-// Each slot's diamond position (unit offsets, Y up / negative) for UI layout — matches the
-// standard gamepad face-button diamond (Y top, B right, A bottom, X left).
+// Each slot's position (unit offsets, Y up / negative) for UI layout — flanking the core tile
+// left/right rather than the old four-point diamond, since two points don't make one. Left/
+// right (not top/bottom) so the pair reads as a symmetric row with the passive core tile
+// nested between them, matching the HUD/garage's horizontal tile strip.
 export const ABILITY_SLOT_LAYOUT = {
-  abilityY: { dx: 0, dy: -1 },
-  abilityB: { dx: 1, dy: 0 },
-  abilityA: { dx: 0, dy: 1 },
-  abilityX: { dx: -1, dy: 0 },
+  abilityY: { dx: -1, dy: 0 },
+  abilityX: { dx: 1, dy: 0 },
 };
 
 // Core slot (#496): a third, passive/always-on slot type — neither aimed (a weapon) nor

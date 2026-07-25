@@ -72,9 +72,12 @@ export function tileRow(x, w, { y, bottom, n = TILE_ORDER.length, gap = 12, maxS
   return TILE_ORDER.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
 }
 
-// #506: the four ABILITY_SLOTS arranged in a diamond around (cx, cy), using
-// ABILITY_SLOT_LAYOUT's unit dx/dy offsets (Y top, B right, A bottom, X left) — the ability-slot
-// counterpart to `tileRow`'s linear layout. Same `{loc, x, y, w, h}` shape as `tileRow`'s rows.
+// Places every ABILITY_SLOTS entry around (cx, cy), using ABILITY_SLOT_LAYOUT's unit dx/dy
+// offsets — the ability-slot counterpart to `tileRow`'s linear layout. Two slots today (Y left,
+// X right, flanking the core tile), but the function itself doesn't assume a count or shape —
+// it just places whatever ABILITY_SLOT_LAYOUT says. Same `{loc, x, y, w, h}` shape as `tileRow`'s
+// rows. (Named `diamondLayout` from when there were four slots arranged as one; kept as-is
+// rather than renamed for a cosmetic-only diff — see anatomy.js for the current two-slot shape.)
 export function diamondLayout(cx, cy, { size = 46, radius } = {}) {
   radius = radius ?? size * 1.15;
   return ABILITY_SLOTS.map((loc) => {

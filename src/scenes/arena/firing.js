@@ -278,8 +278,9 @@ export const FiringMixin = {
     // which is where locomotion reads it.
   },
 
-  // ── Abilities (#506) ── the four mountable ability slots (data/anatomy.js ABILITY_SLOTS),
-  // one per face button. `intent.ability[slot]` is already rising-edge-detected by Controls.js
+  // ── Abilities (#506) ── the mountable ability slots (data/anatomy.js ABILITY_SLOTS, now just
+  // Y/X — see anatomy.js), one per face button. `intent.ability[slot]` is already
+  // rising-edge-detected by Controls.js
   // (one edge per physical press, on whichever device is currently active). Replaces the old
   // hardcoded `_handleDash` (#261) — Dash is now just the 'dash' effect kind, mounted like any
   // other ability; see scenes/arena/abilities.js for the generic state-machine wiring and

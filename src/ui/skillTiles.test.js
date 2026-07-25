@@ -34,7 +34,7 @@ function stubScene() {
 }
 
 describe('diamondLayout (#506)', () => {
-  it('places the 4 ability slots per ABILITY_SLOT_LAYOUT\'s unit offsets', () => {
+  it('places every ABILITY_SLOTS entry per ABILITY_SLOT_LAYOUT\'s unit offsets', () => {
     const cx = 100, cy = 200, size = 40, radius = 50;
     const rects = diamondLayout(cx, cy, { size, radius });
     expect(rects.map((r) => r.loc)).toEqual(ABILITY_SLOTS);
@@ -48,9 +48,9 @@ describe('diamondLayout (#506)', () => {
   });
 
   it('defaults radius from size when omitted', () => {
-    const [top] = diamondLayout(0, 0, { size: 46 });
-    // abilityY is dx:0, dy:-1 — its y offset is exactly -radius (size * 1.15) minus half-size.
-    expect(top.y).toBe(Math.round(0 + -1 * (46 * 1.15) - 23));
+    const [left] = diamondLayout(0, 0, { size: 46 });
+    // abilityY is dx:-1, dy:0 — its x offset is exactly -radius (size * 1.15) minus half-size.
+    expect(left.x).toBe(Math.round(0 + -1 * (46 * 1.15) - 23));
   });
 });
 

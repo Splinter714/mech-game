@@ -803,21 +803,22 @@ export default class HudScene extends Phaser.Scene {
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
 
-    // #506: the ability diamond (4 slots) + core tile, in the free vertical space ABOVE this
-    // player's weapon tile row — centred on the same horizontal midpoint, sized off the row's
-    // own tile size so a squeezed co-op row shrinks the diamond right along with it. Always
-    // rendered (empty "+" tiles for unmounted slots), matching the weapon tiles' own behavior.
+    // The two ability tiles (Y/X) + core tile, in the free vertical space ABOVE this player's
+    // weapon tile row — centred on the same horizontal midpoint, sized off the row's own tile
+    // size so a squeezed co-op row shrinks the pair right along with it. Always rendered (empty
+    // "+" tiles for unmounted slots), matching the weapon tiles' own behavior. ABILITY_SLOT_LAYOUT
+    // flanks the core tile left/right rather than the old four-point diamond (dy is 0 for both
+    // ability slots now), so unlike the old diamond the whole cluster's height is just ONE tile
+    // (ringSize), not ring-radius-plus-tile.
     const mode = this._panelMode(panel);
     const tileSize = tiles.length ? tiles[0].w : CONSOLE_TILES.max;
     const ringSize = Math.max(24, Math.round(tileSize * 0.58));
     const coreSize = Math.max(18, Math.round(tileSize * 0.4));
     const radius = ringSize * 1.15;
-    const diamondGap = 12;   // clearance between the diamond's bottom tile and the weapon row
+    const clusterGap = 12;   // clearance between the ability row and the weapon row below it
     const dCx = group.tilesX + group.tilesW / 2;
-    const dCy = rowTop - diamondGap - radius - ringSize / 2;
-    // Matches diamondLayout's own Math.round(cy + dy*radius - size/2) for abilityY (dy=-1)
-    // exactly, so this is never off-by-a-fraction from the tile it's meant to bound.
-    panel.diamondTop = Math.round(dCy - radius - ringSize / 2);
+    const dCy = rowTop - clusterGap - ringSize / 2;
+    panel.abilityRowTop = Math.round(dCy - ringSize / 2);
     for (const r of diamondLayout(dCx, dCy, { size: ringSize, radius })) {
       const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
@@ -832,9 +833,10 @@ export default class HudScene extends Phaser.Scene {
       loc: 'core', itemId: coreId, mode, bindGlyph: '', emptyLabel: 'core',
     });
 
-    panel.tileTop = Math.min(rowTop, panel.diamondTop);
-    // The row's outer box, so the console can recess a bay behind exactly what the tiles AND the
-    // diamond above them occupy — one bay covers both rather than a second one for the diamond.
+    panel.tileTop = Math.min(rowTop, panel.abilityRowTop);
+    // The row's outer box, so the console can recess a bay behind exactly what the weapon tiles
+    // AND the ability/core row above them occupy — one bay covers both rather than a second one
+    // for the ability row.
     panel.tileBox = tiles.length
       ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: (tiles[0].y + last.h) - panel.tileTop }
       : null;
@@ -956,9 +958,9 @@ export default class HudScene extends Phaser.Scene {
       updateSkillTile(panel.skillRefs[loc], opts);
     }
 
-    // #506: the ability diamond — same per-slot shape as the weapon tiles above, but reading
-    // live cooldown/active state off the PLAYER's own abilityStates (snapshot, not the mech —
-    // that's where scenes/arena/abilities.js ticks it every frame) rather than ammo.
+    // The ability tiles (Y/X) — same per-slot shape as the weapon tiles above, but reading live
+    // cooldown/active state off the PLAYER's own abilityStates (snapshot, not the mech — that's
+    // where scenes/arena/abilities.js ticks it every frame) rather than ammo.
     for (const slot of ABILITY_SLOTS) {
       const id = mech.abilityMounts[slot] ?? null;
       const opts = {

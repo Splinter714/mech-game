@@ -836,12 +836,13 @@ describe('HudScene health readout modes (#448)', () => {
   });
 });
 
-// #506: the ability diamond (4 ability slots) + core tile, always rendered above the weapon
-// tile row — same "empty + tile, live cooldown/subtitle when mounted" language the 4 weapon
-// tiles already use, generalized via skillTiles.js's diamondLayout/coreTileRect + bindGlyph/
-// emptyLabel opts (pinned directly in src/ui/skillTiles.test.js; this file pins the WIRING).
-describe('HudScene panels — the ability diamond + core tile (#506)', () => {
-  it('builds a tile for all 4 ability slots plus the core slot, unconditionally', () => {
+// #506: the ability tiles (Y/X — down from four, see anatomy.js) + core tile, always rendered
+// above the weapon tile row — same "empty + tile, live cooldown/subtitle when mounted" language
+// the 4 weapon tiles already use, generalized via skillTiles.js's diamondLayout/coreTileRect +
+// bindGlyph/emptyLabel opts (pinned directly in src/ui/skillTiles.test.js; this file pins the
+// WIRING).
+describe('HudScene panels — the ability tiles + core tile (#506)', () => {
+  it('builds a tile for both ability slots plus the core slot, unconditionally', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const refs = scene.panels[0].skillRefs;
@@ -859,19 +860,21 @@ describe('HudScene panels — the ability diamond + core tile (#506)', () => {
     expect(refs.core.bind.text).toBe('');        // core is passive — no button at all
   });
 
-  it('positions the diamond ABOVE the weapon tile row, centred on the same horizontal midpoint', () => {
+  it('positions the ability tiles ABOVE the weapon tile row, centred on the same horizontal midpoint', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
     const weaponTop = panel.skillRefs.leftArm.rect.y;
-    expect(panel.skillRefs.abilityY.rect.y).toBeLessThan(weaponTop);   // top ring tile, above the row
-    expect(panel.skillRefs.abilityA.rect.y).toBeGreaterThan(panel.skillRefs.abilityY.rect.y);   // bottom ring tile, below the top one
+    expect(panel.skillRefs.abilityY.rect.y).toBeLessThan(weaponTop);   // above the weapon row
+    // Y/X flank the core tile left/right (ABILITY_SLOT_LAYOUT dy:0 for both), so they sit at the
+    // SAME height rather than one above the other the way the old 4-slot diamond's corners did.
+    expect(panel.skillRefs.abilityX.rect.y).toBe(panel.skillRefs.abilityY.rect.y);
     const groupMidX = scene._band.groups[0].tilesX + scene._band.groups[0].tilesW / 2;
     const coreCx = panel.skillRefs.core.rect.x + panel.skillRefs.core.rect.w / 2;
     expect(Math.abs(coreCx - groupMidX)).toBeLessThanOrEqual(1);
   });
 
-  it('folds the diamond into panel.tileTop/tileBox so the console bay recesses behind both', () => {
+  it('folds the ability row into panel.tileTop/tileBox so the console bay recesses behind both', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];

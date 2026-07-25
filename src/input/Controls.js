@@ -16,11 +16,14 @@
 // nothing to flip; see ArenaScene.js). R3 and F are therefore UNBOUND.
 //
 // #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot was removed,
-// then #261 gave L3/Space a hardcoded Dash instead. #506 removes the hardcoding a second time,
-// properly this time: there are now four independently-mounted ABILITY slots (data/abilities.js,
-// Dash is the first entry), one per gamepad face button (A/B/X/Y) with a keyboard row (1/2/3/4)
-// alongside. Reload moves to L3/F (was R3/F) so L3 stays free of the face-button cluster. Each
-// ability is a discrete one-shot activation (not a sustained hold-vs-toggle state), so both
+// then #261 gave L3/Space a hardcoded Dash instead. #506 removed the hardcoding a second time,
+// properly that time: independently-mounted ABILITY slots (data/abilities.js, Dash is the first
+// entry), one per gamepad face button with a keyboard row alongside. A later pass cut that down
+// to just two (Jackson, confirmed): "active core abilities should just be two and bound to X and
+// Y, leaving A for a generic interact we may need, and maybe B for reload." So today: Y and X are
+// the only mountable ability slots; A is RESERVED (no bind at all — left free for a future
+// concrete use, not repurposed); B is the manual-RELOAD bind (moved off L3, see RELOAD_BIND).
+// Each ability is a discrete one-shot activation (not a sustained hold-vs-toggle state), so both
 // devices use the same press-to-trigger semantics: `read()` reports one rising edge per slot in
 // `ability`, picked from whichever device is currently active. Keyboard needs its own edge
 // tracker (a key is polled every frame, it doesn't arrive pre-edge-detected the way a Phaser
@@ -70,23 +73,21 @@ export const SKILL_BINDS = {
   leftTorso:   { key: 'Q',     pad: 'LB' },
 };
 
-// #506: manual-RELOAD bind moves to L3/F (was R3/F, #402) — L3 is otherwise idle now that Dash
-// no longer hardcodes it, and freeing R3/B/X/A/Y up front avoids the ability diamond colliding
-// with any other bind. No pad2 alt-bind any more (B/X are now ability slots, see below).
-export const RELOAD_BIND = { key: 'F', pad: 'L3' };
-const PAD_L3 = PAD.L3;
+// Manual-RELOAD bind: B on pad (moved off L3 now that the ability diamond shrank to two slots —
+// see the file header), F on keyboard (unchanged). B was the ability diamond's old "shield burst"
+// corner; now that only Y/X are mountable abilities, B is free for reload instead.
+export const RELOAD_BIND = { key: 'F', pad: 'B' };
+const PAD_RELOAD = PAD.B;
 
-// #506: the four ability slots, one per gamepad face button, arranged as a diamond (matches
-// data/anatomy.js ABILITY_SLOT_LAYOUT) with a keyboard row alongside. R3 is UNBOUND — freed up
-// by the reload move above, available for a future bind.
+// The two mountable ability slots, one per gamepad face button, with a keyboard row alongside.
+// A is deliberately UNBOUND (reserved, no ability, no other function — see the file header); B
+// went to RELOAD_BIND above instead of an ability.
 export const ABILITY_BINDS = {
   abilityY: { key: '1', pad: 'Y' },
-  abilityB: { key: '2', pad: 'B' },
-  abilityA: { key: '3', pad: 'A' },
   abilityX: { key: '4', pad: 'X' },
 };
-const ABILITY_PAD_INDEX = { abilityY: PAD.Y, abilityB: PAD.B, abilityA: PAD.A, abilityX: PAD.X };
-const ABILITY_KEY_NAME = { abilityY: 'ONE', abilityB: 'TWO', abilityA: 'THREE', abilityX: 'FOUR' };
+const ABILITY_PAD_INDEX = { abilityY: PAD.Y, abilityX: PAD.X };
+const ABILITY_KEY_NAME = { abilityY: 'ONE', abilityX: 'FOUR' };
 
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
@@ -143,7 +144,7 @@ export class Controls {
     this.scene = scene;
     this.padIndex = padIndex;
     this.hasKeyboard = keyboard;
-    this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,ONE,TWO,THREE,FOUR');
+    this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,ONE,FOUR');
     scene.input.mouse?.disableContextMenu(); // so right-click fires instead of opening a menu
 
     // #122: each Phaser Scene gets its OWN GamepadPlugin, so a pad already connected (and in
@@ -169,7 +170,7 @@ export class Controls {
     this.mode = keyboard ? 'kbm' : 'pad';
     this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
-    this._padReloadDown = false;   // #506: previous frame's raw L3 state, for edge-detecting reload
+    this._padReloadDown = false;   // previous frame's raw B state, for edge-detecting reload
     this._kbReloadDown = false;    // previous frame's raw F state, for edge-detecting reload
     // #506: previous frame's raw per-slot ability button state, one pair per device, for
     // edge-detecting each ability's press exactly like dash/reload above.
@@ -255,7 +256,7 @@ export class Controls {
     const pointerIsTouch = p.wasTouch === true;
     const mouseMoved = (p.x !== this._px || p.y !== this._py) && !pointerIsTouch;
     this._px = p.x; this._py = p.y;
-    const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'TWO', 'THREE', 'FOUR']
+    const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'FOUR']
       .some((key) => k[key].isDown);
     const mouseBtn = !pointerIsTouch && (p.leftButtonDown() || p.rightButtonDown());
     // #348: a pad-only player ignores the keyboard/mouse entirely — those belong to player 1.
@@ -341,11 +342,11 @@ export class Controls {
       };
     }
 
-    // #506: manual reload (L3 / F) — edge-detected on each device independently every frame
+    // Manual reload (B / F) — edge-detected on each device independently every frame
     // (regardless of which scheme is currently active, so a mode switch mid-press can't leave a
     // stale edge from the previously-active device), then only the currently-active scheme's
     // edge is reported.
-    const padReloadDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
+    const padReloadDown = !!(pad && pad.buttons[PAD_RELOAD] && pad.buttons[PAD_RELOAD].pressed);
     const padReloadPressed = padReloadDown && !this._padReloadDown;
     this._padReloadDown = padReloadDown;
     const kbReloadDown = k.F.isDown;
@@ -353,8 +354,8 @@ export class Controls {
     this._kbReloadDown = kbReloadDown;
     const reloadPressed = padMode ? padReloadPressed : kbReloadPressed;
 
-    // #506: the four ability slots — same press-to-trigger edge-detection pattern as reload
-    // above, one independent tracker per slot per device.
+    // The two ability slots — same press-to-trigger edge-detection pattern as reload above, one
+    // independent tracker per slot per device.
     const ability = {};
     for (const slot of ABILITY_SLOTS) {
       const padDown = !!(pad && pad.buttons[ABILITY_PAD_INDEX[slot]] && pad.buttons[ABILITY_PAD_INDEX[slot]].pressed);

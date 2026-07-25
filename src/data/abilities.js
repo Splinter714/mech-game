@@ -1,4 +1,4 @@
-// Ability catalog (#506) — mountable non-weapon items for the four ABILITY_SLOTS. Mirrors
+// Ability catalog (#506) — mountable non-weapon items for the ABILITY_SLOTS (Y/X). Mirrors
 // weapons.js's one-registry-entry-per-item shape: each entry supplies the cooldown/duration
 // tuning data/abilityState.js's generic state machine consumes, plus an `effect` kind string
 // the arena dispatches on (scenes/arena/abilities.js) — no per-ability special-casing lives in
