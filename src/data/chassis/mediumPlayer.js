@@ -73,5 +73,14 @@ export const MEDIUM_PLAYER_CONFIG = {
   // hip wobble all read off that same phase, so they speed up together and stay in lockstep. A
   // deliberately small step — the brief was "slightly", and the heavy bounding feel from #435
   // lives on this dial too.
-  movement: { ...MEDIUM_CONFIG.movement, stepInterval: 215 },
+  // #501 re-experiment: much slower player top speed/turn, paired with locomotion.js's
+  // INSTANT_TURNING/INSTANT_VELOCITY flipped back off (arena/locomotion.js) so the rate-limited
+  // "twist slew" turning and accel/decel ramp are both back in play instead of the instant-snap
+  // feel. Roughly half MEDIUM_CONFIG's speed/accel and ~60% of its turnRate — a first pass to
+  // playtest against, not a locked balance number. Player-only: the enemy Warden's medium
+  // chassis is untouched.
+  movement: {
+    ...MEDIUM_CONFIG.movement, stepInterval: 215,
+    maxSpeed: 100, accel: 130, decel: 90, turnRate: 0.9,
+  },
 };

@@ -56,7 +56,11 @@ const TILT_SMOOTH_K = 12;
 // committed design change (same pattern as #144's aim-line disable flag): flip back to false
 // to restore the exact previous rate-limited feel. Only affects the player's _drive() below —
 // enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is separate and untouched.
-const INSTANT_TURNING = true;
+//
+// #501 re-experiment: flipped back to false to bring back rate-limited "twist slew" turning
+// (paired with a much slower player top speed, mediumPlayer.js) — a deliberate revisit of the
+// pre-#154 feel, not a bug. Flip back to true to restore the instant-snap feel.
+const INSTANT_TURNING = false;
 
 // #159 follow-up to #154/#156: INSTANT_TURNING only snapped the player's FACING to input —
 // the underlying VELOCITY still eased toward the commanded speed via the accel/decel
@@ -66,7 +70,10 @@ const INSTANT_TURNING = true;
 // each frame instead of easing when true. Per-chassis accel/decel become moot while this is
 // on (left in the chassis data, just bypassed). Flip back to false to restore the exact
 // previous accel/decel behavior.
-const INSTANT_VELOCITY = true;
+//
+// #501: flipped back to false alongside INSTANT_TURNING — the slower/weightier re-experiment
+// wants the accel/decel ramp back too, not just a slower top speed with an instant-snap start.
+const INSTANT_VELOCITY = false;
 
 // #159 follow-up (collision-tunneling fix): `_blocked` is a single-POINT check — it only tests
 // the mech's post-move endpoint each frame, not the path swept to get there. That was safe as
