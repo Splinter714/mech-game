@@ -6,6 +6,8 @@ import { mechColorFor } from '../data/mechColors.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { hexToPixel } from '../data/hexgrid.js';
 import { Controls } from '../input/Controls.js';
+import { OUTPOSTS_KEY } from '../data/events.js';
+import { outpostsByType } from '../data/outposts.js';
 import { LocomotionMixin } from './arena/locomotion.js';
 import { BaseWorldMixin } from './base/world.js';
 import { BaseLocomotionMixin } from './base/locomotion.js';
@@ -62,6 +64,20 @@ export default class BaseScene extends Phaser.Scene {
     this._lastTriggerHex = null;
 
     this.input.keyboard.on('keydown-G', () => this.scene.start('GarageScene'));
+
+    this._buildOutpostReadout();
+  }
+
+  // #511/#512: a plain readout of what's held so far — screen-fixed (setScrollFactor(0)), not
+  // world-space, since it's base-wide status rather than a marker tied to any one hex. No UI to
+  // manage/upgrade outposts yet (that's later work); this just makes claiming visible.
+  _buildOutpostReadout() {
+    const outposts = this.registry.get(OUTPOSTS_KEY) ?? [];
+    const resourceCount = outpostsByType(outposts, 'resource').length;
+    const repairCount = outpostsByType(outposts, 'repair').length;
+    this.add.text(16, 16, `OUTPOSTS HELD — RESOURCE ${resourceCount}  REPAIR ${repairCount}`, {
+      fontFamily: 'monospace', fontSize: '13px', color: '#c8d2dd',
+    }).setScrollFactor(0);
   }
 
   update(_time, delta) {

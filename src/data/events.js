@@ -12,3 +12,7 @@ export const LOADOUT_CHANGED = 'loadout-changed'; // garage: a mount/unmount hap
 // across runs — the meta-progression pool). Full spend/shop UI is #65's job; this issue just
 // needs the number to exist, be visible, and survive a reload.
 export const RUN_CURRENCY_KEY = 'runCurrency';
+
+// #511/#512: the registry key for the player's claimed outposts (data/outposts.js), loaded once
+// at boot (save.js loadOutposts) and persisted (saveOutposts) whenever it changes.
+export const OUTPOSTS_KEY = 'outposts';

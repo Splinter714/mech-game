@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { buildBaseTextures } from '../art/index.js';
-import { ROSTER_SPECIES, loadRunCurrency } from '../data/save.js';
-import { RUN_CURRENCY_KEY } from '../data/events.js';
+import { ROSTER_SPECIES, loadRunCurrency, loadOutposts } from '../data/save.js';
+import { RUN_CURRENCY_KEY, OUTPOSTS_KEY } from '../data/events.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
 import { loadAllOverrides } from '../audio/sfxOverrides.js';
@@ -21,6 +21,8 @@ export default class BootScene extends Phaser.Scene {
     }
     // #64: the banked run-currency total (meta-progression pool) persists across page loads.
     this.registry.set(RUN_CURRENCY_KEY, loadRunCurrency());
+    // #511/#512: claimed outposts (existence + status only) persist across page loads too.
+    this.registry.set(OUTPOSTS_KEY, loadOutposts());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).

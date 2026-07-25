@@ -126,4 +126,27 @@ export function saveUnlocked(set) {
   }
 }
 
+// #511/#512: claimed outposts (meta-progression, persists across runs AND page reloads) — the
+// "existence + status only" record data/outposts.js works with. Same array-of-plain-objects
+// pattern as the roster mechs, just without a Model class to hydrate through.
+const OUTPOSTS_STORAGE_KEY = 'mech-game-outposts-v1';
+
+export function loadOutposts() {
+  try {
+    const raw = localStorage.getItem(OUTPOSTS_STORAGE_KEY);
+    const arr = raw != null ? JSON.parse(raw) : null;
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveOutposts(outposts) {
+  try {
+    localStorage.setItem(OUTPOSTS_STORAGE_KEY, JSON.stringify(outposts));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
 export { RUN_CURRENCY_KEY };

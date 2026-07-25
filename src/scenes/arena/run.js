@@ -17,8 +17,9 @@
 import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
 } from '../../data/run.js';
-import { RUN_CURRENCY_KEY } from '../../data/events.js';
-import { saveRunCurrency } from '../../data/save.js';
+import { RUN_CURRENCY_KEY, OUTPOSTS_KEY } from '../../data/events.js';
+import { saveRunCurrency, saveOutposts } from '../../data/save.js';
+import { claimOutpost } from '../../data/outposts.js';
 import { allPlayersDeadIn } from './players.js';
 
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
@@ -79,9 +80,29 @@ export const RunMixin = {
   // spawn happens here any more — enemies live only inside bases (see scenes/arena/bases.js),
   // fully decoupled from objective-clearing.
   _advanceObjective() {
+    this._claimClearedBaseOutpost();
     this.run = advanceObjective(this.run);
     this.registry.set('run', this.run);
     this._pickNextObjective();
+  },
+
+  // #511/#512: claiming a base as an outpost the instant its mission completes — the only
+  // concrete "how do you get one" trigger this stage builds (a real resource-hex/repair-outpost
+  // placement flow is future work; this reuses the base-clear moment that already exists).
+  // `type` alternates resource/repair by base index — arbitrary, since neither type has real
+  // mechanics yet (#297: income/range-extension formulas are still open design questions); this
+  // only proves the claim-and-persist pipeline works end to end.
+  _claimClearedBaseOutpost() {
+    const base = (this.bases ?? [])[this._objectiveBaseIndex];
+    if (!base) return;
+    const deployCount = this.registry.get('deployCount') || 0;
+    const id = `outpost-${deployCount}-${base.id}`;
+    const type = this._objectiveBaseIndex % 2 === 0 ? 'resource' : 'repair';
+    const outposts = this.registry.get(OUTPOSTS_KEY) ?? [];
+    const next = claimOutpost(outposts, { id, type, coord: base.center, biomeId: this.biomeId });
+    if (next === outposts) return;   // already held — shouldn't happen mid-run, stays a no-op
+    this.registry.set(OUTPOSTS_KEY, next);
+    saveOutposts(next);
   },
 
   // #269 playtest follow-up (objective sequencing): retired the old arbitrary-farthest-outpost
