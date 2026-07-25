@@ -151,6 +151,28 @@ export function playersCentroidOf(scene) { return playersCentroid(playersOf(scen
 export function anyPlayerAliveIn(scene) { return anyPlayerAlive(playersOf(scene)); }
 export function allPlayersDeadIn(scene) { return allPlayersDead(playersOf(scene)); }
 
+// (5) #495 (2nd playtest round): per-frame resource ticks for every player's mech, pulled out of
+// ArenaScene.js's own `update()` so this is unit-testable without standing up a full Phaser
+// scene. Ammo regen always runs; shield regen is skipped for a `dead` player.
+//
+// Jackson: "shields should not visibly recharge while a mech is dead." A co-op player can die
+// with partial shield still up (e.g. a cockpit kill before the shield finished draining) and then
+// sit `dead` for the whole ~20s respawn wait (data/respawn.js) — ArenaScene's old unconditional
+// per-frame `tickShield` call kept that leftover charge passively regenerating through the entire
+// window, which is exactly what read as "recharging while dead." Respawn's own `repairAll()` (no
+// options — see arena/coop.js `_respawnPlayer`) still gives every stat, shield included, its
+// instant full snap the moment a player actually returns; this only freezes the value in between.
+// Ammo regen is deliberately left running for a dead player — Jackson raised shields specifically,
+// and nothing here suggests ammo has the same visible problem (it isn't shown at all while a
+// player's tiles are dimmed/downed).
+export function tickPlayerResources(scene, dt) {
+  for (const p of playersOf(scene)) {
+    p.mech.regenAmmo(dt);
+    if (p.dead) continue;
+    p.mech.tickShield(dt);
+  }
+}
+
 // Present a legacy scene double (plain `{ mech, px, py, vx, vy, ... }`) as a player object.
 function legacyPlayerAdapter(scene) {
   const p = { id: 0, textureKey: 'playerMech', color: playerColor(0), lastHitAt: -Infinity };

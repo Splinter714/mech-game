@@ -442,16 +442,15 @@ export class Mech {
   // health, full shield (any lingering #381 temporary pool from a prior sortie is cleared first so
   // it can't leak across a redeploy), and full magazines.
   //
-  // #495 (co-op respawn follow-up): every OTHER caller of this method is a genuine full heal —
-  // garage deploy, a fresh sortie's initial deploy, enemy repair, the dev tools — where the
-  // shield SHOULD reset to full same as everything else. The one exception is co-op mid-run
-  // respawn (arena/coop.js `_respawnPlayer`): coming back from death is not a fresh sortie, and
-  // a dead-and-returned mech should not get a free full shield "recharge" — it comes back at
-  // zero and regens through the normal shield mechanic instead, same as if it had just taken a
-  // big hit. `shield: false` skips ONLY the `fillShield` call below; the temp-pool/pause reset
-  // stays unconditional (a lingering pool or pause window makes no sense post-death either way),
-  // and armor/hp/ammo are untouched by the option — so every other caller needs no change.
-  repairAll({ shield = true } = {}) {
+  // #495 (co-op respawn, 2nd playtest round): a co-op respawn briefly skipped the shield refill
+  // here (`repairAll({ shield: false })`, arena/coop.js) on the theory that a dead mech shouldn't
+  // get a free shield "recharge" — but Jackson's actual ask was the opposite: "respawn should give
+  // full shields, but shields should not visibly recharge WHILE a mech is dead." The refill on
+  // return was always correct; the bug was that a downed mech's shield kept passively regenerating
+  // during the respawn wait (fixed at the source — ArenaScene's per-frame `tickShield` now skips
+  // dead players — not here). So this reverts to the original unconditional full heal every caller
+  // relies on; the `{ shield }` option existed for exactly one caller and is gone with it.
+  repairAll() {
     for (const loc of LOCATIONS) {
       const p = this.parts[loc];
       p.armor = p.maxArmor;
@@ -460,7 +459,7 @@ export class Mech {
     this.shield.temp = 0;
     this.shield.tempExpiryMs = 0;
     this.shield.pauseRemaining = 0;
-    if (shield) fillShield(this.shield);
+    fillShield(this.shield);
     this._initAmmo();
   }
 

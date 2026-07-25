@@ -17,7 +17,6 @@ import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
 import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
 import { mechColorFor } from '../../data/mechColors.js';
-import { emptyShield } from '../../data/shield.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
@@ -415,15 +414,14 @@ export const CoopMixin = {
     const pt = this._validPlayerPos(pickRespawnPoint(view, threats, {
       isValid: (x, y) => this._isPassablePos(x, y),
     }));
-    // #495 playtest: shields must not "recharge" on respawn. A mech can die with any charge on
-    // the shield at all (e.g. a cockpit kill with the shield still half up), so `repairAll`
-    // skips its own full shield fill (`{ shield: false }`) and this explicitly zeroes it instead
-    // — a respawned mech always comes back with NO shield and regens it through the normal
-    // mechanic (data/shield.js), same as if it had just taken a big hit mid-fight, not a free
-    // top-up for dying.
-    player.mech.repairAll({ shield: false });
-    emptyShield(player.mech.shield);
-    player.mech.tickShield?.(0);
+    // #495 (2nd playtest round — Jackson: "respawn should give full shields, but shields should
+    // not visibly recharge while a mech is dead"): a full `repairAll()` restores armor/hp/ammo AND
+    // shield together, same as every other repair path in the game. The earlier cut had this
+    // skipping the shield refill on the theory that coming back with a topped-up shield was itself
+    // the "recharge on death" Jackson objected to — backwards; the actual bug was the shield
+    // quietly ticking back up DURING the respawn wait, fixed at the source in the arena's per-frame
+    // update loop (`ArenaScene.js` now skips `tickShield` for a `dead` player) rather than here.
+    player.mech.repairAll();
     player.x = pt.x; player.y = pt.y;
     player.vx = 0; player.vy = 0; player.speed = 0;
     player.dead = false;

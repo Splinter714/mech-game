@@ -21,7 +21,7 @@ import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
-import { primaryPlayerOf } from './arena/players.js';
+import { primaryPlayerOf, tickPlayerResources } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
@@ -463,13 +463,10 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Ammo regen ── every magazine tops back up over time at its own base rate. (#187:
     // Surge, which used to multiply this rate, was removed as redundant with free ammo.)
     // #347: per player — each mech regenerates its own magazines and ticks its own shield.
-    // One player today, so this is the same two calls it always was.
-    for (const p of this.players) {
-      p.mech.regenAmmo(dt);
-    // #246/#381: passive shield regen (with its brief post-hit pause) + counting down any active
-    // temporary-shield pool's expiry — see Mech.tickShield/grantTempShield (data/Mech.js).
-      p.mech.tickShield(dt);
-    }
+    // #495 (2nd playtest round): pulled out to `tickPlayerResources` (arena/players.js) — see
+    // that function's own comment for why a `dead` player's shield is skipped — so this specific
+    // "ammo always, shield only while alive" rule is unit-testable on its own.
+    tickPlayerResources(this, dt);
     // #402: on-mech per-weapon ammo/reload lights + bars, redrawn after this frame's ammo state
     // and part poses are settled.
     this._drawAmmoIndicators();

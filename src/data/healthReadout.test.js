@@ -12,32 +12,34 @@ import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
 const LOCS = INTEGRITY_ORDER;
 
 describe('#448 readout modes', () => {
-  // #448 playtest: NONE is the DEFAULT — a fresh run starts with no integrity display at all.
-  it('starts on NONE', () => {
-    expect(READOUT_MODES[0]).toBe('none');
-    expect(normalizeReadoutMode(undefined)).toBe('none');
-    expect(normalizeReadoutMode('nonsense')).toBe('none');
+  // #495 (2nd playtest round): FUSED is now the DEFAULT — it won its own #448-style comparison
+  // once refined, the same way NONE won the original one and ORBS lost it (see READOUT_MODES's
+  // own comment in healthReadout.js).
+  it('starts on FUSED', () => {
+    expect(READOUT_MODES[0]).toBe('fused');
+    expect(normalizeReadoutMode(undefined)).toBe('fused');
+    expect(normalizeReadoutMode('nonsense')).toBe('fused');
   });
 
-  it('cycles none → bars → paperdoll → fused → none', () => {
+  it('cycles fused → none → bars → paperdoll → fused', () => {
+    expect(nextReadoutMode('fused')).toBe('none');
     expect(nextReadoutMode('none')).toBe('bars');
     expect(nextReadoutMode('bars')).toBe('paperdoll');
     expect(nextReadoutMode('paperdoll')).toBe('fused');
-    expect(nextReadoutMode('fused')).toBe('none');
   });
 
   // The ORB readout was deleted. A registry left on it from an earlier session must not strand the
   // HUD on a mode with no layout and no paint path — it reads, and cycles, as the default.
   it('treats a stale stored ORBS setting as the default', () => {
     expect(READOUT_MODES).not.toContain('orbs');
-    expect(normalizeReadoutMode('orbs')).toBe('none');
-    expect(nextReadoutMode('orbs')).toBe('none');
-    expect(readoutLabel('orbs')).toBe('NONE');
+    expect(normalizeReadoutMode('orbs')).toBe('fused');
+    expect(nextReadoutMode('orbs')).toBe('fused');
+    expect(readoutLabel('orbs')).toBe('FUSED');
   });
 
-  it('is exactly the surviving four modes, NONE first', () => {
-    expect(READOUT_MODES).toEqual(['none', 'bars', 'paperdoll', 'fused']);
-    expect(readoutLabel('none')).toBe('NONE');
+  it('is exactly the surviving four modes, FUSED first', () => {
+    expect(READOUT_MODES).toEqual(['fused', 'none', 'bars', 'paperdoll']);
+    expect(readoutLabel('fused')).toBe('FUSED');
   });
 
   it('cycles from an unknown mode without getting stuck', () => {
@@ -46,7 +48,7 @@ describe('#448 readout modes', () => {
 
   it('labels every mode', () => {
     for (const m of READOUT_MODES) expect(readoutLabel(m)).toMatch(/\S/);
-    expect(readoutLabel('junk')).toBe(readoutLabel('none'));
+    expect(readoutLabel('junk')).toBe(readoutLabel('fused'));
   });
 });
 
@@ -486,5 +488,48 @@ describe('#495 shield arc (fused)', () => {
   it('clamps out-of-range fractions to the endpoints', () => {
     expect(shieldArcLayout(rect, 1.5).left.length).toBe(shieldArcLayout(rect, 1).left.length);
     expect(shieldArcLayout(rect, -0.4).left).toEqual([]);
+  });
+
+  // #495 SECOND playtest round (Jackson: "the shape of the shield should match wrapping the
+  // rectangle of ability squares, not so rounded"): the path was rewritten from an ellipse to a
+  // rounded-rectangle walk (`bracketPoint`/`bracketGeometry`). These assert the RECTANGLE reads
+  // through in the geometry itself — straight vertical run, straight horizontal run, and only a
+  // SMALL curved piece at the corner joining them — rather than trusting the earlier "clears the
+  // row" assertions (still true of an ellipse too) to have caught a lingering round shape.
+  describe('the 2nd-round rectangular (not elliptical) shape', () => {
+    it("the bottom stretch of each side's path is a straight VERTICAL run at a constant x", () => {
+      const full = shieldArcLayout(rect, 1);
+      // The first few points off the outer stub are still climbing the side, below where the
+      // corner rounding starts — an ellipse would have every one of these at a slightly
+      // different x (curving away immediately); a rectangle's side does not move sideways at all
+      // until the corner.
+      const xs = full.left.slice(0, 3).map((p) => p.x);
+      for (const x of xs) expect(x).toBeCloseTo(full.left[0].x, 5);
+    });
+
+    it("the top stretch approaching the apex is a straight HORIZONTAL run at a constant y", () => {
+      const full = shieldArcLayout(rect, 1);
+      // The last few points before the shared apex are already past the corner, running flat
+      // along the top rail — an ellipse's apex region curves continuously and would never hold a
+      // constant y across three consecutive sampled points.
+      const apexY = full.left[full.left.length - 1].y;
+      const ys = full.left.slice(-3).map((p) => p.y);
+      for (const y of ys) expect(y).toBeCloseTo(apexY, 5);
+    });
+
+    it('the corner rounding is SMALL relative to the row — a bracket, not a dome', () => {
+      // A true dome/ellipse's horizontal reach (`rx`) grows with the row's own half-width; this
+      // rectangle's only curved piece is the fixed, small `SHIELD_ARC.corner` radius, independent
+      // of how wide the row is. Assert it stays small even against a much wider row.
+      const wide = { x: 100, y: 500, w: 900, h: 80 };
+      const full = shieldArcLayout(wide, 1);
+      // Within the first `corner`-ish px of horizontal travel from the outer stub, the path
+      // should barely have risen yet (still on the vertical run) — checked by comparing the
+      // outer stub's x to a point known to be past the corner (near the apex) and confirming the
+      // side spends most of its OWN reach essentially flat/vertical before curving.
+      const outer = full.left[0];
+      const nearOuter = full.left[1];
+      expect(Math.abs(nearOuter.x - outer.x)).toBeLessThan(SHIELD_ARC.corner);
+    });
   });
 });

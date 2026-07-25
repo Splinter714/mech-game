@@ -22,6 +22,7 @@ import {
   paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
   fusedLayout, shieldArcLayout, FUSED_DOME_RISE, armorDrainRect,
 } from '../data/healthReadout.js';
+import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks } from '../data/hpFx.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
@@ -122,6 +123,16 @@ const ARMOR_PLATE = 0x3a4250;
 const ARMOR_SEAM = 0x1b212b;
 const ARMOR_RIM = 0x566273;
 const ARMOR_SEAM_H = 7;         // px between plate seams down the armor bar
+// #495 (2nd playtest round): how far the fused readout's armor BACKING plate stands outside the
+// tile's own footprint. The backing paints BEHIND the tile (`panel.armorBackGfx`, drawn before the
+// tile row), so the opaque tile on top occludes everything except this margin — armor reads as a
+// plate peeking out around/under the tile's edges rather than a face overlay painted on top of it
+// (Jackson: "it should be beneath the ability square in z-order, not a ring on the ability
+// square"). Matches CONSOLE.bayPad (hudLayout.js) — the same "how far a frame stands off its
+// content" scale this console already uses elsewhere.
+// Exported (only tuning constant this file exports) purely so hudPanels.test.js can pin the
+// z-order fix's geometry without hardcoding a magic number that would silently drift from this one.
+export const ARMOR_PEEK_PAD = 6;
 const HP_COLOR = 0xd8433a;
 const HP_CAP = 0xff8f80;
 const SHIELD_BAR_COLOR = 0x5ec8e0;
@@ -768,6 +779,12 @@ export default class HudScene extends Phaser.Scene {
     // console shell reserves (`_paintConsole`'s `contentTop`), not where the downed line sits.
     if (bars.mode === 'fused') bars.headerY -= FUSED_DOME_RISE;
 
+    // #495 (2nd playtest round): the armor peek's own Graphics layer, created BEFORE the tile row
+    // below so Phaser's own draw order puts it BEHIND the tiles — the tile plate painted on top
+    // then naturally occludes everything except the thin margin the peek is meant to show through.
+    // Only built for the mode that needs it, same as `fusedGfx` below.
+    panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
+
     // Skill tiles for THIS player's own mech, in this panel's half of the bottom edge.
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
@@ -780,8 +797,10 @@ export default class HudScene extends Phaser.Scene {
       ? { x: tiles[0].x, y: tiles[0].y, w: last.x + last.w - tiles[0].x, h: last.h }
       : null;
     // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
-    // armor ring / HP wash / shield dome that fuse onto the tiles themselves. Only built for the
-    // mode that needs it — every other mode leaves this null and never touches it.
+    // structure WASH and shield BRACKET that fuse onto/around the tiles themselves. Armor moved
+    // out to `armorBackGfx` above (2nd playtest round); this layer keeps everything that's meant
+    // to paint over the tile face. Only built for the mode that needs it — every other mode leaves
+    // this null and never touches it.
     panel.fusedGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
     this._makeTargetDisc(panel, spec, count);
@@ -829,7 +848,7 @@ export default class HudScene extends Phaser.Scene {
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
       panel.podGfx, panel.podRings, panel.podArt, panel.podMask, panel.podName,
-      panel.fusedGfx,
+      panel.fusedGfx, panel.armorBackGfx,
       ...Object.values(panel.partLabels),
     ];
     for (const o of objs) o?.destroy();
@@ -1525,20 +1544,33 @@ export default class HudScene extends Phaser.Scene {
   }
 
   // FUSED: #495. Armor/structure/shield fuse directly onto the four skill tiles rather than a
-  // separate block beside them. Per-tile WASH = structure (`structureColor`, painted straight
-  // over the tile instead of a separate cell — this mode has no cell of its own, the tile IS the
-  // segment); per-tile DRAIN = armor (`armorDrainRect` — a playtest follow-up: a top-to-bottom
-  // "draining tank" overlay, not the perimeter trick paperdoll's outline still uses, because
-  // Jackson wanted armor reading as depleting DOWN the tile rather than around its edge); and ONE
-  // whole-mech shield DOME arcing over the top+sides of the row (`shieldArcLayout` — its own
-  // geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
-  // outline). Painted into `panel.fusedGfx`, which is added to the scene AFTER the tile row (see
-  // `_makePanel`) so it draws ON TOP of the tiles — `partBarsGfx` (every other mode's layer) draws
-  // BEFORE them and would be invisible here.
+  // separate block beside them.
+  //
+  // Per-tile WASH = structure (`structureColor`, painted straight over the tile instead of a
+  // separate cell — this mode has no cell of its own, the tile IS the segment), painted into
+  // `panel.fusedGfx`, added to the scene AFTER the tile row (see `_makePanel`) so it draws ON TOP
+  // of the tiles.
+  //
+  // Per-tile PEEK = armor (`armorDrainRect`, unchanged top-to-bottom "draining tank" geometry —
+  // run here against a rect padded `ARMOR_PEEK_PAD` past the tile's own edges), painted into
+  // `panel.armorBackGfx` instead — added to the scene BEFORE the tile row, so it draws BEHIND the
+  // tiles. The opaque tile plate on top then occludes the middle of that padded rect and only a
+  // thin margin peeks out around/under the tile's own edges; full armor shows that margin lit on
+  // all four sides, and it recedes top-to-bottom as armor drains, same direction as before. #495's
+  // SECOND playtest round moved it here (Jackson: "it should be beneath the ability square in
+  // z-order, not a ring on the ability square") — the original cut painted this same drain rect ON
+  // the tile's own face (in `fusedGfx`, on top), which is what read as a ring to him; the geometry
+  // was never the problem, only which layer it was painted into.
+  //
+  // And ONE whole-mech shield BRACKET wrapping the top+sides of the row (`shieldArcLayout` — its
+  // own geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
+  // outline), painted into `fusedGfx` alongside the structure wash.
   _paintFusedReadout(panel, mech) {
     const g = panel.fusedGfx;
     if (!g) return;
     g.clear();
+    const bg = panel.armorBackGfx;
+    bg?.clear();
     const R = 6;   // a hair inside the tile plate's own corner radius (skillTiles.js TILE_UI.radius)
     for (const loc of TILE_ORDER) {
       const ref = panel.skillRefs[loc];
@@ -1552,29 +1584,70 @@ export default class HudScene extends Phaser.Scene {
       // HP: a colour wash over the tile itself, riding the SAME continuous ramp the paper doll's
       // structure fill does. It gets a hair more opaque as structure drops, on top of the hue
       // shift, so a dying part reads as more urgent than a merely-tinted healthy one.
-      g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), destroyed ? 0.75 : 0.18 + (1 - hpFrac) * 0.42);
+      //
+      // #495 follow-up (EXPERIMENTAL — Jackson: "can we try out a random flicker and some opacity
+      // changes and some 'static' effects, maybe some sparks?"): a damaged part's wash alpha now
+      // jitters (`hpFlicker`, data/hpFx.js) instead of sitting fixed, and gains scattered noise
+      // specks plus an occasional small spark on top. All three read urgency off the same
+      // `hpUrgency` curve, so they escalate together as the part empties and are completely inert
+      // on a healthy one (urgency 0 ⇒ flicker returns exactly 1, no specks, no sparks — this is
+      // easy to feel out live and just as easy to delete: everything for this bullet point is
+      // these few lines plus data/hpFx.js). A destroyed part skips it entirely — it already has
+      // its own fixed dead-cell fill + red cross below, and "glitching" wreckage that can never
+      // repair back up would read as a bug, not an in-world state.
+      const baseAlpha = destroyed ? 0.75 : 0.18 + (1 - hpFrac) * 0.42;
+      const seed = TILE_ORDER.indexOf(loc) + panel.index * 4;
+      const urgency = destroyed ? 0 : hpUrgency(hpFrac);
+      const tSec = (this.time?.now ?? 0) / 1000;
+      const washAlpha = destroyed
+        ? baseAlpha
+        : Math.max(0, Math.min(1, baseAlpha * hpFlicker(tSec, seed, urgency)));
+      g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), washAlpha);
       g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, R);
+      if (!destroyed) {
+        for (const speck of hpStaticSpecks(rect, tSec, seed, urgency)) {
+          g.fillStyle(0xffffff, speck.alpha * 0.5);
+          g.fillRect(speck.x - speck.size / 2, speck.y - speck.size / 2, speck.size, speck.size);
+        }
+        for (const spark of hpSparks(rect, tSec, seed, urgency)) {
+          const len = 5 + spark.life * 6;
+          const dx = Math.cos(spark.angle) * len, dy = Math.sin(spark.angle) * len;
+          g.lineStyle(1.5, 0xffe9a8, spark.life);
+          g.lineBetween(spark.x - dx / 2, spark.y - dy / 2, spark.x + dx / 2, spark.y + dy / 2);
+          g.fillStyle(0xffffff, spark.life);
+          g.fillCircle(spark.x, spark.y, 1.4 * spark.life);
+        }
+      }
 
-      // Armor: a draining-tank overlay anchored to the tile's own BOTTOM edge (`armorDrainRect`) —
-      // full armor covers the tile top-to-bottom, and as it drains the covered band's top edge
-      // recedes downward, so what's left sits at the bottom and shrinks upward. Uses the target
-      // disc's own fixed armor tones (ARMOR_PLATE/ARMOR_RIM), not the structure colour ramp — a
-      // deliberate playtest choice so armor reads as a layer distinct from the structure wash
-      // underneath it rather than a second copy of the same ramp.
-      g.lineStyle(2, BAR_EDGE, 0.9);
-      g.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      const drain = armorDrainRect(rect, armorFrac);
-      if (drain.h > 0.5) {
-        const radii = { tl: drain.full ? R : 0, tr: drain.full ? R : 0, bl: R, br: R };
-        g.fillStyle(destroyed ? ARMOR_SEAM : ARMOR_PLATE, destroyed ? 0.5 : 0.6);
-        g.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, radii);
-        // The lit edge is the drain LINE itself — the one part of the overlay that actually
-        // moves, so it's the one thing a glance needs to read "how much armor is left."
-        g.lineStyle(1.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 0.95);
-        g.beginPath();
-        g.moveTo(drain.x, drain.y);
-        g.lineTo(drain.x + drain.w, drain.y);
-        g.strokePath();
+      // Armor: a plate BEHIND the tile (see the method doc above). Uses the target disc's own
+      // fixed armor tones (ARMOR_PLATE/ARMOR_RIM), not the structure colour ramp — a deliberate
+      // playtest choice so armor reads as a layer distinct from the structure wash rather than a
+      // second copy of it.
+      if (bg) {
+        const peek = {
+          x: rect.x - ARMOR_PEEK_PAD, y: rect.y - ARMOR_PEEK_PAD,
+          w: rect.w + ARMOR_PEEK_PAD * 2, h: rect.h + ARMOR_PEEK_PAD * 2,
+        };
+        const peekR = R + ARMOR_PEEK_PAD;   // one fixed radius, never tied to the armor fraction —
+        // a fraction-dependent shape is exactly what read as ring-like the first playtest round.
+        // The always-drawn dim TRACK — the full peek plate's own outline — so an empty-armor tile
+        // still shows where a repair would refill it, the same "empty space stays legible" rule
+        // every other layer's backing follows.
+        bg.lineStyle(1.5, BAR_EDGE, 0.7);
+        bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, peekR);
+        const drain = armorDrainRect(peek, armorFrac);
+        if (drain.h > 0.5) {
+          bg.fillStyle(destroyed ? ARMOR_SEAM : ARMOR_PLATE, destroyed ? 0.6 : 0.95);
+          bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, peekR);
+          // The lit edge is the drain LINE itself — the one part of the plate that actually
+          // moves, so it's the one thing a glance needs to read "how much armor is left" in
+          // whatever sliver of it is still peeking out from behind the tile.
+          bg.lineStyle(1.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 0.95);
+          bg.beginPath();
+          bg.moveTo(drain.x, drain.y);
+          bg.lineTo(drain.x + drain.w, drain.y);
+          bg.strokePath();
+        }
       }
       if (destroyed) {
         g.lineStyle(1.5, HP_COLOR, 0.9);

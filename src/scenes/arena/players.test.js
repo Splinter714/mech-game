@@ -10,7 +10,7 @@ import { makePlayer } from '../../data/players.js';
 import {
   playersOf, livePlayersOf, primaryPlayerOf, targetPlayerFor, enemyTargetOf,
   listenerOf, fogOriginOf, cameraFocusOf, playersCentroidOf,
-  anyPlayerAliveIn, allPlayersDeadIn,
+  anyPlayerAliveIn, allPlayersDeadIn, tickPlayerResources,
 } from './players.js';
 
 const liveMech = () => ({ isDestroyed: () => false });
@@ -170,5 +170,59 @@ describe('lifecycle seams', () => {
     const a = makePlayer({ id: 0, mech: liveMech() });
     expect(primaryPlayerOf(modernScene([a]))).toBe(a);
     expect(primaryPlayerOf(legacyScene()).x).toBe(40);
+  });
+});
+
+// #495 (2nd playtest round — Jackson: "shields should not visibly recharge while a mech is
+// dead"): `tickPlayerResources` is the extracted per-frame loop ArenaScene.js's `update()` calls
+// for every player's mech each frame. Mocked mechs here just count calls, since the actual
+// regen/tick math is Mech's own (Mech.test.js / shield.test.js) — what's under test is the RULE:
+// ammo always, shield only while alive.
+function resourceMech() {
+  const calls = { regenAmmo: 0, tickShield: 0 };
+  return { calls, regenAmmo() { calls.regenAmmo++; }, tickShield() { calls.tickShield++; } };
+}
+
+describe('tickPlayerResources — ammo always regens, shield freezes while dead', () => {
+  it('a live player ticks both ammo and shield', () => {
+    const mech = resourceMech();
+    const scene = modernScene([makePlayer({ id: 0, mech, x: 0, y: 0 })]);
+    tickPlayerResources(scene, 0.5);
+    expect(mech.calls.regenAmmo).toBe(1);
+    expect(mech.calls.tickShield).toBe(1);
+  });
+
+  it('a dead player still regens ammo but the shield tick is skipped entirely', () => {
+    const mech = resourceMech();
+    const p = makePlayer({ id: 0, mech, x: 0, y: 0 });
+    p.dead = true;
+    const scene = modernScene([p]);
+    tickPlayerResources(scene, 0.5);
+    expect(mech.calls.regenAmmo).toBe(1);
+    expect(mech.calls.tickShield).toBe(0);
+  });
+
+  it('freezes across several ticks, not just the first frame after death', () => {
+    const mech = resourceMech();
+    const p = makePlayer({ id: 0, mech, x: 0, y: 0 });
+    p.dead = true;
+    const scene = modernScene([p]);
+    for (let i = 0; i < 10; i++) tickPlayerResources(scene, 0.5);
+    expect(mech.calls.tickShield).toBe(0);
+    expect(mech.calls.regenAmmo).toBe(10);
+  });
+
+  it('each player is judged independently in co-op — one dead, one alive', () => {
+    const aliveMech = resourceMech();
+    const deadPlayerMech = resourceMech();
+    const alive = makePlayer({ id: 0, mech: aliveMech, x: 0, y: 0 });
+    const downed = makePlayer({ id: 1, mech: deadPlayerMech, x: 10, y: 0 });
+    downed.dead = true;
+    const scene = modernScene([alive, downed]);
+    tickPlayerResources(scene, 1);
+    expect(aliveMech.calls.tickShield).toBe(1);
+    expect(deadPlayerMech.calls.tickShield).toBe(0);
+    expect(aliveMech.calls.regenAmmo).toBe(1);
+    expect(deadPlayerMech.calls.regenAmmo).toBe(1);
   });
 });

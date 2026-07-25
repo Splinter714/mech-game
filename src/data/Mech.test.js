@@ -742,42 +742,6 @@ describe('Mech full-mech shield (#246)', () => {
     expect(m.shield.pauseRemaining).toBe(0);
   });
 
-  // #495 (co-op respawn follow-up): `repairAll({ shield: false })` is the one exception to the
-  // "repairAll is a full heal" rule — armor/hp/ammo still fully restore, but the shield's own hp
-  // is left exactly where it was, so the caller (arena/coop.js respawn) can zero it out itself
-  // rather than the mech coming back with a free "recharged" shield.
-  it('repairAll({ shield: false }) restores armor/hp/ammo but leaves the shield hp untouched', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
-    const arm = m.parts.leftArm;
-    // Set damage directly rather than through applyDamage — the shield would absorb a hit this
-    // small before it ever reached the armor, which isn't what this test is about.
-    arm.armor = Math.max(0, arm.maxArmor - 10);
-    arm.hp = Math.max(0, arm.maxHp - 5);
-    m.shield.hp = 17;                                // shield partially charged at "death"
-    m.repairAll({ shield: false });
-    expect(arm.armor).toBe(arm.maxArmor);            // armor still fully restored
-    expect(arm.hp).toBe(arm.maxHp);                  // hp still fully restored
-    expect(m.shield.hp).toBe(17);                    // shield hp: UNCHANGED, not refilled
-    expect(m.shield.max).toBe(40);                   // capacity itself is untouched either way
-  });
-
-  it('repairAll({ shield: false }) still clears a lingering temp pool and the hit-pause', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
-    m.grantTempShield(150, 5000);
-    m.applyDamage('leftArm', 10);                    // sets shield.pauseRemaining via the hit
-    m.repairAll({ shield: false });
-    expect(m.shield.temp).toBe(0);
-    expect(m.tempShieldRemainingMs).toBe(0);
-    expect(m.shield.pauseRemaining).toBe(0);
-  });
-
-  it('repairAll() with no argument (every other caller) still refills the shield as before', () => {
-    const m = new Mech({ chassisId: 'medium', shield: { max: 40 } });
-    m.shield.hp = 5;
-    m.repairAll();
-    expect(m.shield.hp).toBe(40);
-  });
-
   // #495: hasShield() is CAPACITY-based (shield.max > 0), not charge-based — a respawned mech at
   // zero hp must still report a shield present, so the HUD readout shows an empty-but-present
   // shield rather than hiding the layer entirely.

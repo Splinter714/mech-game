@@ -362,11 +362,14 @@ describe('co-op placement always lands on passable ground (#348)', () => {
     expect(scene._isPassablePos(12345, -999)).toBe(true);
   });
 
-  // #495 playtest: a mid-run respawn must NOT come back with a "recharged" shield — the mech
-  // should return at zero shield charge and regen it through the normal mechanic, same as taking
-  // a big hit. This is distinct from every other `repairAll()` caller (garage/fresh-sortie deploy,
-  // enemy repair), which ARE a genuine full heal and stay untouched.
-  it('a respawn skips the shield refill and comes back at zero charge, pause cleared', () => {
+  // #495 (2nd playtest round — Jackson: "respawn should give full shields, but shields should not
+  // visibly recharge while a mech is dead"): a mid-run respawn calls the SAME plain `repairAll()`
+  // every other repair path uses — no options — so armor/hp/ammo AND shield all come back full
+  // together. (The 1st round's fix had this skipping the shield refill instead, on the theory that
+  // a topped-up shield WAS the "recharge" Jackson meant; that was backwards — see ArenaScene.js's
+  // per-frame update loop, which now freezes a `dead` player's `tickShield` instead, for the actual
+  // fix.)
+  it('a respawn calls a plain repairAll() with no options — shield comes back full like everything else', () => {
     const terrain = corridorTerrain();
     const scene = arenaScene(terrain, { enemies: [{ x: 0, y: 400, mech: { isDestroyed: () => false } }] });
     const p = scene.b;
@@ -374,16 +377,14 @@ describe('co-op placement always lands on passable ground (#348)', () => {
     const repairAllCalls = [];
     p.mech = {
       isDestroyed: () => false,
-      repairAll(opts) { repairAllCalls.push(opts); },
-      tickShield: () => {},
-      // A shield left partially charged at the moment of death (e.g. a cockpit kill) — the bug
-      // this fix closes is exactly this value surviving a respawn unchanged.
+      repairAll(...args) { repairAllCalls.push(args); },
+      // A shield left partially charged at the moment of death (e.g. a cockpit kill) — respawn
+      // doesn't touch this directly at all any more; it's `repairAll()`'s job, same as armor/hp.
       shield: { max: 40, hp: 22, pauseRemaining: 1800 },
     };
     scene._respawnPlayer(p);
-    expect(repairAllCalls).toEqual([{ shield: false }]);   // armor/hp/ammo still fully restored
-    expect(p.mech.shield.hp).toBe(0);                      // but the shield itself: zeroed
-    expect(p.mech.shield.pauseRemaining).toBe(0);          // and free to start regenerating now
+    expect(repairAllCalls).toEqual([[]]);   // called with no arguments — the plain full heal
+    expect(p.dead).toBe(false);
   });
 });
 

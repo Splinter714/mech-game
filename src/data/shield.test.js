@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createShield, shieldPresent, damageShield, tickShield, fillShield, emptyShield, shieldFraction,
+  createShield, shieldPresent, damageShield, tickShield, fillShield, shieldFraction,
   grantTempShield, shieldTotalHp, shieldTotalMax,
   layerMultiplier, LAYER_MULTIPLIERS,
   SHIELD_PAUSE_MS, SHIELD_REGEN_FRACTION,
@@ -178,32 +178,6 @@ describe('fillShield / shieldFraction', () => {
     const s = createShield({ max: 40 });
     s.hp = 10;
     expect(shieldFraction(s)).toBe(0.25);
-  });
-});
-
-// #495 (co-op respawn follow-up): `emptyShield` is the opposite of `fillShield` — a mid-run
-// respawn must not "recharge" the shield, so it comes back explicitly zeroed and has to regen
-// through the normal mechanic. It also clears the hit-pause so regen can start immediately
-// rather than waiting out a leftover PAUSE window inherited from the death blow.
-describe('emptyShield', () => {
-  it('zeroes an active shield\'s hp and clears any pending hit-pause', () => {
-    const s = createShield({ max: 50 });
-    s.hp = 33;
-    s.pauseRemaining = 1800;
-    emptyShield(s);
-    expect(s.hp).toBe(0);
-    expect(s.pauseRemaining).toBe(0);
-  });
-
-  it('capacity (max) is untouched — the mech still HAS a shield, just at zero charge', () => {
-    const s = createShield({ max: 50 });
-    emptyShield(s);
-    expect(s.max).toBe(50);
-    expect(shieldPresent(s)).toBe(true);
-  });
-
-  it('is a safe no-op on a missing shield', () => {
-    expect(() => emptyShield(null)).not.toThrow();
   });
 });
 

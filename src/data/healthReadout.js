@@ -6,7 +6,10 @@
 // against it in play rather than in a mockup, so this module holds them as pure geometry:
 //
 //   'none'      — no integrity readout at all: the mech's own art (shield opacity, destroyed-part
-//                 stumps) carries it. The DEFAULT since the 2026-07-23 playtest.
+//                 stumps) carries it. Was the DEFAULT from the 2026-07-23 playtest until #495's
+//                 'fused' won its own comparison and took the slot over (see 'fused' below and
+//                 `READOUT_MODES`'s own comment) — still fully live, still first in line after
+//                 'fused' in the H cycle, just no longer what a fresh run or empty registry opens on.
 //   'bars'      — the bar block (laid out by hudLayout.js `integrityLayout`; named here only
 //                 so the mode cycle has something to return to).
 //   'paperdoll' — one rounded rect per damage-tracked location, arranged as a mech silhouette
@@ -17,19 +20,22 @@
 //                 outline around the whole doll = the mech's shield. Since the #448 playtest ALL
 //                 THREE layers ride that same ramp, each by its OWN fraction (armor and shield
 //                 coloured in HudScene, structure here), so the readout speaks one colour language.
-//   'fused'     — #495: no separate block at all — armor/structure/shield fuse directly onto the
+//   'fused'     — #495: the DEFAULT as of the mode's own 2nd playtest round (see `READOUT_MODES`'s
+//                 comment for why). No separate block at all — armor/structure/shield fuse directly onto the
 //                 four weapon skill tiles. Per-tile WASH = structure (`structureColor`, painted
 //                 over the tile's own art rather than a separate cell); per-tile DRAIN = armor —
-//                 a playtest follow-up replaced the original drain-around-the-frame perimeter
-//                 (`perimeterRun`, still what paperdoll's outline uses) with `armorDrainRect`,
-//                 below: a top-to-bottom "draining tank" overlay, because Jackson wanted armor to
-//                 read as depleting DOWN the tile, not around its edge; and ONE whole-mech shield
-//                 DOME arcing over the top+sides of the whole row (`shieldArcLayout`, below — a
-//                 shape of its own: two mirrored arcs, not `ringSweep`'s single clockwise sweep and
-//                 not paperdoll's rectangular perimeter). Structure still rides the structure-
-//                 colour ramp, same as paperdoll; armor now rides the target disc's own fixed
-//                 armor tone instead (see `armorDrainRect`'s own note) so it reads as a distinct
-//                 layer from structure rather than a second copy of the same ramp.
+//                 a top-to-bottom "draining tank" rect (`armorDrainRect`, below), because Jackson
+//                 wanted armor to read as depleting DOWN the tile, not around its edge. #495's
+//                 SECOND playtest round moved this drain BEHIND the tile in z-order instead of
+//                 painted over its face (HudScene's `_paintFusedReadout`/`panel.armorBackGfx` — the
+//                 geometry here is unchanged, only which layer HudScene paints it into); and ONE
+//                 whole-mech shield BRACKET wrapping the top+sides of the whole row
+//                 (`shieldArcLayout`, below — its own shape: two mirrored paths, not `ringSweep`'s
+//                 single clockwise sweep and not paperdoll's rectangular perimeter — rewritten from
+//                 an ellipse to a rounded-rectangle walk in the same 2nd playtest round). Structure
+//                 still rides the structure-colour ramp, same as paperdoll; armor rides the target
+//                 disc's own fixed armor tone instead (see `armorDrainRect`'s own note) so it reads
+//                 as a distinct layer from structure rather than a second copy of the same ramp.
 //
 // An earlier fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and
 // DELETED after it (Jackson: "remove the circle option") — layout, fill polygon, paint path and
@@ -43,10 +49,16 @@
 
 import { INTEGRITY_BARS } from './hudLayout.js';
 
-// The cycle order. 'none' is FIRST because it is the default — a fresh run starts with no integrity
-// display at all, which is the experiment: whether the mech's own art carries it. H then walks the
-// surviving readouts and comes back.
-export const READOUT_MODES = ['none', 'bars', 'paperdoll', 'fused'];
+// The cycle order. 'fused' is FIRST because it is the default. 'none' held that spot through the
+// #448 experiment ("a fresh run starts with no integrity display at all, does the mech's own art
+// carry it on its own?") and 'orbs' was built, compared, and fully deleted the same way once it
+// lost that comparison (see the module doc up top). #495 ran the same experiment again for fused:
+// once it was playtested and refined through two rounds of fixes (rectangular shield bracket,
+// armor peeking from behind the tile, the HP-flicker pass), Jackson picked it as the one to keep
+// on by default — so it takes the first slot the way 'none' and, before it, nothing else did. H
+// still walks the full cycle (fused → none → bars → paperdoll → fused) and every mode stays live;
+// only which one a fresh run/registry starts on changed.
+export const READOUT_MODES = ['fused', 'none', 'bars', 'paperdoll'];
 
 export const READOUT_LABELS = {
   none: 'NONE',
@@ -266,16 +278,25 @@ export function perimeterRun(rect, frac) {
 // #495 playtest (Jackson: "armor should not deplete AROUND the ability, it should deplete from
 // top to bottom"): replaces the fused readout's original per-tile PERIMETER (`perimeterRun`, run
 // against the tile's own rect — still what paperdoll's segment outline uses) with a DRAINING TANK
-// overlay instead. Full armor covers the tile top-to-bottom; as armor drains, the covered band's
-// TOP edge recedes downward, so what survives visually sits at the tile's own BOTTOM and shrinks
-// upward as armor is lost — never sideways, never around the frame.
+// rect instead. Full armor covers the tile top-to-bottom; as armor drains, the covered band's TOP
+// edge recedes downward, so what survives sits at the BOTTOM and shrinks upward as armor is lost
+// — never sideways, never around a frame.
 //
-// Pure geometry only: given the tile's own rect and the live armor fraction (0..1), returns the
-// overlay's own `{ x, y, w, h }` — full width, bottom pinned to the tile's own bottom edge, top
-// at `rect.y + rect.h * (1 - frac)` — plus `full`, true only at frac >= 1, so the paint step can
-// round the overlay's TOP corners to match the tile's own plate only when the overlay truly
-// covers the whole tile; a partial drain's top edge is a flat line, not a rounded corner, because
-// that's the drain line itself — the only part of the shape that actually moves.
+// #495 SECOND playtest round (Jackson: "it should be beneath the ability square in z-order, not a
+// ring on the ability square" — the drain was being painted as a face OVERLAY on top of the tile,
+// which is what was reading as a ring/circular quality to him): this geometry is unchanged, but
+// HudScene now paints it into a layer BEHIND the tile (`panel.armorBackGfx`, drawn before the tile
+// row so Phaser's own draw order puts it there) and against a rect padded OUT past the tile's own
+// edges (see `_paintFusedReadout`'s `ARMOR_PEEK_PAD`) rather than the tile's exact footprint — so
+// the opaque tile plate on top occludes the middle and only a thin margin peeks out around/under
+// the tile's own edges, receding top-to-bottom exactly as this function already computes.
+//
+// Pure geometry only: given a rect (the tile's own, or — since the 2nd round — a padded rect
+// around it) and the live armor fraction (0..1), returns the overlay's own `{ x, y, w, h }` — full
+// width, bottom pinned to the given rect's own bottom edge, top at `rect.y + rect.h * (1 - frac)`
+// — plus `full`, true only at frac >= 1 (kept as a fact about the fraction; HudScene's 2nd-round
+// paint no longer branches its own corner rounding on it, since a fraction-dependent shape was
+// exactly what read as ring-like the first time).
 export function armorDrainRect(rect, frac) {
   const f = Math.max(0, Math.min(1, frac ?? 0));
   const h = f * rect.h;
@@ -284,84 +305,131 @@ export function armorDrainRect(rect, frac) {
 
 // ── SHIELD ARC (fused) ──────────────────────────────────────────────────────────────────────
 //
-// #495: the fused readout's shield is a DOME/CANOPY over the top+sides of the whole tile row —
+// #495: the fused readout's shield is a BRACKET wrapping the top+sides of the whole tile row —
 // not a per-tile ring (shield is a single whole-mech pool, `mechPools().shield`), not `ringSweep`
 // (hudLayout.js — a single clockwise sweep built for the small target-disc rings), and not the
-// paper doll's shield (a full rectangular PERIMETER outline). This is TWO MIRRORED ARCS sharing
-// one apex at 12 o'clock over the row's own centre: as the fraction drops each one retracts
-// independently back toward that apex, so a half-shield reads as "the canopy pulled back on both
-// edges" rather than one arc sweeping across like a gauge.
+// paper doll's shield (a full rectangular PERIMETER outline that runs around all four sides). This
+// is TWO MIRRORED PATHS sharing one point at 12 o'clock over the row's own centre: as the fraction
+// drops each one retracts independently back toward that shared point, so a half-shield reads as
+// "the canopy pulled back on both edges" rather than one sweep across like a gauge. (Function name
+// kept as `shieldArcLayout`/`SHIELD_ARC` — only the path's own SHAPE changed below, not what calls
+// it or what it's for.)
 //
-// The dome rides an ELLIPSE (not a circle), centred at `ecy` — the row's own top edge dropped down
-// by `sideDrop` — because the row is wide and short: a true circular semicircle over a ~4:1 rect
-// would either barely clear the tiles or balloon absurdly high. Independent radii let the dome
-// reach `overhang` px past the row's own edges and `rise` px above its top regardless of the row's
-// own proportions.
+// #495 SECOND playtest round (Jackson: "the shape of the shield should match wrapping the
+// rectangle of ability squares, not so rounded"): the first cut rode an ELLIPSE, centred below the
+// row and reached by independent radii — which read as a dome/canopy, not a bracket wrapping the
+// tiles. This walks the tile row's own bounding box instead: straight up each side, a small
+// rounded corner, straight across the top — the same "plated console" corner language the tile
+// plates (`paintTilePlate`, ui/skillTiles.js) and the console shell (`CONSOLE.radius`,
+// hudLayout.js) already use, so the bracket reads as part of that same aesthetic rather than a
+// circular/elliptical curve. ONLY the path's shape changed this round — the fraction-to-position
+// math (each side retracts from its own OUTER end toward the shared apex as the fraction drops)
+// is untouched: the first round's center-out depletion direction was already confirmed correct.
 export const SHIELD_ARC = {
-  overhang: 16,   // how far past the row's own left/right edges the dome's ends reach
-  rise: 26,       // how far above the row's own top edge the apex sits
+  overhang: 16,   // how far past the row's own left/right edges the bracket's sides sit
   // #495 playtest (Jackson: "the shield arc should wrap the row of four ability buttons"): the
-  // ends now land at the row's own BOTTOM edge (1.0 = full row height) rather than ~55% down it,
-  // so each side genuinely wraps the tiles' full height instead of just arching over their tops
-  // — a capsule/bracket enclosing the row, not a partial droop. The apex height is unaffected:
-  // it's fixed at `rise` above the row's own top (`ecy - ry` below), independent of `sideDrop`.
+  // ends land at the row's own BOTTOM edge (1.0 = full row height) rather than ~55% down it, so
+  // each side genuinely wraps the tiles' full height instead of just arching over their tops — a
+  // capsule/bracket enclosing the row, not a partial droop. Untouched by the 2nd round's rewrite.
   sideDrop: 1.0,
-  steps: 10,      // polyline resolution per half-arc (mirrors `perimeterRun`'s plain-polyline idiom)
+  rise: 26,       // how far above the row's own top edge the bracket's top rail sits
+  // #495 2nd round: a SMALL rounding where a vertical side meets the top rail — enough to read as
+  // this game's plated-console aesthetic (tile corners round at 9px, the console shell's own
+  // corner at 14px) without reading as circular/elliptical at a glance. `bracketGeometry` clamps
+  // this per-row so a very short or narrow tile row can never make the corner overlap itself.
+  corner: 14,
+  steps: 10,      // polyline resolution per half-path (mirrors `perimeterRun`'s plain-polyline idiom)
 };
 
-// One point on the dome's ellipse at angle `t` (radians, screen convention: 0 = +x, increasing
-// CLOCKWISE, so -PI/2 is straight up — the apex both mirrored arcs retract toward).
-function domePoint(cx, ecy, rx, ry, t) {
-  return { x: cx + rx * Math.cos(t), y: ecy + ry * Math.sin(t) };
+// The bracket's own geometry for a given tile-row rect: the vertical run's top/bottom, the two
+// side x's, the shared centre-x the top rail runs to, and the corner radius — clamped so it can
+// never exceed the space actually available (a defensive floor for an unusually short/narrow row,
+// not something normal HUD sizes ever hit).
+function bracketGeometry(rect) {
+  const S = SHIELD_ARC;
+  const bottomY = rect.y + rect.h * S.sideDrop;
+  const topY = rect.y - S.rise;
+  const leftX = rect.x - S.overhang;
+  const rightX = rect.x + rect.w + S.overhang;
+  const cx = rect.x + rect.w / 2;
+  const r = Math.max(0, Math.min(S.corner, bottomY - topY, cx - leftX));
+  return { bottomY, topY, leftX, rightX, cx, r };
 }
 
-// A polyline from angle `a0` to `a1` in `steps` segments — the same "hand back a drawable
-// polyline, not raw angles" idiom `perimeterRun` uses, so HudScene paints both with `strokePoints`.
-function domeArc(cx, ecy, rx, ry, a0, a1, steps) {
+// One point on one side's path (`side`: 'left' | 'right'), at normalised distance `u` (0..1) — 0
+// is the OUTER end (down at the row's own bottom edge), 1 is the shared apex (top-centre, where
+// both sides' paths meet). The path is three pieces walked in order — straight up the side, a
+// quarter-turn around the rounded corner, straight in along the top rail to centre — and `u` is
+// distributed across them by actual path LENGTH, so a point sliding along `u` moves at a roughly
+// constant rate instead of snapping quickly through the short corner piece.
+function bracketPoint(geo, side, u) {
+  const { bottomY, topY, leftX, rightX, cx, r } = geo;
+  const uc = Math.max(0, Math.min(1, u));
+  // The shared apex is a fixed point regardless of which side is asking — return it directly
+  // (rather than arriving at it via the accumulated-length arithmetic below) so both sides land
+  // on the EXACT same float, not two values a rounding error apart. HudScene's track/left/right
+  // polylines rely on the two sides meeting at one literal point.
+  if (uc >= 1) return { x: cx, y: topY };
+  const dir = side === 'left' ? 1 : -1;
+  const outerX = side === 'left' ? leftX : rightX;
+  if (uc <= 0) return { x: outerX, y: bottomY };
+  const Lv = Math.max(0, bottomY - (topY + r));            // straight run up the side
+  const Lc = r * (Math.PI / 2);                             // the rounded corner
+  const Lh = Math.max(0, Math.abs(cx - (outerX + dir * r))); // straight run along the top to centre
+  const total = Lv + Lc + Lh;
+  if (total <= 0) return { x: outerX, y: bottomY };
+  const d = uc * total;
+  if (d <= Lv) return { x: outerX, y: bottomY - d };
+  if (d <= Lv + Lc) {
+    // Standard rounded-rect corner: a quarter circle centred `r` in from the side and `r` down
+    // from the top rail. Left sweeps from pointing at the side (angle π) to pointing straight up
+    // (3π/2); right mirrors it (0 sweeping to -π/2) — the same pair of corners `strokeRoundedRect`
+    // draws for a rect's own top-left/top-right, just walked here as a polyline of our own.
+    const ccx = outerX + dir * r, ccy = topY + r;
+    const t = (d - Lv) / Lc;
+    const angle = side === 'left' ? Math.PI + t * (Math.PI / 2) : -t * (Math.PI / 2);
+    return { x: ccx + r * Math.cos(angle), y: ccy + r * Math.sin(angle) };
+  }
+  const local = d - Lv - Lc;
+  return { x: outerX + dir * r + dir * local, y: topY };
+}
+
+// A polyline from `u0` to `u1` on one side's path, in `steps` segments — the same "hand back a
+// drawable polyline" idiom `perimeterRun` uses, so HudScene paints both with `strokePoints`.
+function bracketArc(rect, side, u0, u1, steps) {
+  const geo = bracketGeometry(rect);
   const pts = [];
   for (let i = 0; i <= steps; i++) {
-    const t = a0 + (a1 - a0) * (i / steps);
-    pts.push(domePoint(cx, ecy, rx, ry, t));
+    const u = u0 + (u1 - u0) * (i / steps);
+    pts.push(bracketPoint(geo, side, u));
   }
   return pts;
 }
 
 // `rect` is the tile row's own bounding box (HudScene's `panel.tileBox`, off `ui/skillTiles.js`
 // `tileRow`). `frac` is the shield's live fraction (`mechPools().shield`, 0..1). Returns the
-// ALWAYS-drawn dim TRACK — the full dome, both ends fully extended, the same "empty space stays
-// legible" rule every other layer's backing follows — plus the two mirrored LIT arcs: empty at
-// frac 0, a full quarter-turn each at frac 1.
+// ALWAYS-drawn dim TRACK — the full bracket, both sides fully extended, the same "empty space
+// stays legible" rule every other layer's backing follows — plus the two mirrored LIT paths:
+// empty at frac 0, reaching the shared apex at frac 1.
 //
 // #495 playtest (Jackson: shield should deplete from the MIDDLE out, not the sides in): each lit
-// arc is anchored at its OUTER end — `leftOuter`/`rightOuter`, the side stub nearest the tile
-// row's own edge — and grows TOWARD the shared apex as the fraction rises. So at frac 1 both arcs
-// reach all the way to the apex (the full dome); as the shield drains the reach shrinks back
-// toward the outer end, opening a gap at top-centre first and widening it outward, until at frac 0
-// nothing is left at all. This is the mirror image of the original cut, which anchored at the
-// apex and grew OUTWARD — meaning a half-shield used to read as "the centre survived, the sides
-// are gone," backwards from what a canopy retracting under fire should look like.
+// path is anchored at its OUTER end (`u = 0`, the side stub nearest the tile row's own edge) and
+// grows TOWARD the shared apex (`u = 1`) as the fraction rises. So at frac 1 both paths reach all
+// the way to the apex (the full bracket); as the shield drains the reach shrinks back toward the
+// outer end, opening a gap at top-centre first and widening it outward, until at frac 0 nothing is
+// left at all. Untouched by the 2nd round's shape rewrite — `u` replaces the old arc angle
+// one-for-one, so this indexing (index 0 = fixed outer stub, last = growth toward the apex) still
+// holds.
 export function shieldArcLayout(rect, frac) {
   const S = SHIELD_ARC;
-  const cx = rect.x + rect.w / 2;
-  const ecy = rect.y + rect.h * S.sideDrop;
-  const rx = rect.w / 2 + S.overhang;
-  const ry = (ecy - rect.y) + S.rise;
-  const apex = -Math.PI / 2;
-  const quarter = Math.PI / 2;
-  const leftOuter = apex - quarter;
-  const rightOuter = apex + quarter;
   const f = Math.max(0, Math.min(1, frac ?? 0));
-  const reach = f * quarter;
   return {
-    cx, cy: ecy, rx, ry,
     track: [
-      ...domeArc(cx, ecy, rx, ry, apex, leftOuter, S.steps).reverse(),
-      ...domeArc(cx, ecy, rx, ry, apex, rightOuter, S.steps).slice(1),
+      ...bracketArc(rect, 'left', 0, 1, S.steps),
+      ...bracketArc(rect, 'right', 1, 0, S.steps).slice(1),
     ],
-    // Each lit arc runs OUTER → apex, so index 0 is always the fixed outer stub and the LAST
-    // point is how far it has grown toward the shared apex — the opposite indexing from before.
-    left: reach > 0 ? domeArc(cx, ecy, rx, ry, leftOuter, leftOuter + reach, S.steps) : [],
-    right: reach > 0 ? domeArc(cx, ecy, rx, ry, rightOuter, rightOuter - reach, S.steps) : [],
+    left: f > 0 ? bracketArc(rect, 'left', 0, f, S.steps) : [],
+    right: f > 0 ? bracketArc(rect, 'right', 0, f, S.steps) : [],
   };
 }
 

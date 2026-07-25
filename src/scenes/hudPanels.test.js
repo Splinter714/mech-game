@@ -16,7 +16,7 @@ vi.mock('phaser', () => ({
   },
 }));
 
-const { default: HudScene } = await import('./HudScene.js');
+const { default: HudScene, ARMOR_PEEK_PAD } = await import('./HudScene.js');
 const { Mech } = await import('../data/Mech.js');
 const { PLAYER_COLORS } = await import('../data/players.js');
 const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await import('../data/hudLayout.js');
@@ -487,18 +487,24 @@ describe('HudScene health readout modes (#448)', () => {
     return built;
   };
 
-  // #448 playtest: a fresh run has NO integrity readout — the mech's own art carries it.
-  it('starts on NONE, with the console already collapsed', () => {
+  // #495 (2nd playtest round): FUSED is now the DEFAULT — it took the slot over from NONE the
+  // same way NONE once took it from nothing (see READOUT_MODES's own comment in
+  // healthReadout.js). FUSED has no separate block either (like NONE did), so the console still
+  // collapses to just the tile row.
+  it('starts on FUSED, with no separate block for the console to frame', () => {
     const { scene } = modeScene();
-    expect(scene._readoutMode()).toBe('none');
-    expect(scene.panels[0].mode).toBe('none');
+    expect(scene._readoutMode()).toBe('fused');
+    expect(scene.panels[0].mode).toBe('fused');
     expect(scene.panels[0].bars.w).toBe(0);
     expect(scene.panels[0].header).toBeNull();
     expect(scene._band.groups[0].blockW).toBe(0);
   });
 
-  it('H cycles none → bars → paper doll → fused → none, rebuilding the panel each time', () => {
+  it('H cycles fused → none → bars → paper doll → fused, rebuilding the panel each time', () => {
     const { scene } = modeScene();
+    expect(scene.panels[0].mode).toBe('fused');
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('none');
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('bars');
     expect(scene.panels[0].bars.segments.map((s) => s.loc)).toHaveLength(4);
@@ -508,14 +514,12 @@ describe('HudScene health readout modes (#448)', () => {
     expect(barsHeader.destroyed).toBe(true);   // rebuilt, not left stacked on screen
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('fused');
-    scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('none');
   });
 
   it('keeps the mode in the registry so it survives a redeploy', () => {
     const { scene, registry } = modeScene();
     scene._cycleReadout();
-    expect(registry.get('hudReadout')).toBe('bars');
+    expect(registry.get('hudReadout')).toBe('none');
   });
 
   // The ORB readout was deleted; a registry left on it from an earlier session must not strand the
@@ -524,10 +528,10 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene, registry } = modeScene();
     registry.set('hudReadout', 'orbs');
     scene._syncPanels();
-    expect(scene._readoutMode()).toBe('none');
-    expect(scene.panels[0].mode).toBe('none');
+    expect(scene._readoutMode()).toBe('fused');
+    expect(scene.panels[0].mode).toBe('fused');
     scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('bars');
+    expect(scene.panels[0].mode).toBe('none');
   });
 
   // #452 (style pass): the on-screen `READOUT: … [H] to switch` prompt was removed at Jackson's
@@ -537,7 +541,7 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene } = modeScene();
     expect(scene.readoutHint).toBeUndefined();
     scene._cycleReadout();
-    expect(scene.panels[0].mode).toBe('bars');
+    expect(scene.panels[0].mode).toBe('none');
     // Nothing anywhere in the HUD names the key.
     const { created } = modeScene();
     expect(created.filter((o) => typeof o.text === 'string' && /READOUT|\[H\]/.test(o.text))).toEqual([]);
@@ -550,12 +554,13 @@ describe('HudScene health readout modes (#448)', () => {
     scene._cycleReadout();
     registry.set('hudPlayers', [snap(0), snap(1)]);
     scene._syncPanels();
-    expect(scene.panels.map((p) => p.mode)).toEqual(['bars', 'bars']);
+    expect(scene.panels.map((p) => p.mode)).toEqual(['none', 'none']);
   });
 
   it('every DRAWN mode still hands the console shell a header line and a block to frame', () => {
     const { scene } = modeScene();
-    scene._cycleReadout();
+    scene._cycleReadout();   // fused -> none
+    scene._cycleReadout();   // none -> bars
     for (const mode of ['bars', 'paperdoll']) {
       expect(scene.panels[0].mode).toBe(mode);
       const b = scene.panels[0].bars;
@@ -568,8 +573,9 @@ describe('HudScene health readout modes (#448)', () => {
 
   it('the paper doll keeps per-location captions and needs no shield caption', () => {
     const { scene } = modeScene();
-    scene._cycleReadout();
-    scene._cycleReadout();
+    scene._cycleReadout();   // fused -> none
+    scene._cycleReadout();   // none -> bars
+    scene._cycleReadout();   // bars -> paperdoll
     expect(scene.panels[0].mode).toBe('paperdoll');
     const p = scene.panels[0];
     expect(Object.keys(p.partLabels)).toHaveLength(4);
@@ -593,8 +599,9 @@ describe('HudScene health readout modes (#448)', () => {
   // red, a healthy shield reads blue — rather than the old fixed steel/cyan.
   it('colours the paper-doll armor + shield outlines through the SAME structure ramp', () => {
     const { scene } = modeScene();
-    scene._cycleReadout();
-    scene._cycleReadout();
+    scene._cycleReadout();   // fused -> none
+    scene._cycleReadout();   // none -> bars
+    scene._cycleReadout();   // bars -> paperdoll
     expect(scene.panels[0].mode).toBe('paperdoll');
     const armorFrac = 0.3, shieldFrac = 0.6;   // distinct so their ramp colours differ
     const mech = {
@@ -619,9 +626,11 @@ describe('HudScene health readout modes (#448)', () => {
   // Jackson: "maybe we don't need an integrity readout if the on-mech display is good enough" —
   // so NONE has to hide it ENTIRELY and the console shell has to collapse rather than leave a hole.
   describe('the NONE readout', () => {
-    // NONE is now the DEFAULT, so this is the state a fresh HUD is already in — no cycling needed.
+    // #495 (2nd playtest round): FUSED, not NONE, is now the DEFAULT — one cycle off a fresh HUD
+    // lands on NONE (fused -> none is the first step of the cycle).
     const noneScene = () => {
       const built = modeScene();
+      built.scene._cycleReadout();
       expect(built.scene.panels[0].mode).toBe('none');
       return built;
     };
@@ -685,11 +694,11 @@ describe('HudScene health readout modes (#448)', () => {
 
   // ── #495: the FUSED readout — armor/structure/shield painted directly onto the skill tiles ──
   describe('the FUSED readout', () => {
+    // #495 (2nd playtest round): FUSED is now the DEFAULT — a fresh HUD is already in this state,
+    // no cycling needed (this mirrors NONE's own `noneScene()` helper above, which now needs the
+    // one cycle FUSED used to need before it took over the default slot).
     const fusedScene = () => {
       const built = modeScene();
-      built.scene._cycleReadout();
-      built.scene._cycleReadout();
-      built.scene._cycleReadout();
       expect(built.scene.panels[0].mode).toBe('fused');
       return built;
     };
@@ -726,11 +735,14 @@ describe('HudScene health readout modes (#448)', () => {
       expect(p.statusText.text).toMatch(/RESPAWN/);
     });
 
-    // #495 playtest (Jackson: "armor should not deplete AROUND the ability, it should deplete
-    // from top to bottom"): the per-tile armor overlay is now a filled band anchored to the
-    // tile's own BOTTOM edge, whose height tracks the live armor fraction — not a stroked
-    // perimeter any more, and specifically NOT one that drains sideways/around the frame.
-    it('drains the per-tile armor overlay from the top down, anchored to the bottom edge', () => {
+    // #495 2nd playtest round (Jackson: "it should be beneath the ability square in z-order, not
+    // a ring on the ability square"): the per-tile armor overlay moved OUT of `fusedGfx` (painted
+    // on top of the tile) and into its own `armorBackGfx` layer (painted behind it, built BEFORE
+    // the tile row — see `_makePanel`), run against a rect padded `ARMOR_PEEK_PAD` past the
+    // tile's own edges rather than the tile's exact footprint. It is still a filled band anchored
+    // to the (padded) BOTTOM edge whose height tracks the live armor fraction — top-to-bottom,
+    // never sideways/around the frame — that part of the 1st round's fix is unchanged.
+    it('drains the per-tile armor overlay from the top down, anchored to the bottom edge, BEHIND the tile', () => {
       const { scene } = fusedScene();
       const mech = new Mech({ chassisId: 'medium' });
       mech.applyDamage('leftArm', 20);   // dents the arm's armor without destroying it
@@ -738,26 +750,38 @@ describe('HudScene health readout modes (#448)', () => {
       const rect = scene.panels[0].skillRefs.leftArm.rect;
       const part = mech.parts.leftArm;
       const armorFrac = part.armor / part.maxArmor;
-      const runs = scene.panels[0].fusedGfx.fillRuns ?? [];
-      // Distinguish the armor run from the HP wash run (which always covers the FULL tile
-      // height) by its height tracking the live armor fraction instead.
-      const armorRun = runs.find((r) => Math.abs(r.h - armorFrac * rect.h) < 0.5);
+      const peekH = rect.h + ARMOR_PEEK_PAD * 2;
+      // Nothing armor-shaped should be painted on TOP of the tile any more.
+      const frontRuns = scene.panels[0].fusedGfx.fillRuns ?? [];
+      expect(frontRuns.find((r) => Math.abs(r.h - armorFrac * peekH) < 0.5)).toBeUndefined();
+      const runs = scene.panels[0].armorBackGfx.fillRuns ?? [];
+      const armorRun = runs.find((r) => Math.abs(r.h - armorFrac * peekH) < 0.5);
       expect(armorRun).toBeTruthy();
-      // Bottom-pinned: the overlay's bottom edge sits exactly on the tile's own bottom edge...
-      expect(armorRun.y + armorRun.h).toBeCloseTo(rect.y + rect.h, 5);
-      // ...and its TOP edge has receded DOWN below the tile's own top, since armor isn't full.
-      expect(armorRun.y).toBeGreaterThan(rect.y);
+      // Bottom-pinned: the overlay's bottom edge sits on the PADDED rect's own bottom edge —
+      // past the tile's own bottom by ARMOR_PEEK_PAD, so it peeks out from under the tile there.
+      expect(armorRun.y + armorRun.h).toBeCloseTo(rect.y + rect.h + ARMOR_PEEK_PAD, 5);
+      // ...and its TOP edge has receded DOWN below the padded rect's own top, since armor isn't full.
+      expect(armorRun.y).toBeGreaterThan(rect.y - ARMOR_PEEK_PAD);
     });
 
-    it('a full-armor tile is covered top-to-bottom — the overlay reaches the tile\'s own top edge', () => {
+    it('a full-armor tile is covered top-to-bottom — the backing reaches the padded rect\'s own top edge', () => {
       const { scene } = fusedScene();
       const mech = new Mech({ chassisId: 'medium' });   // undamaged: every location at full armor
       scene._updateIntegrity(scene.panels[0], mech);
       const rect = scene.panels[0].skillRefs.leftArm.rect;
-      const runs = scene.panels[0].fusedGfx.fillRuns ?? [];
-      const armorRun = runs.find((r) => Math.abs(r.h - rect.h) < 0.5);
+      const peekH = rect.h + ARMOR_PEEK_PAD * 2;
+      const runs = scene.panels[0].armorBackGfx.fillRuns ?? [];
+      const armorRun = runs.find((r) => Math.abs(r.h - peekH) < 0.5);
       expect(armorRun).toBeTruthy();
-      expect(armorRun.y).toBeCloseTo(rect.y, 5);
+      expect(armorRun.y).toBeCloseTo(rect.y - ARMOR_PEEK_PAD, 5);
+    });
+
+    it('destroying HudScene tears down the armor-peek layer along with the rest of the panel', () => {
+      const { scene } = fusedScene();
+      const bg = scene.panels[0].armorBackGfx;
+      expect(bg).toBeTruthy();
+      scene._destroyPanel(scene.panels[0]);
+      expect(bg.destroyed).toBe(true);
     });
 
     // #495: armor now rides the target disc's own fixed armor tone rather than the structure
@@ -797,8 +821,9 @@ describe('HudScene health readout modes (#448)', () => {
 
   it('the paper doll actually strokes a draining outline for a damaged part', () => {
     const { scene } = modeScene();
-    scene._cycleReadout();
-    scene._cycleReadout();
+    scene._cycleReadout();   // fused -> none
+    scene._cycleReadout();   // none -> bars
+    scene._cycleReadout();   // bars -> paperdoll
     const mech = new Mech({ chassisId: 'medium' });
     scene._updateIntegrity(scene.panels[0], mech);
     expect(scene.panels[0].partBarsGfx.strokedPoints.length).toBeGreaterThan(1);
