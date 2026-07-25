@@ -332,10 +332,11 @@ export default class ArenaScene extends Phaser.Scene {
       if (player.dead) continue;
       const pi = intents.get(player);
       if (!pi) continue;
-      // #188/#261: resolve Sprint (Overclock-only now) and Dash's burst/cooldown BEFORE _drive
-      // so a same-frame press is reflected in this frame's speed multiplier, not delayed a frame.
+      // #188/#261/#506: resolve Sprint (Overclock-only now) and every mounted ability's
+      // burst/cooldown BEFORE _drive so a same-frame press is reflected in this frame's speed
+      // multiplier, not delayed a frame.
       this._handleSprint(pi, delta, player);
-      this._handleDash(pi, delta, player);
+      this._handleAbilities(pi, delta, player);
       this._drive(pi, dt, player);
     }
     // #348: players are solid to each other. Between the drive loop and the leash on purpose —
@@ -537,7 +538,7 @@ const PLAYER_FIELD_ALIASES = {
   fireCooldowns: 'fireCooldowns',
   _heldAudio: 'heldAudio',
   sprint: 'sprint',
-  dash: 'dash',
+  abilityStates: 'abilityStates',
   _sprintForcedByOverclock: 'sprintForcedByOverclock',
   _overclockWasActive: 'overclockWasActive',
   convergeTarget: 'convergeTarget',

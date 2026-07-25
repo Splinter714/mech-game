@@ -35,7 +35,7 @@ function setButton(scene, i, pressed) {
 // constructor + read() to run without a real Phaser instance.
 function fakeControlsScene({ pads = [] } = {}) {
   const keys = {};
-  for (const k of ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'SPACE']) {
+  for (const k of ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'TWO', 'THREE', 'FOUR']) {
     keys[k] = { isDown: false };
   }
   const pointer = { x: 0, y: 0, worldX: 0, worldY: 0, wasTouch: false, leftButtonDown: () => false, rightButtonDown: () => false };
@@ -147,51 +147,39 @@ describe('Controls / PadEdges — resync a carried-over pad on scene transition 
   });
 });
 
-// #261: Dash replaced player-facing Sprint — both devices now report the SAME press-to-trigger
-// semantics via a single `dashPressed` rising-edge one-shot, picked from whichever device is
-// currently the active scheme (unlike #188's old device split, sprintHeld vs. sprintPressed).
-describe('Controls.read — dash intent, press-to-trigger on both devices (#261)', () => {
-  it('dashPressed is a rising-edge one-shot on keyboard Space (kbm mode)', () => {
+// #506: the four ability slots replaced Dash's old hardcoded L3/Space bind — every slot reports
+// the SAME press-to-trigger semantics via its own rising-edge one-shot in `ability[slot]`,
+// picked from whichever device is currently the active scheme (unlike #188's old device split,
+// sprintHeld vs. sprintPressed). One slot (abilityY, keyboard '1' / pad Y) stands in for all four
+// here since they share one code path; ability slot count/binding is covered by anatomy.js's own
+// ABILITY_SLOTS/ABILITY_BINDS shape.
+describe('Controls.read — ability intent, press-to-trigger on both devices (#506)', () => {
+  it('ability.abilityY is a rising-edge one-shot on keyboard 1 (kbm mode)', () => {
     const scene = fakeControlsScene();
     const controls = new Controls(scene);
 
-    expect(controls.read().dashPressed).toBe(false);
-    setKey(scene, 'SPACE', true);
-    expect(controls.read().dashPressed).toBe(true);    // fresh press
-    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
-    setKey(scene, 'SPACE', false);
-    expect(controls.read().dashPressed).toBe(false);   // released
-    setKey(scene, 'SPACE', true);
-    expect(controls.read().dashPressed).toBe(true);    // press again
+    expect(controls.read().ability.abilityY).toBe(false);
+    setKey(scene, 'ONE', true);
+    expect(controls.read().ability.abilityY).toBe(true);    // fresh press
+    expect(controls.read().ability.abilityY).toBe(false);   // still held, no repeat
+    setKey(scene, 'ONE', false);
+    expect(controls.read().ability.abilityY).toBe(false);   // released
+    setKey(scene, 'ONE', true);
+    expect(controls.read().ability.abilityY).toBe(true);    // press again
   });
 
-  it('dashPressed is a rising-edge one-shot on gamepad L3 (pad mode)', () => {
+  it('ability.abilityY is a rising-edge one-shot on gamepad Y (pad mode)', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
-    pad.buttons[PAD.L3] = { pressed: true };
-    expect(controls.read().dashPressed).toBe(true);    // fresh press (also switches mode to pad)
-    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
-    pad.buttons[PAD.L3] = { pressed: false };
-    expect(controls.read().dashPressed).toBe(false);   // released
-    pad.buttons[PAD.L3] = { pressed: true };
-    expect(controls.read().dashPressed).toBe(true);    // press again
-  });
-
-  // #407: B is an additional dash trigger alongside L3.
-  it('dashPressed is a rising-edge one-shot on gamepad B (#407)', () => {
-    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
-    const scene = fakeControlsScene({ pads: [pad] });
-    const controls = new Controls(scene);
-
-    pad.buttons[PAD.B] = { pressed: true };
-    expect(controls.read().dashPressed).toBe(true);    // fresh press (also switches mode to pad)
-    expect(controls.read().dashPressed).toBe(false);   // still held, no repeat
-    pad.buttons[PAD.B] = { pressed: false };
-    expect(controls.read().dashPressed).toBe(false);   // released
-    pad.buttons[PAD.B] = { pressed: true };
-    expect(controls.read().dashPressed).toBe(true);    // press again
+    pad.buttons[PAD.Y] = { pressed: true };
+    expect(controls.read().ability.abilityY).toBe(true);    // fresh press (also switches mode to pad)
+    expect(controls.read().ability.abilityY).toBe(false);   // still held, no repeat
+    pad.buttons[PAD.Y] = { pressed: false };
+    expect(controls.read().ability.abilityY).toBe(false);   // released
+    pad.buttons[PAD.Y] = { pressed: true };
+    expect(controls.read().ability.abilityY).toBe(true);    // press again
   });
 
   it('only reports the edge from the currently-active device, even if the other device also has a fresh press the same frame', () => {
@@ -201,12 +189,12 @@ describe('Controls.read — dash intent, press-to-trigger on both devices (#261)
     // Establish kbm as the active scheme first (no pad input yet).
     expect(controls.read().mode).toBe('kbm');
 
-    setKey(scene, 'SPACE', true);            // fresh press on the ACTIVE device (kbm)...
-    pad.buttons[PAD.L3] = { pressed: true };  // ...and a fresh pad press too, same frame — but
+    setKey(scene, 'ONE', true);              // fresh press on the ACTIVE device (kbm)...
+    pad.buttons[PAD.Y] = { pressed: true };   // ...and a fresh pad press too, same frame — but
                                                // that pad press also switches mode to 'pad'.
     const intent = controls.read();
-    expect(intent.mode).toBe('pad');          // pad activity wins mode arbitration this frame
-    expect(intent.dashPressed).toBe(true);    // reports the PAD edge, since pad is now active
+    expect(intent.mode).toBe('pad');              // pad activity wins mode arbitration this frame
+    expect(intent.ability.abilityY).toBe(true);    // reports the PAD edge, since pad is now active
   });
 
   it('a mode switch mid-press does not leave a stale edge from the previously-active device', () => {
@@ -214,20 +202,21 @@ describe('Controls.read — dash intent, press-to-trigger on both devices (#261)
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
-    setKey(scene, 'SPACE', true);
-    expect(controls.read().dashPressed).toBe(true);   // kbm edge fires
-    expect(controls.read().dashPressed).toBe(false);  // still held, no repeat
+    setKey(scene, 'ONE', true);
+    expect(controls.read().ability.abilityY).toBe(true);   // kbm edge fires
+    expect(controls.read().ability.abilityY).toBe(false);  // still held, no repeat
 
-    // Switch to pad by moving the stick (not the dash button) — kbm's Space is still held.
+    // Switch to pad by moving the stick (not the ability button) — kbm's '1' is still held.
     pad.leftStick = { x: 1, y: 0, length: () => 1 };
     expect(controls.read().mode).toBe('pad');
-    // Pad's L3 was never pressed, so no dash edge leaks through from the stale kbm hold.
-    expect(controls.read().dashPressed).toBe(false);
+    // Pad's Y was never pressed, so no ability edge leaks through from the stale kbm hold.
+    expect(controls.read().ability.abilityY).toBe(false);
   });
 });
 
-// #402: manual reload — the same rising-edge one-shot as the dash above, on R3 / F.
-describe('Controls.read — reload intent, press-to-trigger on both devices (#402)', () => {
+// #506: manual reload moved to L3 / F (was R3 / F, #402) — same rising-edge one-shot semantics,
+// no pad2 alt-bind any more (B/X now belong to the ability diamond above).
+describe('Controls.read — reload intent, press-to-trigger on both devices (#402/#506)', () => {
   it('reloadPressed is a rising-edge one-shot on keyboard F (kbm mode)', () => {
     const scene = fakeControlsScene();
     const controls = new Controls(scene);
@@ -242,32 +231,17 @@ describe('Controls.read — reload intent, press-to-trigger on both devices (#40
     expect(controls.read().reloadPressed).toBe(true);    // press again
   });
 
-  it('reloadPressed is a rising-edge one-shot on gamepad R3 (pad mode)', () => {
+  it('reloadPressed is a rising-edge one-shot on gamepad L3 (pad mode)', () => {
     const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
     const scene = fakeControlsScene({ pads: [pad] });
     const controls = new Controls(scene);
 
-    pad.buttons[PAD.R3] = { pressed: true };
+    pad.buttons[PAD.L3] = { pressed: true };
     expect(controls.read().reloadPressed).toBe(true);    // fresh press (also switches mode to pad)
     expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
-    pad.buttons[PAD.R3] = { pressed: false };
+    pad.buttons[PAD.L3] = { pressed: false };
     expect(controls.read().reloadPressed).toBe(false);   // released
-    pad.buttons[PAD.R3] = { pressed: true };
-    expect(controls.read().reloadPressed).toBe(true);    // press again
-  });
-
-  // #407: X is an additional reload trigger alongside R3.
-  it('reloadPressed is a rising-edge one-shot on gamepad X (#407)', () => {
-    const pad = { connected: true, buttons: [], leftStick: { x: 0, y: 0, length: () => 0 }, rightStick: { x: 0, y: 0, length: () => 0 } };
-    const scene = fakeControlsScene({ pads: [pad] });
-    const controls = new Controls(scene);
-
-    pad.buttons[PAD.X] = { pressed: true };
-    expect(controls.read().reloadPressed).toBe(true);    // fresh press (also switches mode to pad)
-    expect(controls.read().reloadPressed).toBe(false);   // still held, no repeat
-    pad.buttons[PAD.X] = { pressed: false };
-    expect(controls.read().reloadPressed).toBe(false);   // released
-    pad.buttons[PAD.X] = { pressed: true };
+    pad.buttons[PAD.L3] = { pressed: true };
     expect(controls.read().reloadPressed).toBe(true);    // press again
   });
 });
@@ -341,12 +315,12 @@ describe('Controls — touch sticks feed the same intent (#346)', () => {
     expect(controls.read().aim.angle).toBeCloseTo(0, 5);   // held, not snapped back
   });
 
-  it('reports no fire and no dash — triggers are out of scope (#346)', () => {
+  it('reports no fire and no ability triggers — out of scope (#346)', () => {
     const { scene, controls } = touchControls();
     scene._emit('pointerdown', touchPointer(1, 100, 200));
     const intent = controls.read();
     expect(intent.fire).toEqual({ rightArm: false, leftArm: false, rightTorso: false, leftTorso: false });
-    expect(intent.dashPressed).toBe(false);
+    expect(intent.ability).toEqual({ abilityY: false, abilityB: false, abilityA: false, abilityX: false });
   });
 
   it('a touch drag is not mistaken for mouse movement (mode does not flip back to kbm)', () => {

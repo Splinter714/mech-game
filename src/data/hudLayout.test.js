@@ -429,10 +429,10 @@ describe('hudPlayerSnapshot — what each player publishes to the HUD', () => {
     expect(s.respawn).toBe(null);
   });
 
-  // #450: the dash cooldown readout was removed from the HUD, so the snapshot no longer
-  // carries any dash state at all — the mechanic itself is untouched (data/dash.js).
-  it('publishes no dash state', () => {
-    expect(hudPlayerSnapshot({ ...player, dash: { active: true, cooldown: 2.5 } }).dash)
+  // #450/#506: the dash cooldown readout was removed from the HUD, so the snapshot doesn't
+  // carry any ability state either — the mechanic itself is untouched (data/abilityState.js).
+  it('publishes no ability state', () => {
+    expect(hudPlayerSnapshot({ ...player, abilityStates: { abilityY: { active: true, cooldown: 2.5 } } }).abilityStates)
       .toBeUndefined();
   });
 });

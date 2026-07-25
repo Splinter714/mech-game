@@ -14,7 +14,7 @@ import { playerMechArt } from '../../art/playerMechLook.js';
 import { Mech } from '../../data/Mech.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
-import { initialDashState } from '../../data/dash.js';
+import { initAbilityStates } from './abilities.js';
 import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
 import { mechColorFor } from '../../data/mechColors.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
@@ -110,7 +110,7 @@ export const CoopMixin = {
     player.fireCooldowns = {};
     player.heldAudio = {};
     player.sprint = initialSprintState();
-    player.dash = initialDashState();
+    player.abilityStates = initAbilityStates();
     player.respawn = makeRespawnState();
     return player;
   },

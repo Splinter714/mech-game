@@ -14,7 +14,8 @@ import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
-import { DASH_SPEED_MULT } from '../../data/dash.js';
+import { DASH_SPEED_MULT } from '../../data/abilities.js';
+import { hasActiveEffect } from './abilities.js';
 
 // #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
 // symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
@@ -220,13 +221,14 @@ export const LocomotionMixin = {
     const terrainScale = this._speedFactorAt(p.x, p.y);
     // #188/#189: Sprint (SPRINT_SPEED_MULT) is no longer player-triggered (#261) — it's now
     // Overclock-only, force-activated fuel-free for the powerup's duration (see arena/firing.js
-    // `_handleSprint`). #261: Dash (DASH_SPEED_MULT) is the new player-facing L3/Space ability —
-    // a short, much stronger burst gated by `_handleDash`'s cooldown state machine
-    // (data/dash.js). The two are independent sources and simply multiply together if both
-    // happen to be active at once (e.g. the player dashes while Overclock's forced Sprint is
-    // also running) — there's no special-casing needed, each just contributes its own factor.
+    // `_handleSprint`). #506: Dash (DASH_SPEED_MULT) is now a mountable ABILITY rather than a
+    // hardcoded built-in — `hasActiveEffect` asks "does this player have an active mounted
+    // ability whose effect is 'dash'" without caring which face button it's bound to, or
+    // whether one is even mounted (a mech with no dash-effect ability equipped just gets 1x).
+    // The two speed sources are independent and simply multiply together if both happen to be
+    // active at once — there's no special-casing needed, each just contributes its own factor.
     const sprintMult = p.sprint?.active ? SPRINT_SPEED_MULT : 1;
-    const dashMult = p.dash?.active ? DASH_SPEED_MULT : 1;
+    const dashMult = hasActiveEffect(p, 'dash') ? DASH_SPEED_MULT : 1;
     // #3 weight inertia drives the accel curve.
     const maxSp = mv.maxSpeed * legF * terrainScale * sprintMult * dashMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed

@@ -5,9 +5,10 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
+import { isAbility } from './abilities.js';
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
@@ -53,6 +54,15 @@ export class Mech {
     this.mounts = {};
     for (const loc of MOUNT_LOCATIONS) {
       this.mounts[loc] = (data.mounts?.[loc] ?? []).filter((id) => getItem(id));
+    }
+
+    // #506: ability slots — a parallel, simpler mount model (one id or null per slot, see
+    // loadout.js's "Ability slots" section). Unknown/stale ids are dropped exactly like the
+    // weapon mounts above.
+    this.abilityMounts = {};
+    for (const slot of ABILITY_SLOTS) {
+      const id = data.abilityMounts?.[slot];
+      this.abilityMounts[slot] = isAbility(id) ? id : null;
     }
 
     // Per-weapon ammo: a parallel array to mounts[loc] holding each weapon's current
@@ -325,8 +335,32 @@ export class Mech {
   slotCapacity(loc) { return loadout.slotCapacity(this._chassis, loc); }
   freeSlots(loc) { return loadout.freeSlots(this._chassis, this.mounts, loc); }
   validate() { return loadout.validateLoadout(this._chassis, this.mounts); }
-  // A build is deployable only when it's legal AND every weapon slot is filled.
+  // A build is deployable only when it's legal AND every weapon slot is filled. Ability slots
+  // are NOT required — an empty one is a valid (if less mobile/capable) choice, same as
+  // shields being optional (#496).
   isComplete() { return this.validate().ok && MOUNT_LOCATIONS.every((loc) => this.usedSlots(loc) > 0); }
+
+  // ── Ability slots (#506) ──────────────────────────────────────────────────────────────────
+  canMountAbility(slot, itemId) { return loadout.canMountAbility(this.abilityMounts, slot, itemId); }
+  abilitySlotOf(itemId) { return loadout.abilityLocationOf(this.abilityMounts, itemId); }
+
+  // Mount `itemId` into ability slot `slot`. Like weapon mounting (#84), an ability only ever
+  // occupies one slot at a time — mounting it elsewhere moves it.
+  mountAbility(slot, itemId) {
+    const res = this.canMountAbility(slot, itemId);
+    if (res.ok) {
+      const prevSlot = this.abilitySlotOf(itemId);
+      if (prevSlot && prevSlot !== slot) this.abilityMounts[prevSlot] = null;
+      this.abilityMounts[slot] = itemId;
+    }
+    return res;
+  }
+
+  unmountAbility(slot) {
+    const id = this.abilityMounts[slot];
+    this.abilityMounts[slot] = null;
+    return id;
+  }
 
   // ── Weapons & ammo ────────────────────────────────────────────────────────
   // Every mounted weapon with its resolved stats, whether it's online (its part is
@@ -466,8 +500,9 @@ export class Mech {
   toJSON() {
     const mounts = {};
     const damage = {};
+    const abilityMounts = { ...this.abilityMounts };
     for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
     for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, hp: this.parts[loc].hp };
-    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, damage };
+    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, abilityMounts, damage };
   }
 }

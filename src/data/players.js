@@ -51,15 +51,16 @@ export function makePlayer({
     // said why: splitting it is inseparable from adding a second controller, because every one
     // of these is downstream of one device's buttons and one player's aim. Phase 2 adds that
     // controller, so it moves here. `controls` is this player's own Controls instance;
-    // `fireCooldowns`/`heldAudio` are its own per-slot trigger state; `sprint`/`dash` its own
-    // movement abilities; `convergeTarget`/`aimEnemy`/`reticlePos` its own aim pick and reticle.
-    // (Left null/empty here rather than imported defaults so this module stays free of the
-    // sprint/dash/Controls dependencies; the scene fills them in as it builds each player.)
+    // `fireCooldowns`/`heldAudio` are its own per-slot trigger state; `sprint`/`abilityStates`
+    // its own movement/activated abilities; `convergeTarget`/`aimEnemy`/`reticlePos` its own aim
+    // pick and reticle. (Left null/empty here rather than imported defaults so this module stays
+    // free of the sprint/abilities/Controls dependencies; the scene fills them in as it builds
+    // each player.)
     controls: null,
     fireCooldowns: {},
     heldAudio: {},
     sprint: null,
-    dash: null,
+    abilityStates: null,
     sprintForcedByOverclock: false,
     overclockWasActive: false,
     convergeTarget: null,

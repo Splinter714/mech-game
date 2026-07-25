@@ -49,6 +49,23 @@ export const MOUNT_LOCATIONS = Object.keys(LOCATION_INFO).filter((id) => LOCATIO
 // The arms — the only locations a melee weapon can mount in.
 export const MELEE_LOCATIONS = ['leftArm', 'rightArm'];
 
+// Ability slots (#506): four independently-bound, non-weapon activated slots — one per
+// gamepad face button (Controls.js ABILITY_BINDS), arranged as a diamond in the HUD/garage.
+// Deliberately NOT a body location: abilities carry no armor/structure and aren't drawn on the
+// mech, so they live in their own list rather than folding into LOCATION_INFO/MOUNT_LOCATIONS.
+// Dash (previously a hardcoded L3/Space built-in every mech always had) is now the first
+// mountable ability — see data/abilities.js — so an ability slot can be empty.
+export const ABILITY_SLOTS = ['abilityY', 'abilityB', 'abilityA', 'abilityX'];
+
+// Each slot's diamond position (unit offsets, Y up / negative) for UI layout — matches the
+// standard gamepad face-button diamond (Y top, B right, A bottom, X left).
+export const ABILITY_SLOT_LAYOUT = {
+  abilityY: { dx: 0, dy: -1 },
+  abilityB: { dx: 1, dy: 0 },
+  abilityA: { dx: 0, dy: 1 },
+  abilityX: { dx: -1, dy: 0 },
+};
+
 // Skill slots: the four arm/side-torso slots hold weapons (bound to triggers/bumpers). The
 // head is NOT a skill slot — it's not targetable either any more (#128). #188: there is no
 // ability slot any more — L3/Space is a hardcoded built-in (Sprint, data/sprint.js), not a

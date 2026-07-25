@@ -16,7 +16,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 // below — see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
-import { triggerDash, updateDash } from '../../data/dash.js';
+import { updateAbilities } from './abilities.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
 
@@ -111,7 +111,8 @@ export const FiringMixin = {
   // (data/sprint.js) itself is UNCHANGED — it's still a depleting/regenerating fuel bar that
   // drains while active and refills while inactive, hitting empty forces it off. What's gone is
   // the player's own means of turning it on: #261 replaced L3/Space's player-facing ability with
-  // a Dash (see `_handleDash` below and data/dash.js) and removed manual Sprint entirely. The
+  // a Dash (#506: now just one mountable ability among several, see `_handleAbilities` below and
+  // scenes/arena/abilities.js) and removed manual Sprint entirely. The
   // ONLY thing that can still set `this.sprint.active` is Overclock's force-activation, so this
   // method now purely owns that handoff — no more per-device toggle/hold branches driven by
   // player input.
@@ -170,28 +171,15 @@ export const FiringMixin = {
     // which is where locomotion reads it.
   },
 
-  // ── Dash (#261) ── a hardcoded, always-available ability on L3/Space — replaces the old
-  // player-facing Sprint. `intent.dashPressed` is already rising-edge-detected by Controls.js
-  // (one edge per physical press, on whichever device is currently active), so a single press
-  // triggers one burst; pressing again mid-burst or mid-cooldown is a no-op (`triggerDash`
-  // itself is a no-op in that case — see data/dash.js). The pure state machine
-  // (active/burstRemaining/cooldown) lives entirely in data/dash.js; this just wires the press
-  // + per-frame tick.
-  // #348: per player — each player's own L3/Space, own burst, own cooldown.
-  // #450: the `dashActive`/`dashCooldown`/`dashCooldownMax` publishes that used to sit at the end
-  // of this method are GONE along with the HUD's dash cooldown bar — the same treatment #368 gave
-  // the sprint gauge's channels. The dash itself is untouched; nothing reads the cooldown but the
-  // player's own sense of when it comes back.
-  _handleDash(intent, delta, player = primaryPlayerOf(this)) {
-    const dt = delta / 1000;
-    const wasActive = player.dash.active;
-    if (intent.dashPressed) player.dash = triggerDash(player.dash);
-    player.dash = updateDash(player.dash, dt);
-
-    // Reuse the existing sprint-on/off cues for the dash's start/end — same "movement ability
-    // just engaged/disengaged" cue language, no new SFX plumbing needed for a ~0.2s burst.
-    if (player.dash.active && !wasActive) Audio.ui('sprintOn');
-    else if (!player.dash.active && wasActive) Audio.ui('sprintOff');
+  // ── Abilities (#506) ── the four mountable ability slots (data/anatomy.js ABILITY_SLOTS),
+  // one per face button. `intent.ability[slot]` is already rising-edge-detected by Controls.js
+  // (one edge per physical press, on whichever device is currently active). Replaces the old
+  // hardcoded `_handleDash` (#261) — Dash is now just the 'dash' effect kind, mounted like any
+  // other ability; see scenes/arena/abilities.js for the generic state-machine wiring and
+  // per-effect dispatch (currently just 'dash') that used to live here.
+  // #348: per player — each player's own slots, own bursts, own cooldowns.
+  _handleAbilities(intent, delta, player = primaryPlayerOf(this)) {
+    updateAbilities(intent, delta, player);
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

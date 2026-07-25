@@ -1,7 +1,8 @@
 // #189 — Overclock redesign: instead of a flat moveMult/slewMult buff, Overclock
 // force-activates Sprint (fuel-free) for its whole duration. #261 removed the PLAYER's own
-// means of triggering Sprint (L3/Space now triggers a Dash instead, see dash.test.js /
-// dashTrigger.test.js) — Overclock's force-activation is now the ONLY way Sprint's `active`
+// means of triggering Sprint (L3/Space triggered a Dash instead; #506 later made Dash a
+// mountable ability, see abilityTrigger.test.js) — Overclock's force-activation is now the
+// ONLY way Sprint's `active`
 // flag is ever set, so this file is trimmed down to just that contract: does Overclock still
 // force it on, keep it fuel-free, and hand it back off cleanly at expiry. The manual-reclaim/
 // toggle-vs-hold cases from the old device-split test suite no longer apply — there's no

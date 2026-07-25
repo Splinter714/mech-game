@@ -46,9 +46,12 @@ export const ROSTERS = {
           rightArm: ['autocannon'],
           leftArm: ['pulseLaser'],
           leftTorso: ['clusterRocket'],
-          rightTorso: ['machineGun'],   // #188: centerTorso is no longer mountable — Sprint
-                                         // (L3/Space) is a hardcoded built-in now, not an item.
+          rightTorso: ['machineGun'],   // #188: centerTorso is no longer mountable.
         },
+        // #506: Dash is now a mountable ability rather than a hardcoded built-in — every
+        // default build equips it (on the top face button) so existing mobility isn't
+        // silently lost until a player rebuilds.
+        abilityMounts: { abilityY: 'dash' },
       },
       // #349: player 2's slot. Same chassis (every mech is locked to 'mediumPlayer' by the
       // migrate hook above anyway), a different but equally complete opening kit.
@@ -61,6 +64,7 @@ export const ROSTERS = {
           leftTorso: ['machineGun'],
           rightTorso: ['clusterRocket'],
         },
+        abilityMounts: { abilityY: 'dash' },
       },
       // #387: players 3 & 4. Each a complete, deployable default so a drop-in with an untouched
       // slot gets a real mech. Loadouts vary the opening kit so four machines read as distinct on
@@ -74,6 +78,7 @@ export const ROSTERS = {
           leftTorso: ['autocannon'],
           rightTorso: ['pulseLaser'],
         },
+        abilityMounts: { abilityY: 'dash' },
       },
       [PLAYER4_MECH_KEY]: {
         chassisId: 'mediumPlayer',
@@ -84,6 +89,7 @@ export const ROSTERS = {
           leftTorso: ['pulseLaser'],
           rightTorso: ['autocannon'],
         },
+        abilityMounts: { abilityY: 'dash' },
       },
     }),
   },

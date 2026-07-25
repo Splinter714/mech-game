@@ -198,7 +198,7 @@ function legacyPlayerAdapter(scene) {
   alias('fireCooldowns', 'fireCooldowns');
   alias('heldAudio', '_heldAudio');
   alias('sprint', 'sprint');
-  alias('dash', 'dash');
+  alias('abilityStates', 'abilityStates');
   alias('sprintForcedByOverclock', '_sprintForcedByOverclock');
   alias('overclockWasActive', '_overclockWasActive');
   alias('controls', 'controls');

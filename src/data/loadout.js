@@ -9,7 +9,8 @@
 // now; Sprint (L3/Space) is a hardcoded built-in, never mounted.
 
 import { getItem, isWeapon } from './items.js';
-import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS } from './anatomy.js';
+import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS, ABILITY_SLOTS } from './anatomy.js';
+import { isAbility } from './abilities.js';
 
 // Each mountable location is a single skill slot.
 export const SLOTS_PER_LOCATION = 1;
@@ -81,4 +82,33 @@ export function weaponCount(mounts) {
     for (const id of mounts[loc] ?? []) if (isWeapon(id)) n++;
   }
   return n;
+}
+
+// ── Ability slots (#506) ──────────────────────────────────────────────────────────────────
+// A parallel, simpler model to the weapon slots above: exactly ABILITY_SLOTS.length slots,
+// each holding at most one ability id directly (a scalar, not an array — an ability slot has
+// no melee-style location restriction, so there's nothing an array of >1 would ever need to
+// express). `abilityMounts` is a plain `{ [slotId]: itemId | null }` map.
+
+// Which ability slot (if any) currently holds `itemId`.
+export function abilityLocationOf(abilityMounts, itemId) {
+  for (const slot of ABILITY_SLOTS) if (abilityMounts[slot] === itemId) return slot;
+  return null;
+}
+
+// Can `itemId` be mounted in ability slot `slotId` given the current build?
+export function canMountAbility(abilityMounts, slotId, itemId) {
+  if (!ABILITY_SLOTS.includes(slotId)) return { ok: false, reason: 'not an ability slot' };
+  if (!isAbility(itemId)) return { ok: false, reason: 'not an ability' };
+  if (abilityMounts[slotId]) return { ok: false, reason: 'slot occupied' };
+  return { ok: true };
+}
+
+export function validateAbilityLoadout(abilityMounts) {
+  const errors = [];
+  for (const slot of ABILITY_SLOTS) {
+    const id = abilityMounts[slot];
+    if (id && !isAbility(id)) errors.push(`${id} is not an ability`);
+  }
+  return { ok: errors.length === 0, errors };
 }

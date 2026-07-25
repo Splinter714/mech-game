@@ -15,19 +15,16 @@
 // want to need enemy vs terrain mode anymore" — one rule now scores both pools, so there is
 // nothing to flip; see ArenaScene.js). R3 and F are therefore UNBOUND.
 //
-// #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot is gone —
-// L3/Space was a hardcoded, always-available Sprint ability (data/sprint.js), never routed
-// through mounts. #261: player-initiated Sprint is gone too — L3/Space now triggers a Dash (a
-// single-shot burst on a cooldown, data/dash.js) instead. A dash is inherently a discrete
-// one-shot activation (not a sustained hold-vs-toggle state), so BOTH devices now use the same
-// press-to-trigger semantics: `read()` reports one rising-edge one-shot, `dashPressed`, picked
-// from whichever device is currently active. Unlike Sprint's old hold-to-sprint keyboard path
-// (which just read the raw down state every frame, no edge needed), a discrete trigger needs an
-// actual edge on keyboard too — Space is polled every frame like any other key, it doesn't
-// naturally arrive pre-edge-detected the way a Phaser `keydown-*` event would — so keyboard gets
-// its own rising-edge tracker here, mirroring the one already used for the pad's L3 button.
-// (The old Sprint mechanic itself, data/sprint.js, is untouched — Overclock still force-activates
-// it; only the player's own trigger for it is gone, replaced by this Dash bind.)
+// #188: L3/Space used to fire the mounted ability (jumpJet/bubbleShield). That slot was removed,
+// then #261 gave L3/Space a hardcoded Dash instead. #506 removes the hardcoding a second time,
+// properly this time: there are now four independently-mounted ABILITY slots (data/abilities.js,
+// Dash is the first entry), one per gamepad face button (A/B/X/Y) with a keyboard row (1/2/3/4)
+// alongside. Reload moves to L3/F (was R3/F) so L3 stays free of the face-button cluster. Each
+// ability is a discrete one-shot activation (not a sustained hold-vs-toggle state), so both
+// devices use the same press-to-trigger semantics: `read()` reports one rising edge per slot in
+// `ability`, picked from whichever device is currently active. Keyboard needs its own edge
+// tracker (a key is polled every frame, it doesn't arrive pre-edge-detected the way a Phaser
+// `keydown-*` event would) — same pattern the old dash/reload trackers used.
 
 // Exported so other modules (e.g. arena/locomotion.js's instant-turning facing-angle gate,
 // #156) can reuse the same "is this raw input meaningful" threshold instead of inventing one.
@@ -36,11 +33,12 @@
 // thumb lands). The stick MATH is pure and lives in `touchSticks.js`; this file only routes
 // Phaser pointer events into it and folds the result into `read()`'s intent, exactly like the
 // pad path. Weapon triggers and dash are deliberately OUT of scope (#346) — on touch the
-// player drives and aims but does not fire; `fire` reads all-false and `dashPressed` false.
+// player drives and aims but does not fire; `fire` reads all-false and every `ability` slot false.
 // Desktop is untouched: touch mode only latches once a genuine TOUCH pointer is seen
 // (`pointer.wasTouch`), and the mouse-activity checks below now ignore touch-driven pointers
 // so a touch drag can never be mistaken for mouse movement.
 import { TouchSticks } from './touchSticks.js';
+import { ABILITY_SLOTS } from '../data/anatomy.js';
 
 export const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
@@ -60,12 +58,11 @@ export const PAD = {
   SELECT: 8, START: 9, L3: 10, R3: 11,
   DPAD_UP: 12, DPAD_DOWN: 13, DPAD_LEFT: 14, DPAD_RIGHT: 15,
 };
-const PAD_L3 = PAD.L3;
 
 // location → { key (keyboard/mouse label), pad (controller label) }. Order here is the
 // display order used by the garage/HUD. #188: four weapon skill slots — the fifth
-// (centerTorso, the old ability slot) is gone; Dash's bind (#261, was Sprint's) lives in
-// DASH_BIND below, separate from this table since it's not a mountable location at all.
+// (centerTorso, the old ability slot) is gone; abilities now live in their own ABILITY_SLOTS
+// (anatomy.js) with their own ABILITY_BINDS below, separate from this table.
 export const SKILL_BINDS = {
   rightArm:    { key: 'RMB',   pad: 'RT' },
   leftArm:     { key: 'LMB',   pad: 'LT' },
@@ -73,22 +70,23 @@ export const SKILL_BINDS = {
   leftTorso:   { key: 'Q',     pad: 'LB' },
 };
 
-// Dash's fixed bind (#261, was Sprint's bind under #188) — always available, never mounted, so
-// it isn't keyed by a body location like SKILL_BINDS. Exported for the HUD's cooldown label.
-// #407 adds a SECOND pad button, B, as an additional dash trigger alongside L3 (pad2); the
-// primary `pad` label stays L3 for the HUD.
-export const DASH_BIND = { key: 'Space', pad: 'L3', pad2: 'B' };
-const PAD_B = PAD.B;
+// #506: manual-RELOAD bind moves to L3/F (was R3/F, #402) — L3 is otherwise idle now that Dash
+// no longer hardcodes it, and freeing R3/B/X/A/Y up front avoids the ability diamond colliding
+// with any other bind. No pad2 alt-bind any more (B/X are now ability slots, see below).
+export const RELOAD_BIND = { key: 'F', pad: 'L3' };
+const PAD_L3 = PAD.L3;
 
-// #402: manual-RELOAD bind — R3 / F, which have been UNBOUND since #322 (see the header note
-// above). Press to reload all of this player's weapons at once (Mech.reloadAllWeapons). Like
-// Dash, it isn't a mountable location, so it lives here rather than in SKILL_BINDS. Exported for
-// any HUD hint that wants to name it.
-// #407 adds a SECOND pad button, X, as an additional reload trigger alongside R3 (pad2); the
-// primary `pad` label stays R3.
-export const RELOAD_BIND = { key: 'F', pad: 'R3', pad2: 'X' };
-const PAD_R3 = PAD.R3;
-const PAD_X = PAD.X;
+// #506: the four ability slots, one per gamepad face button, arranged as a diamond (matches
+// data/anatomy.js ABILITY_SLOT_LAYOUT) with a keyboard row alongside. R3 is UNBOUND — freed up
+// by the reload move above, available for a future bind.
+export const ABILITY_BINDS = {
+  abilityY: { key: '1', pad: 'Y' },
+  abilityB: { key: '2', pad: 'B' },
+  abilityA: { key: '3', pad: 'A' },
+  abilityX: { key: '4', pad: 'X' },
+};
+const ABILITY_PAD_INDEX = { abilityY: PAD.Y, abilityB: PAD.B, abilityA: PAD.A, abilityX: PAD.X };
+const ABILITY_KEY_NAME = { abilityY: 'ONE', abilityB: 'TWO', abilityA: 'THREE', abilityX: 'FOUR' };
 
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
@@ -145,7 +143,7 @@ export class Controls {
     this.scene = scene;
     this.padIndex = padIndex;
     this.hasKeyboard = keyboard;
-    this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,SPACE');
+    this.keys = scene.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,Q,E,F,ONE,TWO,THREE,FOUR');
     scene.input.mouse?.disableContextMenu(); // so right-click fires instead of opening a menu
 
     // #122: each Phaser Scene gets its OWN GamepadPlugin, so a pad already connected (and in
@@ -171,10 +169,12 @@ export class Controls {
     this.mode = keyboard ? 'kbm' : 'pad';
     this.aimAngle = -Math.PI / 2;  // remembered turret aim, so a centred stick holds it
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
-    this._padDashDown = false;     // previous frame's raw L3 state, for edge-detecting the dash trigger
-    this._kbDashDown = false;      // previous frame's raw Space state, for edge-detecting the dash trigger
-    this._padReloadDown = false;   // #402: previous frame's raw R3 state, for edge-detecting reload
-    this._kbReloadDown = false;    // #402: previous frame's raw F state, for edge-detecting reload
+    this._padReloadDown = false;   // #506: previous frame's raw L3 state, for edge-detecting reload
+    this._kbReloadDown = false;    // previous frame's raw F state, for edge-detecting reload
+    // #506: previous frame's raw per-slot ability button state, one pair per device, for
+    // edge-detecting each ability's press exactly like dash/reload above.
+    this._padAbilityDown = {}; this._kbAbilityDown = {};
+    for (const slot of ABILITY_SLOTS) { this._padAbilityDown[slot] = false; this._kbAbilityDown[slot] = false; }
 
     // #346: on-screen sticks. Only wired up when the device can actually produce touches;
     // even then, `mode` doesn't become 'touch' until a real touch pointer arrives, so a
@@ -255,7 +255,7 @@ export class Controls {
     const pointerIsTouch = p.wasTouch === true;
     const mouseMoved = (p.x !== this._px || p.y !== this._py) && !pointerIsTouch;
     this._px = p.x; this._py = p.y;
-    const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'SPACE']
+    const kbDown = ['W', 'A', 'S', 'D', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'Q', 'E', 'F', 'ONE', 'TWO', 'THREE', 'FOUR']
       .some((key) => k[key].isDown);
     const mouseBtn = !pointerIsTouch && (p.leftButtonDown() || p.rightButtonDown());
     // #348: a pad-only player ignores the keyboard/mouse entirely — those belong to player 1.
@@ -278,8 +278,8 @@ export class Controls {
         aim: { mode: 'angle', angle: t.aimAngle },
         fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
         mode: 'touch',
-        dashPressed: false,
-        reloadPressed: false,   // #402: touch reports no reload, same as no fire/dash
+        ability: this._noAbilityPressed(),
+        reloadPressed: false,   // #402: touch reports no reload, same as no fire/dash/ability
       };
     }
 
@@ -293,7 +293,7 @@ export class Controls {
         aim: { mode: 'angle', angle: this.aimAngle },
         fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
         mode: 'pad',
-        dashPressed: false,
+        ability: this._noAbilityPressed(),
         reloadPressed: false,   // #402: no pad, no reload edge to report
       };
     }
@@ -341,27 +341,11 @@ export class Controls {
       };
     }
 
-    // ── Dash (#261) ── press-to-trigger on BOTH devices now (was Sprint's hold-vs-toggle
-    // split, #188). Edge-detect each device's raw button independently every frame (regardless
-    // of which scheme is currently active, so a mode switch mid-press can't leave a stale edge
-    // from the previously-active device), then report just the ONE edge that matches the
-    // currently-active scheme as `dashPressed`.
-    // #407: B (PAD_B) is an additional dash trigger alongside L3 — either raw button down counts.
-    const padDashDown = !!(pad && ((pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed)
-                                || (pad.buttons[PAD_B] && pad.buttons[PAD_B].pressed)));
-    const padDashPressed = padDashDown && !this._padDashDown;
-    this._padDashDown = padDashDown;
-    const kbDashDown = k.SPACE.isDown;
-    const kbDashPressed = kbDashDown && !this._kbDashDown;
-    this._kbDashDown = kbDashDown;
-    const dashPressed = padMode ? padDashPressed : kbDashPressed;
-
-    // #402: manual reload (R3 / F) — edge-detected exactly like the dash above, each device
-    // tracked independently every frame so a mid-press mode switch can't leave a stale edge,
-    // then only the currently-active scheme's edge is reported.
-    // #407: X (PAD_X) is an additional reload trigger alongside R3 — either raw button down counts.
-    const padReloadDown = !!(pad && ((pad.buttons[PAD_R3] && pad.buttons[PAD_R3].pressed)
-                                  || (pad.buttons[PAD_X] && pad.buttons[PAD_X].pressed)));
+    // #506: manual reload (L3 / F) — edge-detected on each device independently every frame
+    // (regardless of which scheme is currently active, so a mode switch mid-press can't leave a
+    // stale edge from the previously-active device), then only the currently-active scheme's
+    // edge is reported.
+    const padReloadDown = !!(pad && pad.buttons[PAD_L3] && pad.buttons[PAD_L3].pressed);
     const padReloadPressed = padReloadDown && !this._padReloadDown;
     this._padReloadDown = padReloadDown;
     const kbReloadDown = k.F.isDown;
@@ -369,6 +353,27 @@ export class Controls {
     this._kbReloadDown = kbReloadDown;
     const reloadPressed = padMode ? padReloadPressed : kbReloadPressed;
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', dashPressed, reloadPressed };
+    // #506: the four ability slots — same press-to-trigger edge-detection pattern as reload
+    // above, one independent tracker per slot per device.
+    const ability = {};
+    for (const slot of ABILITY_SLOTS) {
+      const padDown = !!(pad && pad.buttons[ABILITY_PAD_INDEX[slot]] && pad.buttons[ABILITY_PAD_INDEX[slot]].pressed);
+      const padPressed = padDown && !this._padAbilityDown[slot];
+      this._padAbilityDown[slot] = padDown;
+      const kbDown = k[ABILITY_KEY_NAME[slot]].isDown;
+      const kbPressed = kbDown && !this._kbAbilityDown[slot];
+      this._kbAbilityDown[slot] = kbDown;
+      ability[slot] = padMode ? padPressed : kbPressed;
+    }
+
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', ability, reloadPressed };
+  }
+
+  // A neutral "nothing pressed" ability map, for the early-return branches (touch, pad-only
+  // with no pad connected) where there's no real input to read.
+  _noAbilityPressed() {
+    const out = {};
+    for (const slot of ABILITY_SLOTS) out[slot] = false;
+    return out;
   }
 }
