@@ -13,12 +13,14 @@ import {
 import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
+import { ABILITIES } from '../data/abilities.js';
+import { CORE_ITEMS } from '../data/coreItems.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
-import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
+import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
-import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
+import { PadEdges, PAD, SKILL_BINDS, ABILITY_BINDS } from '../input/Controls.js';
+import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
@@ -113,7 +115,13 @@ export default class GarageScene extends Phaser.Scene {
     this.bottomH = 200;                             // bottom strip height (tiles + preview)
     this.previewW = 210;                            // right slice of the strip for the preview
     this.dollX = 20;
-    this.dollW = this.W - this.previewW - 60;
+    // #506: a fixed slice at the RIGHT end of the weapon-tile band is reserved for the new
+    // ability-diamond + core-tile cluster, shrinking the weapon tileRow's own width by that much
+    // — it re-centers in the smaller region, the freed slice holds the cluster.
+    this.abilityClusterW = 170;
+    this.abilityGap = 20;
+    this.dollW = this.W - this.previewW - 60 - this.abilityClusterW - this.abilityGap;
+    this.abilityClusterX = this.dollX + this.dollW + this.abilityGap;
     this._rowBottom = this.H - 22;                  // tile-row bottom edge
 
     buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
@@ -126,8 +134,11 @@ export default class GarageScene extends Phaser.Scene {
     this.list = new WeaponCardList(this, {
       x: r.list.x, y: r.list.y, w: r.list.w, h: r.list.h,
       ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
-      isLocked: (id) => !this.unlocked.has(id),
-      costOf: (id) => costOf(id),
+      // #506: abilities/core items have no SCRAP-unlock data at all (shop.js's catalog is
+      // weapon-only) — they're always unlocked and free to mount, so only a weapon id is ever
+      // gated here.
+      isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
+      costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
 
     this._buildPreview();
@@ -401,7 +412,7 @@ export default class GarageScene extends Phaser.Scene {
   // slot is selected), the mounted item highlighted, and no pad focus cursor.
   _restoreMouseCatalog() {
     this.list.setIds(this._eligibleIds(this.selected));
-    this.list.setSelected(this.selected ? this.mech.mounts[this.selected][0] ?? null : null);
+    this.list.setSelected(this.selected ? this._mountedIn(this.selected) : null);
     this.list.setFocus(null);
   }
 
@@ -536,10 +547,15 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Catalog ids eligible for a slot (occupancy ignored — picking replaces). With no slot
-  // selected, the whole catalog shows. #188: every catalog id is a weapon now (no more
-  // ability branch) — a slot just filters by weapon-slot / melee-arm legality.
+  // selected, the whole (weapon) catalog shows — abilities/core items are only ever browsed
+  // once their own slot is selected, never mixed into the unfiltered view.
+  // #506: an ability/core slot swaps the SAME WeaponCardList to its own small catalog instead
+  // of the weapon-filtering body below; a weapon slot keeps the #188 weapon-slot/melee-arm rule.
   _eligibleIds(loc) {
     if (!loc) return this.catalogIds;
+    const kind = slotKind(loc);
+    if (kind === 'ability') return Object.keys(ABILITIES);
+    if (kind === 'core') return Object.keys(CORE_ITEMS);
     return this.catalogIds.filter((id) => {
       if (!isWeapon(id) || !WEAPON_SLOTS.includes(loc)) return false;
       if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
@@ -547,12 +563,20 @@ export default class GarageScene extends Phaser.Scene {
     });
   }
 
+  // What's currently mounted in `loc`, across all three slot families (#506).
+  _mountedIn(loc) {
+    const kind = slotKind(loc);
+    if (kind === 'ability') return this.mech.abilityMounts[loc] ?? null;
+    if (kind === 'core') return this.mech.coreMounts[loc] ?? null;
+    return this.mech.usedSlots(loc) >= 1 ? this.mech.mounts[loc][0] : null;
+  }
+
   // Select a slot to edit: filter the catalog to what fits it and highlight the mounted item.
   _selectSlot(loc) {
     Audio.ui('menuNav');   // #178: short quiet blip — skill-tile focus change
     this.selected = this.selected === loc ? null : loc;
     this.list.setIds(this._eligibleIds(this.selected));
-    this.list.setSelected(this.selected ? this.mech.mounts[this.selected][0] ?? null : null);
+    this.list.setSelected(this.selected ? this._mountedIn(this.selected) : null);
     this.refresh();
   }
 
@@ -569,17 +593,23 @@ export default class GarageScene extends Phaser.Scene {
   // selects the first slot it fits. Selecting a weapon never removes it — re-clicking the item
   // already mounted in the selected slot is a no-op (#70); only choosing a DIFFERENT item
   // replaces. #65: a LOCKED item can't be mounted at all — clicking it attempts to buy it
-  // instead (spends SCRAP, permanent).
+  // instead (spends SCRAP, permanent). Abilities/core items are always unlocked (#506), and —
+  // unlike weapon slots, which must stay filled — re-clicking one already mounted UNMOUNTS it,
+  // since an empty ability/core slot is a legal build choice.
   _pickItem(id) {
-    if (!this.unlocked.has(id)) { this._purchase(id); return; }
+    if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
     if (!this.selected) {
       const loc = this._eligibleSlotFor(id);
       if (loc) this._selectSlot(loc);
       return;
     }
-    const cur = this.mech.mounts[this.selected][0];
-    if (cur !== id) this._mountInto(this.selected, id);   // same item → no-op, stays mounted
-    this.list.setSelected(this.mech.mounts[this.selected]?.[0] ?? null);
+    const cur = this._mountedIn(this.selected);
+    if (cur === id) {
+      if (slotKind(this.selected) !== 'weapon') this._unmountFrom(this.selected);
+    } else {
+      this._mountInto(this.selected, id);
+    }
+    this.list.setSelected(this._mountedIn(this.selected));
   }
 
   // #65: spend banked SCRAP to permanently unlock `id`. Insufficient funds just toasts —
@@ -740,27 +770,61 @@ export default class GarageScene extends Phaser.Scene {
     return tileRow(this.dollX, this.dollW, { bottom: this._rowBottom, maxSize: 150 });
   }
 
-  // Rebuild the doll: the shared skill-tile row, each tile click-to-mount / click-to-clear.
-  // Also rebuilds the tab bar so Deploy reflects the current build validity, and repaints
-  // the pad legend (the catalog-first button map; hidden entirely under mouse/keyboard).
+  // #506: the ability diamond + core tile's shared centre — the reserved slice at the right end
+  // of the bottom strip (see `create()`), vertically centred on the same band the tile row and
+  // the mech preview occupy.
+  _abilityClusterCenter() {
+    const top = this.H - this.bottomH + 6;
+    return { cx: this.abilityClusterX + this.abilityClusterW / 2, cy: (top + this._rowBottom) / 2 };
+  }
+
+  _abilityTiles() {
+    const { cx, cy } = this._abilityClusterCenter();
+    return diamondLayout(cx, cy, { size: 44 });
+  }
+
+  _coreTile() {
+    const { cx, cy } = this._abilityClusterCenter();
+    return coreTileRect(cx, cy, 30);
+  }
+
+  // Rebuild the doll: the shared skill-tile row (weapons) plus the ability diamond + core tile,
+  // each click-to-mount / click-to-clear. Also rebuilds the tab bar so Deploy reflects the
+  // current build validity, and repaints the pad legend (the catalog-first button map; hidden
+  // entirely under mouse/keyboard).
   refresh() {
     this._buildHeader();
     this.doll.removeAll(true);
     for (const rect of this._tileRow()) this._drawTile(rect);
+    for (const rect of this._abilityTiles()) this._drawTile(rect);
+    this._drawTile(this._coreTile());
     this.legend?.setText(this._legendText()).setVisible(this.padActive);
   }
 
   _legendText() {
-    // #248: 'X/Y CHASSIS' dropped — the chassis switcher is disabled for now.
+    // #248: 'X/Y CHASSIS' dropped — the chassis switcher is disabled for now. #506: the ability/
+    // core slots have no pad quick-mount (deliberately deferred — see plan), so the legend still
+    // only names the weapon binds.
     return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   SELECT TABS   START TO BASE';
   }
 
+  // #506: one draw path for all three slot families — a weapon tile (fire bind, must stay
+  // filled), an ability tile (numbered/face-button bind, optional), or the core tile (no bind at
+  // all, optional). `_mountedIn`/`slotKind` are the only per-kind branches; the paint call itself
+  // is identical.
   _drawTile(rect) {
     const loc = rect.loc;
-    const id = this.mech.mounts[loc][0];   // one skill per slot
+    const id = this._mountedIn(loc);
     const selected = loc === this.selected;
+    const kind = slotKind(loc);
+    const bindGlyph = kind === 'weapon'
+      ? (this.inputMode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key)
+      : kind === 'ability'
+        ? (this.inputMode === 'pad' ? ABILITY_BINDS[loc].pad : ABILITY_BINDS[loc].key)
+        : '';
+    const emptyLabel = kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core';
     const refs = drawSkillTile(this, this.doll, rect, {
-      loc, itemId: id, mode: this.inputMode, selected,
+      loc, itemId: id, mode: this.inputMode, selected, bindGlyph, emptyLabel,
       subtitle: id ? getItem(id).name : '', subtitleColor: TILE_UI.text,
     });
     // Catalog-first pad flow (#70): the pad cursor lives on a catalog card, not the tile row,
@@ -771,8 +835,25 @@ export default class GarageScene extends Phaser.Scene {
 
   // Mount `itemId` into `loc`, replacing whatever was there. An invalid mount (e.g. melee
   // outside an arm) is rejected with a toast and the displaced item restored.
+  // #506: mountAbility/mountCore (unlike weapon mount) refuse to mount into an OCCUPIED slot —
+  // they only handle moving the item itself off whatever OTHER slot it was previously in — so a
+  // slot that already holds a different item still needs the same unmount-then-mount-with-
+  // restore-on-failure dance the weapon path below uses.
   _mountInto(loc, itemId) {
     if (!itemId) return;
+    const kind = slotKind(loc);
+    if (kind === 'ability' || kind === 'core') {
+      const prevItem = this._mountedIn(loc);
+      if (prevItem) this._unmountFrom(loc, { silent: true });
+      const res = kind === 'ability' ? this.mech.mountAbility(loc, itemId) : this.mech.mountCore(loc, itemId);
+      if (!res.ok) {
+        if (prevItem) (kind === 'ability' ? this.mech.mountAbility(loc, prevItem) : this.mech.mountCore(loc, prevItem));
+        this.refresh();
+        return this.toast(res.reason);
+      }
+      Audio.ui('equip');
+      return this.onChange();
+    }
     const prev = this.mech.usedSlots(loc) >= 1 ? this.mech.mounts[loc][0] : null;
     if (prev) this.mech.unmount(loc, 0);
     const res = this.mech.mount(loc, itemId);
@@ -782,6 +863,20 @@ export default class GarageScene extends Phaser.Scene {
       return this.toast(res.reason);
     }
     Audio.ui('equip');   // #178: confident mechanical clunk-click — fresh mount or a swap
+    this.onChange();
+  }
+
+  // #506: click-again-to-unmount, for the ability/core slots only (weapon slots must stay
+  // filled to deploy — see Mech.isComplete — so they have no unmount interaction at all).
+  // `silent` skips the sound/texture-rebuild/refresh — used by _mountInto's own internal
+  // vacate-the-slot-first step, where a mount immediately follows and would otherwise double up.
+  _unmountFrom(loc, { silent = false } = {}) {
+    const kind = slotKind(loc);
+    if (kind === 'ability') this.mech.unmountAbility(loc);
+    else if (kind === 'core') this.mech.unmountCore(loc);
+    else return;
+    if (silent) return;
+    Audio.ui('equip');
     this.onChange();
   }
 
