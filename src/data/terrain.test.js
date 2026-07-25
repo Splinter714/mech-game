@@ -8,6 +8,7 @@ import {
   coverBlocksForRay, NATURAL_TERRAIN_DESTRUCTIBLE,
   clearedSoftCoverFor, softCoverStopsShot, softCoverHexBlockChance,
   SOFT_COVER_HEX_BLOCK_CHANCE, SOFT_COVER_OWN_HEX_BLOCK_CHANCE,
+  HAZARD_DPS, terrainHazardDps,
 } from './terrain.js';
 
 describe('terrain table (#41 full model)', () => {
@@ -605,6 +606,36 @@ describe('#269 SLOW_MOVEMENT_FACTOR — every slow-movement entry shares one spe
       expect(movementTier(id)).toBe('none');
       expect(isPassable(id)).toBe(false);
     }
+  });
+});
+
+// #508: damaging hazard terrain — the five biome hazard tiles now deal HAZARD_DPS on top of
+// their existing slow effect; everything else (including other 'slow' terrain) deals none.
+describe('#508 terrainHazardDps — hazard terrain deals damage, everything else does not', () => {
+  const HAZARD_IDS = ['mud', 'quicksand', 'brokenIce', 'debris', 'cinderField'];
+
+  it('is a real positive damage value', () => {
+    expect(HAZARD_DPS).toBeGreaterThan(0);
+  });
+
+  it('every hazard-flagged entry deals exactly HAZARD_DPS', () => {
+    for (const id of HAZARD_IDS) {
+      expect(TERRAIN[id].hazard, id).toBe(true);
+      expect(terrainHazardDps(id), id).toBe(HAZARD_DPS);
+    }
+  });
+
+  it('slow-but-not-hazardous terrain (e.g. river, forest, rubble) deals no damage', () => {
+    for (const id of ['river', 'forest', 'rubble', 'dryRiver', 'canal']) {
+      expect(TERRAIN[id].hazard).toBeFalsy();
+      expect(terrainHazardDps(id)).toBe(0);
+    }
+  });
+
+  it('normal ground, unknown ids, and off-map deal no damage', () => {
+    expect(terrainHazardDps('grass')).toBe(0);
+    expect(terrainHazardDps('nope')).toBe(0);
+    expect(terrainHazardDps(undefined)).toBe(0);
   });
 });
 

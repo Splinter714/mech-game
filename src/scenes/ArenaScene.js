@@ -9,6 +9,7 @@ import { WorldMixin } from './arena/world.js';
 import { CombatMixin } from './arena/combat.js';
 import { EnemiesMixin } from './arena/enemies.js';
 import { ProjectilesMixin } from './arena/projectiles.js';
+import { HazardTilesMixin } from './arena/hazardTiles.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { FiringMixin } from './arena/firing.js';
 import { LocomotionMixin } from './arena/locomotion.js';
@@ -233,6 +234,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
+    this._nextHazardTick = 0;             // #508: damaging hazard terrain tick cadence
     // #254: the `_impactPool`/`_debrisPool` reset moved up above (before the opening spawn) — see
     // the comment there for why. Nothing left to reset in this spot.
     this._initPowerups();                 // #60: timed-buff collectibles + active-buff overlay
@@ -387,6 +389,7 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
     this._updateFirePatches();
+    this._updateHazardTerrain();          // #508: damaging hazard terrain (mud/quicksand/etc.)
     this._updateBeams(delta);
 
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
@@ -507,7 +510,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

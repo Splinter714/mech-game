@@ -78,6 +78,11 @@
 // playtest pass retunes, instead of hunting down every consolidated entry again.
 export const SLOW_MOVEMENT_FACTOR = 0.6;
 
+// #508: the ONE shared damage-per-second every `hazard: true` terrain deals to whatever's
+// standing on it (mech or enemy alike, same as fire's indiscriminate ground damage). Starting
+// value is a placeholder for playtest — TODO(#508): tune once it's actually been played.
+export const HAZARD_DPS = 4;
+
 // ── #464 SOFT-COVER GROUND TEXTURE: intact and cleared share ONE tile ────────────────────────
 // All five soft-cover entries (forest/scrub/drift/wreck/fumarole) point `tex` at their CLEARED
 // twin's texture (`hex_forestCleared`, …) instead of having a second near-identical tile of their
@@ -119,7 +124,7 @@ export const TERRAIN = {
   // fits grassland thematically (soft ground you sink into) and follows the same passable-but-slow,
   // no-LOS-block, non-destructible shape as every other hazard entry above.
   mud:       { id: 'mud',       tex: 'hex_mud',       passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+               category: 'terrain', movement: 'slow', cover: 'open', hazard: true },
   // #269 §3 (issue: base population rework — dormant docks + alert towers): a GENERIC dock/bay
   // hex — a pure PLACEMENT MARKER for a dormant docked unit (data/worldgen.js `placeBases`), not
   // a structure of its own. Per the issue's explicit call ("NOT rendered as a distinctive
@@ -284,7 +289,7 @@ export const TERRAIN = {
   // is reserved exclusively for the world boundary. Passable but heavily slowing; no LOS block
   // (you sink, you don't hide).
   quicksand: { id: 'quicksand', tex: 'hex_quicksand', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+               category: 'terrain', movement: 'slow', cover: 'open', hazard: true },
 
   // ── Snow / arctic (#67) — cold white/blue palette. ──
   snow:      { id: 'snow',      tex: 'hex_snow',      passable: true,  blocksLOS: false, speedFactor: 1,
@@ -308,7 +313,7 @@ export const TERRAIN = {
   // ice is reserved exclusively for the world boundary. Passable but slow (thin/cracked ice);
   // no LOS block. #151: still reads as water (cold water visible through the cracks).
   brokenIce: { id: 'brokenIce', tex: 'hex_brokenIce', passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR, water: true,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+               category: 'terrain', movement: 'slow', cover: 'open', hazard: true },
 
   // ── Urban ruins (#67) — grey industrial palette; dense destructible cover. ──
   pavement:  { id: 'pavement',  tex: 'hex_pavement',  passable: true,  blocksLOS: false, speedFactor: 1,
@@ -334,7 +339,7 @@ export const TERRAIN = {
   // rubble-strewn street both read as "urban hazard/street" well enough to share one id rather
   // than inventing a new distinct paved-road identity for a role that's otherwise gone.
   debris:    { id: 'debris',    tex: 'hex_debris',    passable: true,  blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+               category: 'terrain', movement: 'slow', cover: 'open', hazard: true },
   // #278: urban's own dedicated channel — previously `channel` just pointed at `debris` (urban's
   // OWN hazard id), so urban was the one biome sharing a single id across two roles instead of
   // having a distinct channel identity like every other biome (river/dryRiver/slush/crust). A
@@ -370,7 +375,7 @@ export const TERRAIN = {
   // volcanic its own lesser in-map danger too — a hot ash/cinder patch, passable but slow, no
   // LOS block — while 'lava' itself is reserved for the boundary ring only (see biomes.js).
   cinderField: { id: 'cinderField', tex: 'hex_cinderField', passable: true, blocksLOS: false, speedFactor: SLOW_MOVEMENT_FACTOR,
-               category: 'terrain', movement: 'slow', cover: 'open' },
+               category: 'terrain', movement: 'slow', cover: 'open', hazard: true },
 };
 
 export function getTerrain(id) {
@@ -406,6 +411,14 @@ export function isBaseCategory(id) {
 export function terrainSpeedFactor(id) {
   const tier = movementTier(id);
   return tier === 'slow' ? SLOW_MOVEMENT_FACTOR : 1;
+}
+
+// #508: damage-per-second dealt to whatever stands on this terrain. 0 for every entry without
+// `hazard: true` (i.e. almost all terrain, including the other `movement: 'slow'` tiles like
+// forest/rubble that are slow but not dangerous).
+export function terrainHazardDps(id) {
+  const t = id && TERRAIN[id];
+  return t && t.hazard ? HAZARD_DPS : 0;
 }
 
 // Can a mech stand on this terrain? Unknown / off-map ⇒ false (off the arena disc = blocked).
