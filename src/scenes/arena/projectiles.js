@@ -5,6 +5,8 @@ import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { computeImpulse } from '../../data/force.js';
+import { nearestInterceptTarget } from '../../data/interceptor.js';
+import { getCoreItem } from '../../data/coreItems.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
@@ -23,6 +25,9 @@ const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
     this.projFx.clear();
+    // #494: anti-missile point defense — runs once per frame, ahead of the per-round loop below,
+    // since it scans the WHOLE projectile list rather than reasoning about one round at a time.
+    this._updateInterceptors(dt);
     // #72 own-hex transparency: precompute the hexes occupied by everything a round could HIT
     // this frame — a player round may fly into any living enemy's soft-cover hex (and strike
     // it); an enemy round into the player's. Each round adds its own origin hexes (so firing
@@ -465,6 +470,30 @@ export const ProjectilesMixin = {
       if (e.mech.isDestroyed()) continue;
       const { dx, dy } = computeImpulse(p.x, p.y, radius, strength, sign, e.x, e.y, dt);
       e.x += dx; e.y += dy;
+    }
+  },
+
+  // #494: Anti-Missile Defense — every live player whose core-slot pick is 'antiMissile' scans
+  // for the nearest enemy-fired round within its range each frame; once off cooldown, the
+  // nearest one found is simply destroyed (no explosion, no damage credit — it's a shot-down
+  // round, not a kill). `mech.canIntercept()` gates on BOTH the item actually being equipped
+  // and the cooldown, so an unequipped player costs one cheap boolean check and nothing more.
+  _updateInterceptors(dt) {
+    for (const pl of livePlayersOf(this)) {
+      // Optional chaining: the many lightweight fake `mech` fixtures across this test suite
+      // don't implement the full Mech surface, and this pass runs unconditionally for every
+      // live player each frame — same defensive treatment `tickShield`/`tickStatusEffects` get
+      // elsewhere for a non-Mech `mech` (e.g. an HpBody-backed enemy).
+      pl.mech.tickInterceptorCooldown?.(dt);
+      if (!pl.mech.canIntercept?.()) continue;
+      const item = getCoreItem('antiMissile');
+      const incoming = this.projectiles.filter((p) => p.owner === 'enemy' && !p.dead);
+      const target = nearestInterceptTarget(pl.x, pl.y, item.range, incoming);
+      if (!target) continue;
+      target.dead = true;
+      target.stopTrajectorySfx?.();
+      this._impactFx(target.x, target.y, 0x5ec8e0, target.kind, 8, target.weaponId);
+      pl.mech.triggerIntercept(item.cooldown);
     }
   },
 

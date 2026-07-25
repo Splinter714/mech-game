@@ -108,6 +108,11 @@ export class Mech {
     // #489: status effects (currently just Plasma's burn DoT) — runtime combat state like
     // ammo/reload above, never serialized. Starts empty; applied via applyStatusEffect below.
     this.statusEffects = [];
+
+    // #494: Anti-Missile Defense's cooldown, when it's the core-slot pick — runtime only, like
+    // the fields above. The actual target-finding needs the scene's live projectile list, so it
+    // can't live here (Mech stays pure/headless); this is just the cooldown gate.
+    this._interceptorCooldown = 0;
   }
 
   // Magazine capacity for an item id (null = unlimited or non-weapon).
@@ -301,6 +306,12 @@ export class Mech {
     this.statusEffects = effects;
     for (const t of ticks) this.applyDamage(t.location, t.tickDamage);
   }
+
+  // #494: Anti-Missile Defense — true only while it's the actual core-slot pick AND off cooldown.
+  // The scene calls this before bothering to look for a target at all.
+  canIntercept() { return this.coreMounts.core === 'antiMissile' && this._interceptorCooldown <= 0; }
+  tickInterceptorCooldown(dt) { this._interceptorCooldown = Math.max(0, this._interceptorCooldown - dt); }
+  triggerIntercept(cooldownSeconds) { this._interceptorCooldown = cooldownSeconds; }
 
   // #381: the temp pool's remaining wall-clock expiry, in ms — 0 when no pool is live. Since the
   // shield powerup now grants the pool with NO finite expiry (it persists until spent), this reads
