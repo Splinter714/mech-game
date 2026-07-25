@@ -16,9 +16,7 @@ import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
-import { MECH_DEPLOYED, RUN_CURRENCY_KEY, DEEP_MISSIONS_WON_KEY } from '../data/events.js';
-import { RECENCY_WINDOW, pickNextBiome } from '../data/biomes.js';
-import { unlockedBiomes } from '../data/missions.js';
+import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
@@ -40,8 +38,9 @@ import { StatsOverlay } from './garage/statsOverlay.js';
 // full width and this scene has no dev-vs-prod layout branch at all. A
 // small live mech preview sits bottom-right (#248: the chassis switch is disabled for now —
 // light/heavy are off, every mech is locked to medium; #454 dropped the leftover chassis-name
-// label, since there's only one chassis to show). "Deploy" (greyed
-// until every slot is filled) enters the arena.
+// label, since there's only one chassis to show). #509/#514: the primary button (greyed until
+// every slot is filled) no longer enters the arena directly — it returns to the base, where
+// MissionSelectScene is now the one place a run actually launches.
 const UI = {
   text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a',
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
@@ -753,7 +752,7 @@ export default class GarageScene extends Phaser.Scene {
 
   _legendText() {
     // #248: 'X/Y CHASSIS' dropped — the chassis switcher is disabled for now.
-    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   SELECT TABS   START DEPLOY';
+    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   SELECT TABS   START TO BASE';
   }
 
   _drawTile(rect) {
@@ -800,10 +799,12 @@ export default class GarageScene extends Phaser.Scene {
     this.tweens.add({ targets: this._toast, alpha: 0, delay: 1100, duration: 500, onComplete: () => this._toast?.destroy() });
   }
 
-  // Deploy is inert unless the build is valid (all slots filled, mounts legal) — the tab-bar
-  // Deploy button is greyed to match. Pressing Deploy on an invalid build no longer fails
-  // silently: it toasts what's wrong and focuses the first empty slot (filtering the catalog
-  // to what fits it) so the fix is one click away.
+  // #509/#514: this button no longer launches a run itself — it just finishes building and
+  // returns to the base, where MissionSelectScene (reached via the scanner hex) is now the one
+  // place a run actually launches. Still inert unless the build is valid (all slots filled,
+  // mounts legal) — the tab-bar button is greyed to match — so nobody wanders off with an
+  // unusable build; pressing it on an invalid build toasts what's wrong and focuses the first
+  // empty slot (filtering the catalog to what fits it) so the fix is one click away.
   deploy() {
     if (!this.mech.isComplete()) {
       const empty = MOUNT_LOCATIONS.filter((loc) => this.mech.usedSlots(loc) === 0);
@@ -819,7 +820,7 @@ export default class GarageScene extends Phaser.Scene {
     // #349/#388: in co-op, a non-last player pressing this button means "I'm done, next player's
     // turn" — the completeness check above already gates it, so a player cannot hand off a
     // half-built mech and then be unable to get back to it. Only the LAST joined player's press
-    // (garageAction === 'deploy') actually launches the run.
+    // (garageAction === 'deploy') actually finishes and returns to the base.
     if (garageAction(this.session) === 'handoff') {
       Audio.ui('equip');
       const next = this.session.editing + 2;   // 1-based number of the player taking over
@@ -827,46 +828,14 @@ export default class GarageScene extends Phaser.Scene {
       this.toast(`PLAYER ${next - 1} READY — PLAYER ${next}, BUILD YOUR MECH`, UI.accent);
       return;
     }
-    Audio.ui('deploy');   // #178: weightier rising anticipation whoosh — committing to the run
+    Audio.ui('equip');
     this.mech.repairAll();
     saveAllMechs(this.allMechs);
-    // Pick the battlefield biome per deployment (#67, reworked #217). The FIRST deploy of a
-    // session is uniformly random across every biome (no fixed grassland); every deploy after
-    // that weights AWAY from recently-seen biomes without ever making one impossible — the
-    // actual weighting/pick math is pure and unit-tested in data/biomes.js (`pickNextBiome`).
-    // `biomeHistory` is a short in-memory rolling log of the last few picks, purely used to
-    // compute those weights (reset every session, same as `deployCount`).
-    //
-    // Test hook (#217): `scripts/smoke.mjs` needs a DETERMINISTIC first biome (grassland) so its
-    // origin/DUMMY-hex terrain assumptions hold across runs. Rather than branching gameplay code
-    // on "are we in test mode," the smoke script can set `debugForceBiome` on the registry before
-    // calling deploy() to pin the very next pick; it's consumed once here and cleared, so it
-    // never affects any deploy after the one it was set for.
-    const n = this.registry.get('deployCount') || 0;
-    this.registry.set('deployCount', n + 1);
-    const forced = this.registry.get('debugForceBiome');
-    const history = this.registry.get('biomeHistory') || [];
-    // #514: restricted to whichever biomes are unlocked, so this button can't bypass the gate
-    // MissionSelectScene enforces. `forced` (the smoke test's debug hook) is a deliberate
-    // override and skips the pool entirely, same as it always has.
-    const deepMissionsWon = this.registry.get(DEEP_MISSIONS_WON_KEY) || 0;
-    const biome = forced || pickNextBiome(history, Math.random, unlockedBiomes(deepMissionsWon));
-    if (forced) this.registry.set('debugForceBiome', null);
-    this.registry.set('biomeHistory', [...history, biome].slice(-RECENCY_WINDOW));
-    this.registry.set('arenaBiome', biome);
-    // #64: a fresh deploy always starts a NEW run at stage 0 — clear any leftover run state
-    // (a prior run's `run` registry value would otherwise look "in progress" to
-    // ArenaScene._initRun, which continues an existing run rather than starting fresh).
-    this.registry.set('run', null);
-    // #514: this button never offers a deep-strike mission, so explicitly clear the flag — a
-    // stale `true` left over from a MissionSelectScene deep-mission deploy earlier in the
-    // session must not falsely credit a biome unlock for an ordinary Garage-launched run.
-    this.registry.set('deepMission', false);
-    // #349: which builds are taking the field. One key in solo (unchanged), both in co-op —
-    // this is the ONLY thing the arena needs in order to put a second, garage-built player on
-    // the field (scenes/arena/coop.js `_spawnGarageCoopPlayers`).
+    // #349: which builds are ready to take the field, published so MissionSelectScene's
+    // launchMission (base/launchMission.js) can pick it up whenever a run actually launches —
+    // this scene no longer sets `arenaBiome`/`run`/`deepMission`/MECH_DEPLOYED itself, since it
+    // no longer starts ArenaScene.
     this.registry.set('coopMechKeys', sessionMechKeys(this.session));
-    this.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
-    this.scene.start('ArenaScene');
+    this.scene.start('BaseScene');
   }
 }

@@ -78,7 +78,7 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
     expect(main).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?import\('\.\/scenes\/AudioScene\.js'\)/);
     // ...and NOT statically imported / listed in the always-on scene array.
     expect(main).not.toMatch(/^import AudioScene from/m);
-    expect(main).toMatch(/scene: \[BootScene, GarageScene, ArenaScene, HudScene\],/);
+    expect(main).toMatch(/scene: \[BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene\],/);
   });
 
   it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {

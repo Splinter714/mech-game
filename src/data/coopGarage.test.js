@@ -62,9 +62,9 @@ describe('solo (one joined player) is untouched', () => {
     expect(sessionMechKeys(solo)).toEqual(['mech1']);
   });
 
-  it('has a plain Deploy button with no handoff step', () => {
+  it('has a plain finish-building button with no handoff step', () => {
     expect(garageAction(solo)).toBe('deploy');
-    expect(garageActionLabel(solo)).toBe('▶ DEPLOY');
+    expect(garageActionLabel(solo)).toBe('▶ TO BASE');
   });
 
   it('shows no co-op status chrome', () => {
@@ -127,7 +127,7 @@ describe('control advances P1→…→last, and the last START deploys', () => {
     expect(sessionEditingKey(s)).toBe('mech2');
     expect(garageStatusText(s)).toBe('PLAYER 2 BUILDING');
     expect(garageAction(s)).toBe('deploy');
-    expect(garageActionLabel(s)).toBe('▶ DEPLOY');
+    expect(garageActionLabel(s)).toBe('▶ TO BASE');
     expect(sessionMechKeys(s)).toEqual(['mech1', 'mech2']);
   });
 

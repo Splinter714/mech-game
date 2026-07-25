@@ -154,14 +154,21 @@ try {
   }, { runCurrencyKey: RUN_CURRENCY_KEY, weaponIds: WEAPON_IDS });
   await page.screenshot({ path: '/tmp/mech-garage.png' });
 
-  // Deploy → arena. #217: biome selection is now randomized (uniform on the first deploy, then
-  // recency-weighted), so pin it to grassland via the `debugForceBiome` test hook — this smoke
-  // run's DUMMY_HEX/origin/river-terrain assumptions below were written against grassland-shaped
-  // ground and don't need to be re-verified against every biome on every run.
+  // #509/#510/#514: GarageScene's own button no longer launches a run — it just finishes
+  // building and returns to the base; MissionSelectScene (reached from the scanner hex) is now
+  // the only place a run actually starts, via select-a-card-then-Deploy. This smoke run's
+  // DUMMY_HEX/origin/river-terrain assumptions below were written against grassland-shaped
+  // ground, so select it directly (a synthetic offer, not a real rendered card — `_selectOffer`/
+  // `_deploy` only read its `biomeId`/`isDeep`) rather than depending on which random offers
+  // happened to render or gambling on biome-gating being past grassland.
+  await page.evaluate(() => window.__game.scene.getScene('GarageScene').deploy());
+  await page.waitForFunction(() => window.__game.scene.isActive('BaseScene'), { timeout: 20000 });
+  await page.evaluate(() => window.__game.scene.start('MissionSelectScene'));
+  await page.waitForFunction(() => window.__game.scene.isActive('MissionSelectScene'), { timeout: 20000 });
   await page.evaluate(() => {
-    const g = window.__game;
-    g.registry.set('debugForceBiome', 'grassland');
-    g.scene.getScene('GarageScene').deploy();
+    const sc = window.__game.scene.getScene('MissionSelectScene');
+    sc._selectOffer({ id: 'mission-grassland', biomeId: 'grassland', isDeep: false });
+    sc._deploy();
   });
   await page.waitForFunction(() => {
     const g = window.__game;
@@ -1693,6 +1700,14 @@ try {
   });
   if (!s249.allFullHealth) fail('#249 the garage mech was not repaired to full health immediately on returning from a run — it still read damaged before the next deploy');
   await page.evaluate(() => window.__game.scene.getScene('GarageScene').deploy());
+  await page.waitForFunction(() => window.__game.scene.isActive('BaseScene'), { timeout: 20000 });
+  await page.evaluate(() => window.__game.scene.start('MissionSelectScene'));
+  await page.waitForFunction(() => window.__game.scene.isActive('MissionSelectScene'), { timeout: 20000 });
+  await page.evaluate(() => {
+    const sc = window.__game.scene.getScene('MissionSelectScene');
+    sc._selectOffer({ id: 'mission-grassland', biomeId: 'grassland', isDeep: false });
+    sc._deploy();
+  });
   await page.waitForFunction(() => {
     const g = window.__game;
     return g.scene.isActive('ArenaScene') && g.scene.isActive('HudScene') && g.registry.get('dummyMech');

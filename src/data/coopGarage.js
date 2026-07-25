@@ -118,7 +118,9 @@ export function garageAction(session) {
 }
 
 export function garageActionLabel(session) {
-  if (garageAction(session) === 'deploy') return '▶ DEPLOY';
+  // #509/#514: the garage no longer launches a run itself — the last player's press just
+  // finishes building and returns to the base (deploying now happens from MissionSelectScene).
+  if (garageAction(session) === 'deploy') return '▶ TO BASE';
   const p = clampInt(session?.editing ?? 0, 0, MAX_GARAGE_PLAYERS - 1) + 1;
   return `▶ P${p} READY`;
 }

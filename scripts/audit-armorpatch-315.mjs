@@ -28,17 +28,22 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
-// Boot into the arena on a chosen biome, pinned via the same `debugForceBiome` hook smoke.mjs uses.
+// Boot into the arena on a chosen biome. #509/#510/#514: the game now boots into BaseScene, and
+// GarageScene's own button no longer launches a run — MissionSelectScene (select-a-card-then-
+// Deploy) is the only place a run starts, so this drives that flow directly with a synthetic
+// offer for the requested biome rather than depending on which random offers render.
 async function bootArena(biomeId) {
   await page.goto(URL, { waitUntil: 'load', timeout: 20000 });
   await page.waitForFunction(() => {
     const g = window.__game;
-    return !!(g && g.scene.isActive('GarageScene') && g.registry.get('allMechs'));
+    return !!(g && g.scene.isActive('BaseScene') && g.registry.get('allMechs'));
   }, { timeout: 20000 });
+  await page.evaluate(() => window.__game.scene.start('MissionSelectScene'));
+  await page.waitForFunction(() => window.__game.scene.isActive('MissionSelectScene'), { timeout: 20000 });
   await page.evaluate((b) => {
-    const g = window.__game;
-    g.registry.set('debugForceBiome', b);
-    g.scene.getScene('GarageScene').deploy();
+    const sc = window.__game.scene.getScene('MissionSelectScene');
+    sc._selectOffer({ id: `mission-${b}`, biomeId: b, isDeep: false });
+    sc._deploy();
   }, biomeId);
   await page.waitForFunction(() => {
     const a = window.__game.scene.getScene('ArenaScene');
