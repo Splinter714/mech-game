@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
-import { getItem, isWeapon } from '../data/items.js';
+import { getItem, isWeapon, isAbility, isCoreItem } from '../data/items.js';
 import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
 import { magazineReadout } from '../data/weaponStats.js';
 import { Audio } from '../audio/index.js';
@@ -193,7 +193,12 @@ export class WeaponCardList {
 
   _buildCard(item, id) {
     const weapon = isWeapon(id) ? item : null;
-    const color = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : 0x7bd17b;
+    const ability = !weapon && isAbility(id) ? item : null;
+    const coreItem = !weapon && !ability && isCoreItem(id) ? item : null;
+    // #506: abilities and core items are visually distinct kinds now (they used to be lumped
+    // together as "ability"), each with its own accent color — core items get the same gold the
+    // HUD/garage already use for "passive/always-on" state elsewhere.
+    const color = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : coreItem ? 0xefc14a : 0x7bd17b;
     const c = this.scene.add.container(0, 0);
 
     const panel = this.scene.add.rectangle(0, 0, 100, CARD_H, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
@@ -208,11 +213,11 @@ export class WeaponCardList {
       ? this.scene.add.image(0, 0, mountIconKey(id)).setOrigin(0.5, MOUNT_BASE_OY).setRotation(Math.PI / 2)
       : null;
     const name = this.scene.add.text(0, 14, item.name, { fontFamily: 'monospace', fontSize: '14px', color: UI.text });
-    const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : 'Ability';
+    const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : coreItem ? 'Core' : 'Ability';
     const cat = this.scene.add.text(0, 33, catLabel, {
       fontFamily: 'monospace', fontSize: '11px', color: Phaser.Display.Color.IntegerToColor(color).rgba,
     });
-    const stats = this.scene.add.text(0, 50, this._statLines(item, weapon), {
+    const stats = this.scene.add.text(0, 50, this._statLines(item, weapon, coreItem), {
       fontFamily: 'monospace', fontSize: '10px', color: UI.dim, lineSpacing: 2,
     });
     const fxG = this.scene.add.graphics();
@@ -278,10 +283,18 @@ export class WeaponCardList {
       .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : on ? UI.sel : UI.panelEdge);
   }
 
-  _statLines(item, weapon) {
+  _statLines(item, weapon, coreItem) {
+    if (coreItem) {
+      // Core items are passive/always-on (data/coreItems.js) — no cooldown/duration shape at
+      // all, so they need their own reader rather than the ability one's cooldown/duration
+      // fields (which core items don't have and would silently render blank).
+      if (item.max != null) return ['passive', `${item.max} shield HP`].join('\n');
+      if (item.range != null) return ['passive', `${item.range}px range · ${item.cooldown}s cooldown`].join('\n');
+      return 'passive';
+    }
     if (!weapon) {
       const cd = item.cooldown != null ? `${item.cooldown}s cooldown` : '';
-      const extra = item.duration ? `${item.duration}s active` : item.impulse ? 'mobility burst' : '';
+      const extra = item.duration ? `${item.duration}s active` : item.speedMult ? 'mobility burst' : '';
       return ['ability', [cd, extra].filter(Boolean).join(' · ')].join('\n');
     }
     const d = weapon.delivery;

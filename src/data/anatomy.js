@@ -80,6 +80,16 @@ export const CORE_SLOTS = ['core'];
 // mountable item, so WEAPON_SLOTS and MOUNT_LOCATIONS are now the same four locations.
 export const WEAPON_SLOTS = ['leftArm', 'rightArm', 'leftTorso', 'rightTorso'];
 
+// Which of the three mountable-slot families does `loc` belong to? Shared by the HUD and the
+// Garage instead of each reimplementing the same three-way branch (#506 HUD diamond / Garage
+// mounting UI). Returns null for anything that isn't a mountable slot at all.
+export function slotKind(loc) {
+  if (WEAPON_SLOTS.includes(loc)) return 'weapon';
+  if (ABILITY_SLOTS.includes(loc)) return 'ability';
+  if (CORE_SLOTS.includes(loc)) return 'core';
+  return null;
+}
+
 // Destroying one of these single locations is an instant kill. Empty since #128 retired
 // the head/cockpit/centerTorso one-hit-kill rule in favor of LETHAL_GROUPS below; kept as
 // a mechanism in case a future single-location instant-kill part is ever added.

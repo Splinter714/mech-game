@@ -10,6 +10,8 @@
 import { gen, ART_SCALE } from './_frames.js';
 import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
+import { ABILITIES } from '../data/abilities.js';
+import { CORE_ITEMS } from '../data/coreItems.js';
 import { projectileKind } from '../data/delivery.js';
 import { drawProjectileBody } from './projectiles/index.js';
 
@@ -239,13 +241,38 @@ function drawWeaponIcon(g, weapon, S, c) {
   }
 }
 
-// Build a `wfx_<id>` texture for every weapon, from the shared art above. #188: this used to
-// also build one per equipment/ability id (jumpJet/bubbleShield) — equipment.js is gone
-// (Sprint is a hardcoded built-in with its own HUD fuel-bar treatment, not a catalog icon).
+// #506: a flat colored swatch — a rounded square, no per-item glyph — standing in for real
+// icon art on the ability/core tiles until that gets its own art pass. Distinct colors per
+// kind (not per item) so a diamond/core tile at a glance still reads as "ability" vs "core"
+// even before its name label loads in.
+function drawSwatchIcon(g, S, c, color) {
+  const size = ICON * 0.6 * S;
+  const r = 4 * S;
+  g.fillStyle(color, 0.85);
+  g.fillRoundedRect(c - size / 2, c - size / 2, size, size, r);
+  g.lineStyle(1.5 * S, 0xffffff, 0.25);
+  g.strokeRoundedRect(c - size / 2, c - size / 2, size, size, r);
+}
+
+const ABILITY_SWATCH_COLOR = 0x5ec8e0;   // shared UI accent — matches the ability-diamond tiles
+const CORE_SWATCH_COLOR = 0xefc14a;      // shared "passive/always-on" gold used elsewhere
+
+// Build a `wfx_<id>` texture for every weapon, from the shared art above, plus a flat swatch
+// placeholder for every ability/core id (#506 — the ability diamond/Garage mounting UI needs
+// SOME texture to resolve via itemFxKey, real hand-drawn icons are a separate follow-up pass).
+// #188: this used to also build one per equipment/ability id (jumpJet/bubbleShield) —
+// equipment.js is gone (Sprint is a hardcoded built-in with its own HUD fuel-bar treatment, not
+// a catalog icon) — #506 brings mountable non-weapon items back, hence swatches returning here.
 export function buildItemFxTextures(scene) {
   const S = ART_SCALE;
   const c = (ICON / 2) * S;
   for (const id of WEAPON_IDS) {
     gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawWeaponIcon(g, WEAPONS[id], S, c));
+  }
+  for (const id of Object.keys(ABILITIES)) {
+    gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawSwatchIcon(g, S, c, ABILITY_SWATCH_COLOR));
+  }
+  for (const id of Object.keys(CORE_ITEMS)) {
+    gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawSwatchIcon(g, S, c, CORE_SWATCH_COLOR));
   }
 }

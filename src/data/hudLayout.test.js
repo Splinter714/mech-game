@@ -429,11 +429,12 @@ describe('hudPlayerSnapshot — what each player publishes to the HUD', () => {
     expect(s.respawn).toBe(null);
   });
 
-  // #450/#506: the dash cooldown readout was removed from the HUD, so the snapshot doesn't
-  // carry any ability state either — the mechanic itself is untouched (data/abilityState.js).
-  it('publishes no ability state', () => {
-    expect(hudPlayerSnapshot({ ...player, abilityStates: { abilityY: { active: true, cooldown: 2.5 } } }).abilityStates)
-      .toBeUndefined();
+  // #450 removed the old dash-only cooldown readout; the #506 ability diamond brings a general
+  // one back, keyed by slot rather than hardcoded to dash — so the snapshot DOES carry ability
+  // state again, verbatim from the player (this module never clones it).
+  it('publishes abilityStates verbatim, for the HUD ability diamond', () => {
+    const states = { abilityY: { active: true, burstRemaining: 0.1, cooldown: 2.5 } };
+    expect(hudPlayerSnapshot({ ...player, abilityStates: states }).abilityStates).toBe(states);
   });
 });
 

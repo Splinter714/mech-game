@@ -10,6 +10,7 @@
 import { itemFxKey } from '../art/index.js';
 import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
+import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
 // centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
@@ -71,6 +72,24 @@ export function tileRow(x, w, { y, bottom, n = TILE_ORDER.length, gap = 12, maxS
   return TILE_ORDER.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
 }
 
+// #506: the four ABILITY_SLOTS arranged in a diamond around (cx, cy), using
+// ABILITY_SLOT_LAYOUT's unit dx/dy offsets (Y top, B right, A bottom, X left) — the ability-slot
+// counterpart to `tileRow`'s linear layout. Same `{loc, x, y, w, h}` shape as `tileRow`'s rows.
+export function diamondLayout(cx, cy, { size = 46, radius } = {}) {
+  radius = radius ?? size * 1.15;
+  return ABILITY_SLOTS.map((loc) => {
+    const { dx, dy } = ABILITY_SLOT_LAYOUT[loc];
+    return { loc, x: Math.round(cx + dx * radius - size / 2), y: Math.round(cy + dy * radius - size / 2), w: size, h: size };
+  });
+}
+
+// #496: the single core-slot tile, nested in the diamond's own hollow centre — smaller than the
+// ring tiles so it doesn't crowd them. Callers own the size/radius/coreSize choices that keep it
+// clear of `diamondLayout`'s ring (coreSize/2 + size/2 < radius).
+export function coreTileRect(cx, cy, size = 30) {
+  return { loc: 'core', x: Math.round(cx - size / 2), y: Math.round(cy - size / 2), w: size, h: size };
+}
+
 // Build one tile's display objects into `parent` (a Container) and apply `opts`. Returns
 // refs for in-place updates. `opts`: { itemId, mode, selected, subtitle, subtitleColor,
 // iconAlpha, ammoFrac, emptyLabel }.
@@ -109,13 +128,23 @@ export function drawSkillTile(scene, parent, rect, opts) {
 }
 
 // Apply dynamic state to a tile built by drawSkillTile.
+// #506: `bindGlyph` (the control-bind label text) and `emptyLabel` (the empty-slot subtitle) are
+// now caller-supplied rather than derived from `SKILL_BINDS[loc]`/hardcoded 'weapon' — the SAME
+// tile-paint code now serves weapon tiles, ability tiles, and the core tile, each with their own
+// bind source (SKILL_BINDS vs. ABILITY_BINDS vs. none) and empty-state copy. Omitting them
+// reproduces the old weapon-tile defaults exactly, so no existing behavior changes.
 export function updateSkillTile(refs, opts) {
   const { rect, plate, bind, icon, plus, subtitle, barTrack, bar } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
-    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0 } = opts;
+    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0,
+    // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
+    // location — an ability/core `loc` (not in SKILL_BINDS) degrades to an empty glyph instead
+    // of throwing, so a caller that forgets to pass `bindGlyph` explicitly fails safe, not loud.
+    bindGlyph = SKILL_BINDS[loc] ? (mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key) : '',
+    emptyLabel = 'weapon' } = opts;
 
   paintTilePlate(plate, rect, { selected });
-  bind.setText(mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key).setColor(selected ? '#efc14a' : TILE_UI.accent);
+  bind.setText(bindGlyph).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
   if (itemId) {
     icon.setTexture(itemFxKey(itemId)).setDisplaySize(rect.w * 0.46, rect.w * 0.46).setAlpha(iconAlpha).setVisible(true);
@@ -140,6 +169,6 @@ export function updateSkillTile(refs, opts) {
     icon.setVisible(false);
     barTrack.setVisible(false); bar.setVisible(false);
     plus.setVisible(true);
-    subtitle.setText('weapon').setColor(TILE_UI.dim);
+    subtitle.setText(emptyLabel).setColor(TILE_UI.dim);
   }
 }

@@ -479,6 +479,10 @@ export function hudPlayerSnapshot(p) {
     color: p.color,
     mech: p.mech,
     dead: !!p.dead,
+    // #506 HUD diamond: the live per-slot ability state (active/cooldown), so the HUD can show
+    // real cooldown fill without reaching into scene internals. Shallow ref — read-only
+    // downstream, ticked every frame by scenes/arena/abilities.js, so no clone needed.
+    abilityStates: p.abilityStates,
     // #368: each player's own off-screen lock chevron rides this same channel rather than a
     // second parallel one — the count-change rebuild in HudScene then covers the chevrons too.
     lock: lockPointOf(p),
