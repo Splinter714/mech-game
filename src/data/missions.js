@@ -6,24 +6,38 @@
 // unit-tested, like every other src/data/* module.
 import { BIOME_IDS, getBiome } from './biomes.js';
 
-export const MISSION_OFFER_COUNT = 3;
+// #514 TEMPORARY: every biome available from the start, while development wants to see them
+// all rather than earning them one deep-mission win at a time — mirrors shop.js's UNLOCK_ALL
+// for weapons. The gate mechanism underneath (unlockedBiomes/isFrontierBiome) is untouched and
+// still fully wired; this only widens what it hands back. TO REVERT: flip to `false`.
+export const UNLOCK_ALL_BIOMES = true;
+
+// Offer every unlocked biome at once (was 3) — also mostly a development convenience: with the
+// gate open above there'd otherwise still only be a random 3-of-5 shown per visit. Harmless to
+// leave as-is once the gate closes again; it just clamps back down to however many are unlocked.
+export const MISSION_OFFER_COUNT = 8;
 
 // #514: biomes unlock in BIOME_IDS declaration order (grassland, desert, arctic, urban,
 // volcanic) — the first is always available; each later one unlocks once the PREVIOUS biome's
 // "deep mission" has been won. How many biomes ought to gate this way, and what a deep mission
 // composes beyond "the harder run for this biome," are still open — this is deliberately the
-// simplest possible gate (a count), not a real unlock graph.
+// simplest possible gate (a count), not a real unlock graph. Exported (unlike `unlockedBiomes`
+// below) so the real gate math stays independently testable while UNLOCK_ALL_BIOMES is on.
+export function gatedBiomeCount(deepMissionsWon) {
+  return Math.max(1, Math.min(BIOME_IDS.length, deepMissionsWon + 1));
+}
+
 export function unlockedBiomes(deepMissionsWon = 0) {
-  const n = Math.max(1, Math.min(BIOME_IDS.length, deepMissionsWon + 1));
+  const n = UNLOCK_ALL_BIOMES ? BIOME_IDS.length : gatedBiomeCount(deepMissionsWon);
   return BIOME_IDS.slice(0, n);
 }
 
 // The current FRONTIER biome — the next one to unlock, whose deep mission hasn't been won yet.
 // Only the frontier ever offers a deep mission; every biome already unlocked behind it only
 // offers ordinary explore runs. Every biome is unlocked once deepMissionsWon reaches the end of
-// BIOME_IDS, so there is no frontier left to gate.
+// BIOME_IDS (or UNLOCK_ALL_BIOMES is on), so there is no frontier left to gate.
 export function isFrontierBiome(biomeId, deepMissionsWon = 0) {
-  if (deepMissionsWon >= BIOME_IDS.length - 1) return false;
+  if (UNLOCK_ALL_BIOMES || deepMissionsWon >= BIOME_IDS.length - 1) return false;
   const unlocked = unlockedBiomes(deepMissionsWon);
   return biomeId === unlocked[unlocked.length - 1];
 }

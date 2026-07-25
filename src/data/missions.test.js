@@ -1,20 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import { BIOME_IDS, getBiome } from './biomes.js';
-import { offerMissions, unlockedBiomes, isFrontierBiome, MISSION_OFFER_COUNT } from './missions.js';
+import {
+  offerMissions, unlockedBiomes, isFrontierBiome, gatedBiomeCount, UNLOCK_ALL_BIOMES,
+  MISSION_OFFER_COUNT,
+} from './missions.js';
 
-const ALL_UNLOCKED = BIOME_IDS.length - 1;   // deepMissionsWon needed to unlock every biome
-
-describe('#510 offerMissions (all biomes unlocked)', () => {
+describe('#510 offerMissions', () => {
   it('offers MISSION_OFFER_COUNT distinct, real biome ids by default', () => {
-    const offers = offerMissions(() => 0.5, MISSION_OFFER_COUNT, ALL_UNLOCKED);
-    expect(offers).toHaveLength(MISSION_OFFER_COUNT);
+    const offers = offerMissions(() => 0.5);
+    expect(offers).toHaveLength(Math.min(MISSION_OFFER_COUNT, BIOME_IDS.length));
     const biomeIds = offers.map((o) => o.biomeId);
     expect(new Set(biomeIds).size).toBe(biomeIds.length);   // no duplicates
     for (const id of biomeIds) expect(BIOME_IDS).toContain(id);
   });
 
   it('each offer carries a stable id and the biome\'s display name', () => {
-    const offers = offerMissions(() => 0, MISSION_OFFER_COUNT, ALL_UNLOCKED);
+    const offers = offerMissions(() => 0);
     for (const o of offers) {
       expect(o.id).toBe(`mission-${o.biomeId}`);
       expect(o.label).toBe(getBiome(o.biomeId).name);
@@ -27,57 +28,44 @@ describe('#510 offerMissions (all biomes unlocked)', () => {
     const rng = () => seq[i++ % seq.length];
     let j = 0;
     const rng2 = () => seq[j++ % seq.length];
-    expect(offerMissions(rng, MISSION_OFFER_COUNT, ALL_UNLOCKED)).toEqual(offerMissions(rng2, MISSION_OFFER_COUNT, ALL_UNLOCKED));
+    expect(offerMissions(rng)).toEqual(offerMissions(rng2));
   });
 
-  it('clamps count to the number of available biomes', () => {
-    const offers = offerMissions(() => 0.5, BIOME_IDS.length + 10, ALL_UNLOCKED);
-    expect(offers).toHaveLength(BIOME_IDS.length);
-  });
-
-  it('once every biome is unlocked, no offer is flagged deep', () => {
-    const offers = offerMissions(() => 0.5, MISSION_OFFER_COUNT, ALL_UNLOCKED);
-    expect(offers.every((o) => !o.isDeep)).toBe(true);
+  it('clamps count to the number of unlocked biomes', () => {
+    const offers = offerMissions(() => 0.5, BIOME_IDS.length + 10);
+    expect(offers).toHaveLength(unlockedBiomes().length);
   });
 });
 
-describe('#514 biome gating', () => {
-  it('unlockedBiomes: only the first biome is available with no deep missions won', () => {
-    expect(unlockedBiomes(0)).toEqual([BIOME_IDS[0]]);
+// #514 TEMPORARY: every biome is unlocked from the start (UNLOCK_ALL_BIOMES) while development
+// wants to see them all — these tests document THAT current behavior so flipping the flag back
+// off is an obvious, visible break here, not a silent drift. The real gate math underneath is
+// tested separately below via `gatedBiomeCount`, independent of the override.
+describe('#514 UNLOCK_ALL_BIOMES override (temporary, mirrors shop.js UNLOCK_ALL)', () => {
+  it('is currently on', () => {
+    expect(UNLOCK_ALL_BIOMES).toBe(true);
   });
 
-  it('unlockedBiomes: each deep-mission win unlocks exactly one more biome, in order', () => {
-    for (let n = 0; n < BIOME_IDS.length; n++) {
-      expect(unlockedBiomes(n)).toEqual(BIOME_IDS.slice(0, n + 1));
-    }
-  });
-
-  it('unlockedBiomes: never exceeds every biome, however high the count', () => {
+  it('unlockedBiomes ignores deepMissionsWon entirely while the override is on', () => {
+    expect(unlockedBiomes(0)).toEqual(BIOME_IDS);
     expect(unlockedBiomes(999)).toEqual(BIOME_IDS);
   });
 
-  it('isFrontierBiome: the last unlocked biome is the frontier, everything else is not', () => {
-    expect(isFrontierBiome(BIOME_IDS[0], 0)).toBe(true);
-    expect(isFrontierBiome(BIOME_IDS[1], 1)).toBe(true);
-    expect(isFrontierBiome(BIOME_IDS[0], 1)).toBe(false);   // already cleared, behind the frontier
+  it('isFrontierBiome never flags anything while the override is on', () => {
+    for (const id of BIOME_IDS) expect(isFrontierBiome(id, 0)).toBe(false);
+  });
+});
+
+describe('#514 gatedBiomeCount — the real gate math, independent of UNLOCK_ALL_BIOMES', () => {
+  it('only the first biome is available with no deep missions won', () => {
+    expect(gatedBiomeCount(0)).toBe(1);
   });
 
-  it('isFrontierBiome: nothing is the frontier once every biome is unlocked', () => {
-    for (const id of BIOME_IDS) expect(isFrontierBiome(id, ALL_UNLOCKED)).toBe(false);
+  it('each deep-mission win unlocks exactly one more biome, in order', () => {
+    for (let n = 0; n < BIOME_IDS.length; n++) expect(gatedBiomeCount(n)).toBe(n + 1);
   });
 
-  it('offerMissions only ever offers unlocked biomes', () => {
-    const offers = offerMissions(() => 0.5, MISSION_OFFER_COUNT, 0);
-    expect(offers).toHaveLength(1);
-    expect(offers[0].biomeId).toBe(BIOME_IDS[0]);
-  });
-
-  it('the frontier biome\'s offer is flagged isDeep; nothing else is', () => {
-    const offers = offerMissions(() => 0.5, MISSION_OFFER_COUNT, 1);   // 2 biomes unlocked
-    expect(offers).toHaveLength(2);
-    const frontier = offers.find((o) => o.biomeId === BIOME_IDS[1]);
-    const cleared = offers.find((o) => o.biomeId === BIOME_IDS[0]);
-    expect(frontier.isDeep).toBe(true);
-    expect(cleared.isDeep).toBe(false);
+  it('never exceeds every biome, however high the count', () => {
+    expect(gatedBiomeCount(999)).toBe(BIOME_IDS.length);
   });
 });
