@@ -179,8 +179,13 @@ describe('lifecycle seams', () => {
 // regen/tick math is Mech's own (Mech.test.js / shield.test.js) — what's under test is the RULE:
 // ammo always, shield only while alive.
 function resourceMech() {
-  const calls = { regenAmmo: 0, tickShield: 0 };
-  return { calls, regenAmmo() { calls.regenAmmo++; }, tickShield() { calls.tickShield++; } };
+  const calls = { regenAmmo: 0, tickShield: 0, tickStatusEffects: 0 };
+  return {
+    calls,
+    regenAmmo() { calls.regenAmmo++; },
+    tickShield() { calls.tickShield++; },
+    tickStatusEffects() { calls.tickStatusEffects++; },   // #489: rides the same alive-only freeze as tickShield
+  };
 }
 
 describe('tickPlayerResources — ammo always regens, shield freezes while dead', () => {
@@ -190,9 +195,10 @@ describe('tickPlayerResources — ammo always regens, shield freezes while dead'
     tickPlayerResources(scene, 0.5);
     expect(mech.calls.regenAmmo).toBe(1);
     expect(mech.calls.tickShield).toBe(1);
+    expect(mech.calls.tickStatusEffects).toBe(1);
   });
 
-  it('a dead player still regens ammo but the shield tick is skipped entirely', () => {
+  it('a dead player still regens ammo but the shield and status-effect ticks are skipped entirely', () => {
     const mech = resourceMech();
     const p = makePlayer({ id: 0, mech, x: 0, y: 0 });
     p.dead = true;
@@ -200,6 +206,7 @@ describe('tickPlayerResources — ammo always regens, shield freezes while dead'
     tickPlayerResources(scene, 0.5);
     expect(mech.calls.regenAmmo).toBe(1);
     expect(mech.calls.tickShield).toBe(0);
+    expect(mech.calls.tickStatusEffects).toBe(0);
   });
 
   it('freezes across several ticks, not just the first frame after death', () => {

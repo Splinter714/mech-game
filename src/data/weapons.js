@@ -56,6 +56,10 @@
 //             the same tick cadence as travelAoe (data/force.js `computeImpulse`). tickMs
 //             defaults to 250; `strength` is px/s of displacement at the very center, falling
 //             off linearly to 0 at the edge of `radius`.
+//   dot       { kind?, duration, tickDamage, tickInterval? } — #489: ON HIT, applies/refreshes a
+//             status effect (data/statusEffects.js) at the location the hit resolved to —
+//             periodic damage that outlasts the shot itself. Mech-kind targets only (no
+//             HpBody/vehicle-kind support yet). `kind` defaults to 'plasmaBurn'.
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
@@ -299,6 +303,22 @@ export const WEAPONS = {
     // #135 — applied per explicit instruction, but flagged as worth a follow-up
     // conversation about whether flamethrower should have been an exception.
     delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
+  }),
+  plasmaCoater: w({   // #489: heavier single-shot bolt that COATS the enemy — most of its damage
+    // is the burn, not the hit. Deliberately NOT a stream/burst weapon (unlike plasmaLance) — a
+    // repeat hit only REFRESHES the burn (owner decision, no stacking), so a rapid-fire cadence
+    // would make the DoT nearly pointless to land twice; this fires slowly enough that landing a
+    // second hit to refresh the burn before it expires is a real, deliberate choice.
+    // Direct-hit DPS = damage / cycleTime(s): 14/1.4 = 10.0 dps — low on purpose. The burn adds
+    // 5 dps for 4s per landed hit (up to 20 bonus damage), refreshed rather than stacked on a
+    // second hit within that window.
+    id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
+    damage: 14, range: { min: 0, opt: 380, max: 560 },
+    ammoMax: 4, slots: 2, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
+    delivery: {
+      hit: 'projectile', path: 'straight', velocity: 460, kind: 'plasma',
+      dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
+    },
   }),
 
   // ── BALLISTIC ── solid rounds, burn ammo. A single heavy shell, a bullet stream, a

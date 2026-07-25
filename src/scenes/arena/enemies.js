@@ -1446,6 +1446,9 @@ export const EnemiesMixin = {
     // #246: mech-kind enemies with no `shield` config in data/enemies.js are a no-op tick
     // (shield.max stays 0) — same as the vehicle path above.
     e.mech.tickShield(dt);
+    // #489: status effects (Plasma's burn DoT) — mech-kind enemies only, since it's a Mech
+    // method; vehicle-kind enemies (HpBody, `_updateVehicle` below) are out of scope for now.
+    e.mech.tickStatusEffects(dt);
 
     // #398 fourth pass: the stompy stepped gait (see ENEMY_STEP_BOB_FRAC above) — an enemy mech
     // used to render on hull frame 0 forever and glide, which is most of the "floaty" read. Now it

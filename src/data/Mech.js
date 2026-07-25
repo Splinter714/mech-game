@@ -10,6 +10,7 @@ import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import { isAbility } from './abilities.js';
 import { isCoreItem } from './coreItems.js';
+import { applyStatusEffect as applyEffect, tickStatusEffects as tickEffects } from './statusEffects.js';
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
@@ -103,6 +104,10 @@ export class Mech {
     // the PLAYER a real baseline (see ArenaScene's deploy path) and the Shield powerup
     // (data/powerups.js) instantly fills + temporarily boosts whatever's configured here.
     this.shield = createShield(data.shield);
+
+    // #489: status effects (currently just Plasma's burn DoT) — runtime combat state like
+    // ammo/reload above, never serialized. Starts empty; applied via applyStatusEffect below.
+    this.statusEffects = [];
   }
 
   // Magazine capacity for an item id (null = unlimited or non-weapon).
@@ -280,6 +285,21 @@ export class Mech {
   // Called once per frame alongside regenAmmo (dt in seconds, same convention).
   tickShield(dt) {
     tickShieldState(this.shield, dt);
+  }
+
+  // #489: apply (or refresh — see data/statusEffects.js) a status effect at a specific location.
+  applyStatusEffect(kind, opts) {
+    this.statusEffects = applyEffect(this.statusEffects, kind, opts);
+  }
+
+  // Passive per-frame upkeep for status effects, alongside tickShield/regenAmmo above — advances
+  // every live effect and applies any tick(s) that fired THIS call through the normal damage
+  // pipeline (applyDamage), so a DoT tick is just another instant-hit event, no new layer in the
+  // shield→armor→hp order.
+  tickStatusEffects(dt) {
+    const { effects, ticks } = tickEffects(this.statusEffects, dt);
+    this.statusEffects = effects;
+    for (const t of ticks) this.applyDamage(t.location, t.tickDamage);
   }
 
   // #381: the temp pool's remaining wall-clock expiry, in ms — 0 when no pool is live. Since the

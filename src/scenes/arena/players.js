@@ -170,6 +170,9 @@ export function tickPlayerResources(scene, dt) {
     p.mech.regenAmmo(dt);
     if (p.dead) continue;
     p.mech.tickShield(dt);
+    // #489: status effects (currently just Plasma's burn DoT) tick alongside shield regen, same
+    // dead-player freeze — a downed player shouldn't keep burning through their respawn wait.
+    p.mech.tickStatusEffects(dt);
   }
 }
 

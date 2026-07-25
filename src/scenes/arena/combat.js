@@ -324,6 +324,10 @@ export const CombatMixin = {
     // for why that redirect matters — otherwise the hit silently wastes into a dead part).
     const best = resolveHitLocation(lay, locs, lx, ly, dispUnit, (loc) => e.mech.isPartDestroyed(loc));
     const res = e.mech.applyDamage(best, damage);
+    // #489: a hit carrying `meta.dot` (Plasma's coating) also applies/refreshes a status effect
+    // at the SAME location the direct hit just resolved. Mech-kind enemies only — `e.mech` is an
+    // HpBody for vehicle kinds, which has no applyStatusEffect (out of scope for now, see enemies.js).
+    if (meta.dot && isMech) e.mech.applyStatusEffect(meta.dot.kind ?? 'plasmaBurn', { ...meta.dot, location: best });
     // #71: same as the player path — rebuild the enemy's textures only when a part just broke,
     // not on every single hit. #472: an armor break no longer changes an enemy's art (the enemy
     // armor visual is gone — it reads off the HUD's locked-enemy disc), so it no longer triggers

@@ -540,6 +540,9 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // as travelAoe above but nudging position instead of dealing damage. See
     // scenes/arena/projectiles.js `_tickTravelForce`.
     force: d.force || null,
+    // #489: an optional status effect (Plasma's burn) applied ON HIT, at the same location the
+    // direct-hit damage resolves to. See scenes/arena/combat.js `_damageEnemyAt`.
+    dot: d.dot || null,
     // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.

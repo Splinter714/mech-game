@@ -751,3 +751,31 @@ describe('Mech full-mech shield (#246)', () => {
     expect(m.hasShield()).toBe(true);
   });
 });
+
+describe('Mech status effects (#489 — Plasma\'s burn DoT)', () => {
+  it('applyStatusEffect + tickStatusEffects deals real damage through applyDamage', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const before = m.parts.leftArm.armor + m.parts.leftArm.hp;
+    m.applyStatusEffect('plasmaBurn', { duration: 3, tickDamage: 5, tickInterval: 1, location: 'leftArm' });
+    m.tickStatusEffects(1);   // one full interval — a tick fires
+    expect(m.parts.leftArm.armor + m.parts.leftArm.hp).toBeLessThan(before);
+  });
+
+  it('re-applying the same kind refreshes rather than stacking a second timer', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyStatusEffect('plasmaBurn', { duration: 3, tickDamage: 5, tickInterval: 1, location: 'leftArm' });
+    m.applyStatusEffect('plasmaBurn', { duration: 3, tickDamage: 5, tickInterval: 1, location: 'rightArm' });
+    expect(m.statusEffects).toHaveLength(1);
+    expect(m.statusEffects[0].location).toBe('rightArm');
+  });
+
+  it('an expired effect stops ticking and is dropped', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    m.applyStatusEffect('plasmaBurn', { duration: 1, tickDamage: 5, tickInterval: 1, location: 'leftArm' });
+    m.tickStatusEffects(1.5);   // fires once, then expires
+    const totalAfterOneTick = m.parts.leftArm.armor + m.parts.leftArm.hp;
+    m.tickStatusEffects(1);     // nothing left to tick
+    expect(m.parts.leftArm.armor + m.parts.leftArm.hp).toBe(totalAfterOneTick);
+    expect(m.statusEffects).toEqual([]);
+  });
+});
