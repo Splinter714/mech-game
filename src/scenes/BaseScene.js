@@ -10,14 +10,13 @@ import { LocomotionMixin } from './arena/locomotion.js';
 import { BaseWorldMixin } from './base/world.js';
 import { BaseLocomotionMixin } from './base/locomotion.js';
 import { BASE_TRIGGERS } from './base/layout.js';
-import { quickDeploy } from './base/quickDeploy.js';
 
-// #509 Stage 1: the central base — a small, physical hex space the player walks their mech
+// #509/#510: the central base — a small, physical hex space the player walks their mech
 // around, replacing GarageScene as the game's entry point. Different hexes trigger different
-// actions (see base/layout.js): the customization hex opens GarageScene, the scanner hex is a
-// placeholder deploy straight into ArenaScene until #510 (Stage 2) adds a real mission-select
-// surface. Deliberately minimal — this proves the walk-around-and-trigger-a-hex mechanism
-// works; it is not the full base experience (#511/#512/#513/#514 build outward from here).
+// actions (see base/layout.js): the customization hex opens GarageScene, the scanner hex opens
+// MissionSelectScene. Deliberately minimal — this proves the walk-around-and-trigger-a-hex
+// mechanism works; it is not the full base experience (#511/#512/#513/#514 build outward from
+// here).
 //
 // Movement reuses the arena's `_blockedAlongSegment`-swept collision approach via
 // base/world.js and a TRIMMED copy of its drive/gait (base/locomotion.js) — but the mech
@@ -82,7 +81,7 @@ export default class BaseScene extends Phaser.Scene {
     this._lastTriggerHex = key;
     const action = BASE_TRIGGERS.get(key);
     if (action === 'customization') this.scene.start('GarageScene');
-    else if (action === 'scanner') quickDeploy(this);
+    else if (action === 'scanner') this.scene.start('MissionSelectScene');
   }
 }
 

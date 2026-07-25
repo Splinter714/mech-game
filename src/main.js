@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import BootScene from './scenes/BootScene.js';
 import BaseScene from './scenes/BaseScene.js';
 import GarageScene from './scenes/GarageScene.js';
+import MissionSelectScene from './scenes/MissionSelectScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
 
@@ -57,7 +58,7 @@ const config = {
     height: window.innerHeight * getDpr(),
   },
   input: { gamepad: true },
-  scene: [BootScene, BaseScene, GarageScene, ArenaScene, HudScene],
+  scene: [BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene],
 };
 
 const game = new Phaser.Game(config);

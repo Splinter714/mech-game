@@ -20,7 +20,7 @@ import { buildBaseTerrain, CUSTOMIZATION_HEX, SCANNER_HEX } from './layout.js';
 // distinguishing them from ordinary ground, and a player has no way to tell where to walk.
 const TRIGGER_MARKERS = [
   { hex: CUSTOMIZATION_HEX, label: 'GARAGE', color: 0x5ec8e0 },
-  { hex: SCANNER_HEX, label: 'DEPLOY', color: 0xefc14a },
+  { hex: SCANNER_HEX, label: 'MISSIONS', color: 0xefc14a },
 ];
 
 // Maps a `neighbors(q,r)` direction index to the `hexCorners()` edge index that geometrically
