@@ -34,11 +34,16 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 try {
   await page.goto(URL, { waitUntil: 'load', timeout: 20000 });
 
-  // Garage boots with the saved roster.
+  // #509: the game now boots into BaseScene (the walkable central base), not GarageScene
+  // directly — jump straight to GarageScene the same way the rest of this script already
+  // drives scenes directly (`.deploy()` etc.) rather than simulating the walk-to-hex UI, since
+  // this smoke test's job is the garage/arena mechanics, not the base's own locomotion.
   await page.waitForFunction(() => {
     const g = window.__game;
-    return !!(g && g.scene.isActive('GarageScene') && g.registry.get('allMechs'));
+    return !!(g && g.scene.isActive('BaseScene') && g.registry.get('allMechs'));
   }, { timeout: 20000 });
+  await page.evaluate(() => window.__game.scene.start('GarageScene'));
+  await page.waitForFunction(() => window.__game.scene.isActive('GarageScene'), { timeout: 20000 });
 
   const garage = await page.evaluate(({ runCurrencyKey, weaponIds }) => {
     const g = window.__game;

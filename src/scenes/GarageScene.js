@@ -180,6 +180,9 @@ export default class GarageScene extends Phaser.Scene {
     this.refresh();
 
     this.input.keyboard.on('keydown-D', () => this.deploy());
+    // #509: BaseScene is now the game's hub — Garage is reached by walking onto its
+    // customization hex and returns there, rather than being the root scene itself.
+    this.input.keyboard.on('keydown-B', () => this.scene.start('BaseScene'));
     // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
     // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
     this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));

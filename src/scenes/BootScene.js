@@ -45,6 +45,8 @@ export default class BootScene extends Phaser.Scene {
     startGamepadAudioUnlock();
     // #121: the standalone Weapon Lab scene is retired (its catalog + SFX panel now live
     // inside GarageScene) — `?lab` no longer routes anywhere different, so it's just Garage.
-    this.scene.start('GarageScene');
+    // #509: BaseScene is now the game's entry point — the physical central base the player
+    // walks around, reaching GarageScene by walking onto its customization hex.
+    this.scene.start('BaseScene');
   }
 }
