@@ -6,9 +6,10 @@
 // updated with it so GarageScene's own Deploy button — still a valid separate path — keeps
 // reading accurate recency data.
 import { ACTIVE_MECH_KEY } from '../../data/rosters.js';
-import { MECH_DEPLOYED } from '../../data/events.js';
+import { MECH_DEPLOYED, OUTPOSTS_KEY } from '../../data/events.js';
 import { RECENCY_WINDOW } from '../../data/biomes.js';
-import { saveAllMechs } from '../../data/save.js';
+import { saveAllMechs, saveOutposts } from '../../data/save.js';
+import { resolveAllUndefendedLosses } from '../../data/outposts.js';
 
 export function launchMission(scene, biomeId) {
   const allMechs = scene.registry.get('allMechs');
@@ -26,6 +27,16 @@ export function launchMission(scene, biomeId) {
   scene.registry.set('arenaBiome', biomeId);
   scene.registry.set('run', null);
   scene.registry.set('coopMechKeys', [ACTIVE_MECH_KEY]);
+  // #509 Stage 5: there's no dedicated "defend" mission yet, so committing to ANY mission while
+  // an outpost is under attack counts as not defending it — resolves every currently-attacked
+  // outpost's loss check right here. A real defend-mission type (future work) would exempt
+  // itself from this by resolving its OWN target outpost differently instead of calling this.
+  const outposts = scene.registry.get(OUTPOSTS_KEY) ?? [];
+  const resolved = resolveAllUndefendedLosses(outposts);
+  if (resolved !== outposts) {
+    scene.registry.set(OUTPOSTS_KEY, resolved);
+    saveOutposts(resolved);
+  }
   scene.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
   scene.scene.start('ArenaScene');
 }
