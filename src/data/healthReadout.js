@@ -17,10 +17,19 @@
 //                 outline around the whole doll = the mech's shield. Since the #448 playtest ALL
 //                 THREE layers ride that same ramp, each by its OWN fraction (armor and shield
 //                 coloured in HudScene, structure here), so the readout speaks one colour language.
+//   'fused'     — #495: no separate block at all — armor/structure/shield fuse directly onto the
+//                 four weapon skill tiles. Per-tile PERIMETER = armor (the same drain-around-the-
+//                 frame trick paperdoll's outline uses, `perimeterRun`, just run against the tile's
+//                 own rect); per-tile WASH = structure (`structureColor`, painted over the tile's
+//                 own art rather than a separate cell); and ONE whole-mech shield DOME arcing over
+//                 the top+sides of the whole row (`shieldArcLayout`, below — a new shape: two
+//                 mirrored arcs that retract toward a shared 12-o'clock apex, not `ringSweep`'s
+//                 single clockwise sweep and not paperdoll's rectangular perimeter). All three still
+//                 ride the same structure-colour ramp, same as paperdoll.
 //
-// A fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and DELETED after
-// it (Jackson: "remove the circle option") — layout, fill polygon, paint path and tests, so no dead
-// art path is left behind.
+// An earlier fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and
+// DELETED after it (Jackson: "remove the circle option") — layout, fill polygon, paint path and
+// tests, so no dead art path is left behind.
 //
 // Everything here is pure: positions and polylines. HudScene only paints to these numbers,
 // the same contract `integrityLayout` already had, so every mode shares one console frame and
@@ -32,13 +41,14 @@ import { INTEGRITY_BARS } from './hudLayout.js';
 
 // The cycle order. 'none' is FIRST because it is the default — a fresh run starts with no integrity
 // display at all, which is the experiment: whether the mech's own art carries it. H then walks the
-// two surviving readouts and comes back.
-export const READOUT_MODES = ['none', 'bars', 'paperdoll'];
+// surviving readouts and comes back.
+export const READOUT_MODES = ['none', 'bars', 'paperdoll', 'fused'];
 
 export const READOUT_LABELS = {
   none: 'NONE',
   bars: 'BARS',
   paperdoll: 'PAPER DOLL',
+  fused: 'FUSED',
 };
 
 // Anything unrecognised reads as the DEFAULT rather than throwing or blanking the HUD. That covers
@@ -245,6 +255,95 @@ export function perimeterRun(rect, frac) {
     return pts;
   }
   return pts;
+}
+
+// ── SHIELD ARC (fused) ──────────────────────────────────────────────────────────────────────
+//
+// #495: the fused readout's shield is a DOME/CANOPY over the top+sides of the whole tile row —
+// not a per-tile ring (shield is a single whole-mech pool, `mechPools().shield`), not `ringSweep`
+// (hudLayout.js — a single clockwise sweep built for the small target-disc rings), and not the
+// paper doll's shield (a full rectangular PERIMETER outline). This is TWO MIRRORED ARCS sharing
+// one apex at 12 o'clock over the row's own centre: as the fraction drops each one retracts
+// independently back toward that apex, so a half-shield reads as "the canopy pulled back on both
+// edges" rather than one arc sweeping across like a gauge.
+//
+// The dome rides an ELLIPSE (not a circle), centred at `ecy` — the row's own top edge dropped down
+// by `sideDrop` — because the row is wide and short: a true circular semicircle over a ~4:1 rect
+// would either barely clear the tiles or balloon absurdly high. Independent radii let the dome
+// reach `overhang` px past the row's own edges and `rise` px above its top regardless of the row's
+// own proportions.
+export const SHIELD_ARC = {
+  overhang: 16,    // how far past the row's own left/right edges the dome's ends reach
+  rise: 26,        // how far above the row's own top edge the apex sits
+  sideDrop: 0.55,  // where the dome's ends land, as a fraction DOWN the row's own height — this is
+                   // what makes it hug the tiles' SIDES rather than stop dead level with their tops
+  steps: 10,       // polyline resolution per half-arc (mirrors `perimeterRun`'s plain-polyline idiom)
+};
+
+// One point on the dome's ellipse at angle `t` (radians, screen convention: 0 = +x, increasing
+// CLOCKWISE, so -PI/2 is straight up — the apex both mirrored arcs retract toward).
+function domePoint(cx, ecy, rx, ry, t) {
+  return { x: cx + rx * Math.cos(t), y: ecy + ry * Math.sin(t) };
+}
+
+// A polyline from angle `a0` to `a1` in `steps` segments — the same "hand back a drawable
+// polyline, not raw angles" idiom `perimeterRun` uses, so HudScene paints both with `strokePoints`.
+function domeArc(cx, ecy, rx, ry, a0, a1, steps) {
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = a0 + (a1 - a0) * (i / steps);
+    pts.push(domePoint(cx, ecy, rx, ry, t));
+  }
+  return pts;
+}
+
+// `rect` is the tile row's own bounding box (HudScene's `panel.tileBox`, off `ui/skillTiles.js`
+// `tileRow`). `frac` is the shield's live fraction (`mechPools().shield`, 0..1). Returns the
+// ALWAYS-drawn dim TRACK — the full dome, both ends fully extended, the same "empty space stays
+// legible" rule every other layer's backing follows — plus the two mirrored LIT arcs: empty at
+// frac 0, a full quarter-turn each at frac 1.
+export function shieldArcLayout(rect, frac) {
+  const S = SHIELD_ARC;
+  const cx = rect.x + rect.w / 2;
+  const ecy = rect.y + rect.h * S.sideDrop;
+  const rx = rect.w / 2 + S.overhang;
+  const ry = (ecy - rect.y) + S.rise;
+  const apex = -Math.PI / 2;
+  const quarter = Math.PI / 2;
+  const f = Math.max(0, Math.min(1, frac ?? 0));
+  const reach = f * quarter;
+  return {
+    cx, cy: ecy, rx, ry,
+    track: [
+      ...domeArc(cx, ecy, rx, ry, apex, apex - quarter, S.steps).reverse(),
+      ...domeArc(cx, ecy, rx, ry, apex, apex + quarter, S.steps).slice(1),
+    ],
+    left: reach > 0 ? domeArc(cx, ecy, rx, ry, apex, apex - reach, S.steps) : [],
+    right: reach > 0 ? domeArc(cx, ecy, rx, ry, apex, apex + reach, S.steps) : [],
+  };
+}
+
+// ── FUSED ────────────────────────────────────────────────────────────────────────────────────
+//
+// #495: armor/structure/shield painted DIRECTLY onto the four skill tiles rather than a separate
+// block beside them (see HudScene's `_paintFusedReadout` for the paint — this module only holds
+// the shield-dome geometry above and this shape). Like NONE this is a ZERO-WIDTH block: there is
+// nothing beside the tile row to lay out, because the readout lives ON the tiles. Unlike NONE,
+// HudScene still reserves a header-line's worth of room above the row — pulled up by
+// `FUSED_DOME_RISE` — so the console shell's own height leaves room for the shield dome to arc
+// into instead of clipping it against the plate's top edge.
+export const FUSED_DOME_RISE = SHIELD_ARC.rise + 8;   // the dome's own rise + clearance for its glow
+
+export function fusedLayout({ anchorX = 0, bottomY = 0 } = {}) {
+  return {
+    mode: 'fused',
+    x: anchorX, w: 0,
+    top: bottomY, bottom: bottomY,
+    labelY: bottomY,
+    headerY: bottomY,
+    segments: [],
+    shieldLabel: null,
+  };
 }
 
 // The three layers a mech shows as WHOLE-MECH pools, summed over its damage-tracked parts — the

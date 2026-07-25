@@ -21,7 +21,7 @@ const { Mech } = await import('../data/Mech.js');
 const { PLAYER_COLORS } = await import('../data/players.js');
 const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await import('../data/hudLayout.js');
 const { getWeapon } = await import('../data/weapons.js');
-const { structureColor } = await import('../data/healthReadout.js');
+const { structureColor, FUSED_DOME_RISE } = await import('../data/healthReadout.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -491,7 +491,7 @@ describe('HudScene health readout modes (#448)', () => {
     expect(scene._band.groups[0].blockW).toBe(0);
   });
 
-  it('H cycles none → bars → paper doll → none, rebuilding the panel each time', () => {
+  it('H cycles none → bars → paper doll → fused → none, rebuilding the panel each time', () => {
     const { scene } = modeScene();
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('bars');
@@ -500,6 +500,8 @@ describe('HudScene health readout modes (#448)', () => {
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('paperdoll');
     expect(barsHeader.destroyed).toBe(true);   // rebuilt, not left stacked on screen
+    scene._cycleReadout();
+    expect(scene.panels[0].mode).toBe('fused');
     scene._cycleReadout();
     expect(scene.panels[0].mode).toBe('none');
   });
@@ -573,7 +575,7 @@ describe('HudScene health readout modes (#448)', () => {
     const { scene } = modeScene();
     const mech = new Mech({ chassisId: 'medium' });
     mech.applyDamage('leftArm', 9999);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       expect(() => scene._updateIntegrity(scene.panels[0], mech)).not.toThrow();
       scene._cycleReadout();
     }
@@ -660,8 +662,9 @@ describe('HudScene health readout modes (#448)', () => {
       expect(shell.y + shell.h).toBe(scene.H - CONSOLE.edgeGap);
     });
 
-    // With no header to take over (the other three modes reuse the header's line), the downed
-    // line has to have somewhere of its own to go — over that player's tile row.
+    // With no header to take over (bars/paperdoll reuse the header's line; FUSED — #495 — has no
+    // separate block either but is pinned in its own describe block below), the downed line has
+    // to have somewhere of its own to go — over that player's tile row.
     it('still says what a downed player is waiting on', () => {
       const { scene } = noneScene();
       const p = scene.panels[0];
@@ -671,6 +674,90 @@ describe('HudScene health readout modes (#448)', () => {
       expect(p.statusText.visible).toBe(true);
       expect(p.statusText.text).toMatch(/RESPAWN/);
       expect(p.skillBar.alpha).toBe(0.3);
+    });
+  });
+
+  // ── #495: the FUSED readout — armor/structure/shield painted directly onto the skill tiles ──
+  describe('the FUSED readout', () => {
+    const fusedScene = () => {
+      const built = modeScene();
+      built.scene._cycleReadout();
+      built.scene._cycleReadout();
+      built.scene._cycleReadout();
+      expect(built.scene.panels[0].mode).toBe('fused');
+      return built;
+    };
+
+    it('has no separate block, no captions, no shield caption and no header — like NONE', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      expect(p.bars.w).toBe(0);
+      expect(p.bars.segments).toEqual([]);
+      expect(p.shieldLabel).toBeNull();
+      expect(p.header).toBeNull();
+    });
+
+    // Unlike NONE, the console shell still has to leave room ABOVE the tile row — not for a
+    // caption, but for the shield dome to arc into (`shieldArcLayout`).
+    it("reserves headroom above the tile row for the shield dome, pulled up by FUSED_DOME_RISE", () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      expect(p.tileTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
+    });
+
+    it('builds its own paint layer, only for this mode, so it can draw ON TOP of the tiles', () => {
+      const { scene } = fusedScene();
+      expect(scene.panels[0].fusedGfx).toBeTruthy();
+    });
+
+    it('the downed line still has somewhere of its own — over that player\'s tile row', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      const downed = snap(0, { dead: true, respawn: { remainingMs: 4200, waitingOnCombat: false } });
+      scene._updateTargetPod = () => {};
+      scene._updatePanel(p, downed, 16);
+      expect(p.statusText.visible).toBe(true);
+      expect(p.statusText.text).toMatch(/RESPAWN/);
+    });
+
+    it('strokes a draining armor outline directly on a damaged tile', () => {
+      const { scene } = fusedScene();
+      const mech = new Mech({ chassisId: 'medium' });
+      mech.applyDamage('leftArm', 20);
+      scene._updateIntegrity(scene.panels[0], mech);
+      expect(scene.panels[0].fusedGfx.strokedPoints.length).toBeGreaterThan(1);
+    });
+
+    // #495: all three fused layers still ride the ONE structure-colour ramp, same as the paper
+    // doll — a low-armor tile's ring reads red, a half-shield dome reads purple-ish, etc.
+    it('colours the per-tile armor outline and the shield dome through the SAME structure ramp', () => {
+      const { scene } = fusedScene();
+      const armorFrac = 0.3, shieldFrac = 0.6;
+      const mech = {
+        parts: Object.fromEntries(
+          INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 3, maxArmor: 10 }]),
+        ),
+        isPartDestroyed: () => false,
+        hasShield: () => true,
+        shield: { hp: 6, max: 10 },
+        shieldTotalHp: () => 6,
+      };
+      scene._paintFusedReadout(scene.panels[0], mech);
+      const runColors = (scene.panels[0].fusedGfx.strokeRuns ?? []).map((r) => r.color);
+      expect(runColors).toContain(structureColor(armorFrac));
+      expect(runColors).toContain(structureColor(shieldFrac));
+    });
+
+    it('draws no shield dome at all for a build with no shield — its slot is simply absent', () => {
+      const { scene } = fusedScene();
+      const mech = {
+        parts: Object.fromEntries(
+          INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 10, maxArmor: 10 }]),
+        ),
+        isPartDestroyed: () => false,
+        hasShield: () => false,
+      };
+      expect(() => scene._paintFusedReadout(scene.panels[0], mech)).not.toThrow();
     });
   });
 

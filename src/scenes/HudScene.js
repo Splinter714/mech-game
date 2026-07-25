@@ -20,6 +20,7 @@ import {
 import {
   normalizeReadoutMode, nextReadoutMode,
   paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
+  fusedLayout, shieldArcLayout, FUSED_DOME_RISE,
 } from '../data/healthReadout.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
@@ -658,6 +659,7 @@ export default class HudScene extends Phaser.Scene {
     // block gap with it (data/hudLayout.js `consoleBand`) so the shell collapses to its tiles.
     if (mode === 'none') return noneLayout(box);
     if (mode === 'paperdoll') return paperDollLayout(INTEGRITY_ORDER, box);
+    if (mode === 'fused') return fusedLayout(box);
     const bars = integrityLayout(INTEGRITY_ORDER, box);
     return {
       mode: 'bars',
@@ -716,7 +718,9 @@ export default class HudScene extends Phaser.Scene {
     const bars = this._integrityLayoutFor(group.blockX, 0);
     panel.bars = bars;
     panel.mode = bars.mode;
-    const blank = bars.mode === 'none';
+    // #495: FUSED has no separate block either (like NONE — the readout lives ON the tiles, not
+    // beside them), so it takes the same "no header" treatment.
+    const blank = bars.mode === 'none' || bars.mode === 'fused';
     // #448: with NO integrity block there is nothing for a header to head, and reserving its line
     // would leave exactly the hole the mode exists to remove — so the block's content ceiling
     // becomes the tile row itself and no header is created at all.
@@ -759,6 +763,11 @@ export default class HudScene extends Phaser.Scene {
         fontFamily: 'monospace', fontSize: '11px', color: C.bad,
       }).setVisible(false);
 
+    // #495: NOW pull FUSED's headerY up above the tile row — after the header/statusText objects
+    // above have already captured their (tile-row-level) positions, so this only affects what the
+    // console shell reserves (`_paintConsole`'s `contentTop`), not where the downed line sits.
+    if (bars.mode === 'fused') bars.headerY -= FUSED_DOME_RISE;
+
     // Skill tiles for THIS player's own mech, in this panel's half of the bottom edge.
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
@@ -770,6 +779,10 @@ export default class HudScene extends Phaser.Scene {
     panel.tileBox = tiles.length
       ? { x: tiles[0].x, y: tiles[0].y, w: last.x + last.w - tiles[0].x, h: last.h }
       : null;
+    // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
+    // armor ring / HP wash / shield dome that fuse onto the tiles themselves. Only built for the
+    // mode that needs it — every other mode leaves this null and never touches it.
+    panel.fusedGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
     this._makeTargetDisc(panel, spec, count);
     return panel;
@@ -816,6 +829,7 @@ export default class HudScene extends Phaser.Scene {
     const objs = [
       panel.header, panel.partBarsGfx, panel.shieldLabel, panel.statusText, panel.skillBar,
       panel.podGfx, panel.podRings, panel.podArt, panel.podMask, panel.podName,
+      panel.fusedGfx,
       ...Object.values(panel.partLabels),
     ];
     for (const o of objs) o?.destroy();
@@ -1433,6 +1447,7 @@ export default class HudScene extends Phaser.Scene {
     // #448: NONE draws nothing at all — the mech's own display has to carry it.
     if (panel.mode === 'none') return panel.partBarsGfx.clear();
     if (panel.mode === 'paperdoll') return this._paintDollReadout(panel, mech);
+    if (panel.mode === 'fused') return this._paintFusedReadout(panel, mech);
     this._updatePartBars(panel, mech);
     this._updateShieldBar(panel, mech);
   }
@@ -1505,6 +1520,76 @@ export default class HudScene extends Phaser.Scene {
         }
         g.lineStyle(2.5, shieldCol, 0.95);
         g.strokePoints(run, false);
+      }
+    }
+  }
+
+  // FUSED: #495. Armor/structure/shield fuse directly onto the four skill tiles rather than a
+  // separate block beside them. Per-tile PERIMETER = armor (`perimeterRun`, exactly the paper
+  // doll's trick, just run against the tile's OWN rect); per-tile WASH = structure
+  // (`structureColor`, painted straight over the tile instead of a separate cell — this mode has
+  // no cell of its own, the tile IS the segment); and ONE whole-mech shield DOME arcing over the
+  // top+sides of the row (`shieldArcLayout` — new geometry, see that module for why it isn't
+  // `ringSweep` or the paper doll's rectangular outline). Painted into `panel.fusedGfx`, which is
+  // added to the scene AFTER the tile row (see `_makePanel`) so it draws ON TOP of the tiles —
+  // `partBarsGfx` (every other mode's layer) draws BEFORE them and would be invisible here.
+  _paintFusedReadout(panel, mech) {
+    const g = panel.fusedGfx;
+    if (!g) return;
+    g.clear();
+    const R = 6;   // a hair inside the tile plate's own corner radius (skillTiles.js TILE_UI.radius)
+    for (const loc of TILE_ORDER) {
+      const ref = panel.skillRefs[loc];
+      const part = mech.parts[loc];
+      if (!ref || !part) continue;
+      const rect = ref.rect;
+      const destroyed = mech.isPartDestroyed(loc);
+      const hpFrac = part.maxHp > 0 ? Math.max(0, Math.min(1, part.hp / part.maxHp)) : 0;
+      const armorFrac = part.maxArmor > 0 ? Math.max(0, Math.min(1, part.armor / part.maxArmor)) : 0;
+
+      // HP: a colour wash over the tile itself, riding the SAME continuous ramp the paper doll's
+      // structure fill does. It gets a hair more opaque as structure drops, on top of the hue
+      // shift, so a dying part reads as more urgent than a merely-tinted healthy one.
+      g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), destroyed ? 0.75 : 0.18 + (1 - hpFrac) * 0.42);
+      g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, R);
+
+      // Armor: the tile's own perimeter, draining exactly like the paper doll's segment outline —
+      // dim full track, lit run over `armorFrac`, same ramp so all three fused layers still speak
+      // one colour language.
+      g.lineStyle(2, BAR_EDGE, 0.9);
+      g.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      const run = perimeterRun(rect, armorFrac);
+      if (run.length > 1) {
+        g.lineStyle(2.5, destroyed ? ARMOR_SEAM : structureColor(armorFrac), 1);
+        g.strokePoints(run, false);
+      }
+      if (destroyed) {
+        g.lineStyle(1.5, HP_COLOR, 0.9);
+        g.beginPath();
+        g.moveTo(rect.x, rect.y);
+        g.lineTo(rect.x + rect.w, rect.y + rect.h);
+        g.moveTo(rect.x + rect.w, rect.y);
+        g.lineTo(rect.x, rect.y + rect.h);
+        g.strokePath();
+      }
+    }
+
+    // Shield: ONE dome over the top+sides of the whole row — a pool, not a per-tile layer, same
+    // "only draw it if this mech actually has one" rule the paper doll's outline follows.
+    const p = mechPools(mech, INTEGRITY_ORDER);
+    if (p.hasShield && panel.tileBox) {
+      const arc = shieldArcLayout(panel.tileBox, p.shield);
+      g.lineStyle(2, SHIELD_BAR_COLOR, 0.22);
+      g.strokePoints(arc.track, false);
+      const shieldCol = structureColor(p.shield);
+      for (const side of [arc.left, arc.right]) {
+        if (side.length < 2) continue;
+        for (const { a } of SHIELD_GLOW) {
+          g.lineStyle(5, shieldCol, a);
+          g.strokePoints(side, false);
+        }
+        g.lineStyle(2.5, shieldCol, 0.95);
+        g.strokePoints(side, false);
       }
     }
   }

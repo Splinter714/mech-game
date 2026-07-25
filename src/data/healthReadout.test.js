@@ -4,6 +4,7 @@ import {
   paperDollLayout, perimeterRun, PAPER_DOLL,
   mechPools, noneLayout,
   structureColor, hslToInt, STRUCTURE_RAMP,
+  fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
@@ -18,10 +19,11 @@ describe('#448 readout modes', () => {
     expect(normalizeReadoutMode('nonsense')).toBe('none');
   });
 
-  it('cycles none → bars → paperdoll → none', () => {
+  it('cycles none → bars → paperdoll → fused → none', () => {
     expect(nextReadoutMode('none')).toBe('bars');
     expect(nextReadoutMode('bars')).toBe('paperdoll');
-    expect(nextReadoutMode('paperdoll')).toBe('none');
+    expect(nextReadoutMode('paperdoll')).toBe('fused');
+    expect(nextReadoutMode('fused')).toBe('none');
   });
 
   // The ORB readout was deleted. A registry left on it from an earlier session must not strand the
@@ -33,8 +35,8 @@ describe('#448 readout modes', () => {
     expect(readoutLabel('orbs')).toBe('NONE');
   });
 
-  it('is exactly the surviving three modes, NONE first', () => {
-    expect(READOUT_MODES).toEqual(['none', 'bars', 'paperdoll']);
+  it('is exactly the surviving four modes, NONE first', () => {
+    expect(READOUT_MODES).toEqual(['none', 'bars', 'paperdoll', 'fused']);
     expect(readoutLabel('none')).toBe('NONE');
   });
 
@@ -79,6 +81,38 @@ describe('#448 the NONE readout', () => {
     const b = consoleBand(1280, [{ blockW: L.w, tilesW: 404 }]);
     expect(b.w).toBe(404 + CONSOLE.padX * 2);
     expect(b.groups[0].tilesX).toBe(b.x + CONSOLE.padX);
+  });
+});
+
+// #495: FUSED fuses the readout onto the skill tiles themselves, so — like NONE — it has no
+// separate block to lay out beside the tile row.
+describe('#495 fused layout', () => {
+  const box = { anchorX: 300, bottomY: 790, availW: 0, side: 'left' };
+
+  it('returns the same SHAPE every other mode does', () => {
+    const L = fusedLayout(box);
+    for (const key of ['mode', 'x', 'w', 'top', 'bottom', 'labelY', 'headerY', 'segments', 'shieldLabel']) {
+      expect(L).toHaveProperty(key);
+    }
+    expect(L.mode).toBe('fused');
+  });
+
+  it('occupies NO width and draws no segments or shield caption — the readout lives ON the tiles', () => {
+    const L = fusedLayout(box);
+    expect(L.w).toBe(0);
+    expect(L.segments).toEqual([]);
+    expect(L.shieldLabel).toBeNull();
+  });
+
+  it('lets the console band collapse to exactly its tile row, same as NONE', () => {
+    const L = fusedLayout(box);
+    const b = consoleBand(1280, [{ blockW: L.w, tilesW: 404 }]);
+    expect(b.w).toBe(404 + CONSOLE.padX * 2);
+    expect(b.groups[0].tilesX).toBe(b.x + CONSOLE.padX);
+  });
+
+  it('FUSED_DOME_RISE clears the shield dome\'s own rise, with room to spare for its glow', () => {
+    expect(FUSED_DOME_RISE).toBeGreaterThan(SHIELD_ARC.rise);
   });
 });
 
@@ -302,5 +336,75 @@ describe('#448 structure colour ramp (paper doll)', () => {
     expect(hslToInt(240, 1, 0.5)).toBe(0x0000ff);   // blue
     expect(hslToInt(0, 0, 1)).toBe(0xffffff);       // white
     expect(hslToInt(0, 0, 0)).toBe(0x000000);       // black
+  });
+});
+
+// #495: the fused readout's whole-mech shield dome — two mirrored arcs over the top+sides of the
+// tile row, sharing one apex at 12 o'clock, each retracting independently toward it as the shield
+// fraction drops. New geometry (not `ringSweep`'s single clockwise sweep, not `perimeterRun`'s
+// rectangular outline), so it gets its own coverage.
+describe('#495 shield arc (fused)', () => {
+  const rect = { x: 100, y: 500, w: 300, h: 80 };
+
+  it('is empty at zero and a full quarter-turn polyline each side at one', () => {
+    const empty = shieldArcLayout(rect, 0);
+    expect(empty.left).toEqual([]);
+    expect(empty.right).toEqual([]);
+
+    const full = shieldArcLayout(rect, 1);
+    expect(full.left.length).toBe(SHIELD_ARC.steps + 1);
+    expect(full.right.length).toBe(SHIELD_ARC.steps + 1);
+  });
+
+  it("both arcs share the SAME apex point — the shared 12 o'clock they retract toward", () => {
+    const full = shieldArcLayout(rect, 1);
+    expect(full.left[0]).toEqual(full.right[0]);
+    expect(full.left[0].y).toBeLessThan(rect.y);   // and it clears the row's own top edge
+  });
+
+  it("is symmetric: the left arc mirrors the right arc around the row's own centre-x", () => {
+    const full = shieldArcLayout(rect, 1);
+    const cx = rect.x + rect.w / 2;
+    for (let i = 0; i < full.left.length; i++) {
+      expect(full.left[i].x - cx).toBeCloseTo(-(full.right[i].x - cx), 6);
+      expect(full.left[i].y).toBeCloseTo(full.right[i].y, 6);
+    }
+  });
+
+  it("each arc's reach grows monotonically with the fraction", () => {
+    const reach = (frac) => {
+      const L = shieldArcLayout(rect, frac).left;
+      if (L.length < 2) return 0;
+      const end = L[L.length - 1];
+      return Math.hypot(end.x - L[0].x, end.y - L[0].y);
+    };
+    expect(reach(0.3)).toBeGreaterThan(reach(0));
+    expect(reach(0.6)).toBeGreaterThan(reach(0.3));
+    expect(reach(1)).toBeGreaterThan(reach(0.6));
+  });
+
+  it('the TRACK — the full dome — never depends on the live fraction (always-legible backing)', () => {
+    const t0 = shieldArcLayout(rect, 0).track;
+    const t1 = shieldArcLayout(rect, 1).track;
+    expect(t0).toEqual(t1);
+  });
+
+  it('the track runs left-end → apex → right-end as one continuous polyline', () => {
+    const { track } = shieldArcLayout(rect, 1);
+    const full = shieldArcLayout(rect, 1);
+    expect(track[0]).toEqual(full.left[full.left.length - 1]);
+    expect(track[track.length - 1]).toEqual(full.right[full.right.length - 1]);
+  });
+
+  it('the dome clears the row: above the top edge, past both side edges', () => {
+    const full = shieldArcLayout(rect, 1);
+    expect(full.left[0].y).toBeLessThan(rect.y);
+    expect(full.left[full.left.length - 1].x).toBeLessThan(rect.x);
+    expect(full.right[full.right.length - 1].x).toBeGreaterThan(rect.x + rect.w);
+  });
+
+  it('clamps out-of-range fractions to the endpoints', () => {
+    expect(shieldArcLayout(rect, 1.5).left.length).toBe(shieldArcLayout(rect, 1).left.length);
+    expect(shieldArcLayout(rect, -0.4).left).toEqual([]);
   });
 });
