@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
-import { LOCATION_INFO } from '../data/anatomy.js';
-import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
+import { LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
+import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
+import { getItem } from '../data/items.js';
+import { ABILITY_BINDS } from '../input/Controls.js';
 import { InkCache, fitScale } from '../art/inkBounds.js';
 import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
 import { HULL_FRAMES } from '../art/index.js';
@@ -791,10 +793,42 @@ export default class HudScene extends Phaser.Scene {
       const id = snapshot?.mech?.mounts?.[r.loc]?.[0] ?? null;
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
     }
-    panel.tileTop = tiles.length ? tiles[0].y : this.H - 10;
-    // The row's outer box, so the console can recess a bay behind exactly what the tiles occupy.
+    const rowTop = tiles.length ? tiles[0].y : this.H - 10;
+
+    // #506: the ability diamond (4 slots) + core tile, in the free vertical space ABOVE this
+    // player's weapon tile row — centred on the same horizontal midpoint, sized off the row's
+    // own tile size so a squeezed co-op row shrinks the diamond right along with it. Always
+    // rendered (empty "+" tiles for unmounted slots), matching the weapon tiles' own behavior.
+    const mode = this._panelMode(panel);
+    const tileSize = tiles.length ? tiles[0].w : CONSOLE_TILES.max;
+    const ringSize = Math.max(24, Math.round(tileSize * 0.58));
+    const coreSize = Math.max(18, Math.round(tileSize * 0.4));
+    const radius = ringSize * 1.15;
+    const diamondGap = 12;   // clearance between the diamond's bottom tile and the weapon row
+    const dCx = group.tilesX + group.tilesW / 2;
+    const dCy = rowTop - diamondGap - radius - ringSize / 2;
+    // Matches diamondLayout's own Math.round(cy + dy*radius - size/2) for abilityY (dy=-1)
+    // exactly, so this is never off-by-a-fraction from the tile it's meant to bound.
+    panel.diamondTop = Math.round(dCy - radius - ringSize / 2);
+    for (const r of diamondLayout(dCx, dCy, { size: ringSize, radius })) {
+      const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
+      panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
+        loc: r.loc, itemId: id, mode,
+        bindGlyph: mode === 'pad' ? ABILITY_BINDS[r.loc].pad : ABILITY_BINDS[r.loc].key,
+        emptyLabel: 'ability',
+      });
+    }
+    const coreRect = coreTileRect(dCx, dCy, coreSize);
+    const coreId = snapshot?.mech?.coreMounts?.core ?? null;
+    panel.skillRefs.core = drawSkillTile(this, panel.skillBar, coreRect, {
+      loc: 'core', itemId: coreId, mode, bindGlyph: '', emptyLabel: 'core',
+    });
+
+    panel.tileTop = Math.min(rowTop, panel.diamondTop);
+    // The row's outer box, so the console can recess a bay behind exactly what the tiles AND the
+    // diamond above them occupy — one bay covers both rather than a second one for the diamond.
     panel.tileBox = tiles.length
-      ? { x: tiles[0].x, y: tiles[0].y, w: last.x + last.w - tiles[0].x, h: last.h }
+      ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: (tiles[0].y + last.h) - panel.tileTop }
       : null;
     // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
     // structure WASH and shield BRACKET that fuse onto/around the tiles themselves. Armor moved
@@ -913,6 +947,39 @@ export default class HudScene extends Phaser.Scene {
       }
       updateSkillTile(panel.skillRefs[loc], opts);
     }
+
+    // #506: the ability diamond — same per-slot shape as the weapon tiles above, but reading
+    // live cooldown/active state off the PLAYER's own abilityStates (snapshot, not the mech —
+    // that's where scenes/arena/abilities.js ticks it every frame) rather than ammo.
+    for (const slot of ABILITY_SLOTS) {
+      const id = mech.abilityMounts[slot] ?? null;
+      const opts = {
+        loc: slot, itemId: id, mode, emptyLabel: 'ability',
+        bindGlyph: mode === 'pad' ? ABILITY_BINDS[slot].pad : ABILITY_BINDS[slot].key,
+      };
+      const state = snapshot.abilityStates?.[slot];
+      if (id && state) {
+        if (state.active) {
+          opts.subtitle = 'ACTIVE'; opts.subtitleColor = C.good;
+        } else if (state.cooldown > 0) {
+          const full = getItem(id)?.cooldown || state.cooldown;
+          opts.subtitle = `${state.cooldown.toFixed(1)}s`;
+          opts.subtitleColor = C.cooldown;
+          opts.onCooldown = true;
+          opts.cooldownFrac = state.cooldown / full;
+        } else {
+          opts.subtitle = 'READY'; opts.subtitleColor = C.good;
+        }
+      }
+      updateSkillTile(panel.skillRefs[slot], opts);
+    }
+    // The core tile is passive/always-on (data/coreItems.js) — no active/cooldown state at all,
+    // just mounted-or-not.
+    const coreId = mech.coreMounts.core ?? null;
+    updateSkillTile(panel.skillRefs.core, {
+      loc: 'core', itemId: coreId, mode, bindGlyph: '', emptyLabel: 'core',
+      subtitle: coreId ? 'PASSIVE' : '', subtitleColor: C.dim,
+    });
 
     this._updateIntegrity(panel, mech);
 

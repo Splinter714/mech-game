@@ -22,6 +22,7 @@ const { PLAYER_COLORS } = await import('../data/players.js');
 const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await import('../data/hudLayout.js');
 const { getWeapon } = await import('../data/weapons.js');
 const { structureColor, FUSED_DOME_RISE } = await import('../data/healthReadout.js');
+const { ABILITY_SLOTS } = await import('../data/anatomy.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -665,12 +666,14 @@ describe('HudScene health readout modes (#448)', () => {
       expect(scene._band.x + scene._band.w / 2).toBeCloseTo(scene.W / 2, 0);
     });
 
-    it('takes its console ceiling from the TILE ROW, so the shell does not grow an empty band', () => {
+    it('takes its console ceiling from the ability diamond, not a floating empty header line', () => {
       const { scene } = noneScene();
       const p = scene.panels[0];
-      // `_paintConsole` takes the shell's ceiling as min(tileTop, bars.headerY); with no block
-      // those are the same line, so the shell is the tile row's own height — no empty band above.
-      expect(p.bars.headerY).toBe(p.tileTop);
+      // `_paintConsole` takes the shell's ceiling as min(tileTop, bars.headerY). NONE reserves no
+      // header caption (bars.headerY sits on the bare tile row), but #506's always-on ability
+      // diamond sits ABOVE that row and is folded into tileTop — so the diamond, not an empty
+      // header slot, is what the shell actually grows to fit.
+      expect(p.tileTop).toBeLessThan(p.bars.headerY);
       const shell = consoleLayout(scene.H, Math.min(p.tileTop, p.bars.headerY), scene._band);
       expect(shell.y).toBe(p.tileTop - CONSOLE.padTop);
       // ...and it still runs all the way down to the bottom of the screen.
@@ -717,7 +720,10 @@ describe('HudScene health readout modes (#448)', () => {
     it("reserves headroom above the tile row for the shield dome, pulled up by FUSED_DOME_RISE", () => {
       const { scene } = fusedScene();
       const p = scene.panels[0];
-      expect(p.tileTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
+      // #506: `tileTop` now also folds in the always-on ability diamond above the row, so this
+      // pins FUSED_DOME_RISE against the tile row's own top edge directly rather than tileTop.
+      const rowTop = p.skillRefs.leftArm.rect.y;
+      expect(rowTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
     });
 
     it('builds its own paint layer, only for this mode, so it can draw ON TOP of the tiles', () => {
@@ -827,5 +833,94 @@ describe('HudScene health readout modes (#448)', () => {
     const mech = new Mech({ chassisId: 'medium' });
     scene._updateIntegrity(scene.panels[0], mech);
     expect(scene.panels[0].partBarsGfx.strokedPoints.length).toBeGreaterThan(1);
+  });
+});
+
+// #506: the ability diamond (4 ability slots) + core tile, always rendered above the weapon
+// tile row — same "empty + tile, live cooldown/subtitle when mounted" language the 4 weapon
+// tiles already use, generalized via skillTiles.js's diamondLayout/coreTileRect + bindGlyph/
+// emptyLabel opts (pinned directly in src/ui/skillTiles.test.js; this file pins the WIRING).
+describe('HudScene panels — the ability diamond + core tile (#506)', () => {
+  it('builds a tile for all 4 ability slots plus the core slot, unconditionally', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const refs = scene.panels[0].skillRefs;
+    for (const slot of ABILITY_SLOTS) expect(refs[slot]).toBeTruthy();
+    expect(refs.core).toBeTruthy();
+  });
+
+  it('shows the empty "ability"/"core" placeholder label and the ability keyboard bind when unmounted', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const refs = scene.panels[0].skillRefs;
+    expect(refs.abilityY.subtitle.text).toBe('ability');
+    expect(refs.abilityY.bind.text).toBe('1');   // ABILITY_BINDS.abilityY.key
+    expect(refs.core.subtitle.text).toBe('core');
+    expect(refs.core.bind.text).toBe('');        // core is passive — no button at all
+  });
+
+  it('positions the diamond ABOVE the weapon tile row, centred on the same horizontal midpoint', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const panel = scene.panels[0];
+    const weaponTop = panel.skillRefs.leftArm.rect.y;
+    expect(panel.skillRefs.abilityY.rect.y).toBeLessThan(weaponTop);   // top ring tile, above the row
+    expect(panel.skillRefs.abilityA.rect.y).toBeGreaterThan(panel.skillRefs.abilityY.rect.y);   // bottom ring tile, below the top one
+    const groupMidX = scene._band.groups[0].tilesX + scene._band.groups[0].tilesW / 2;
+    const coreCx = panel.skillRefs.core.rect.x + panel.skillRefs.core.rect.w / 2;
+    expect(Math.abs(coreCx - groupMidX)).toBeLessThanOrEqual(1);
+  });
+
+  it('folds the diamond into panel.tileTop/tileBox so the console bay recesses behind both', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    const panel = scene.panels[0];
+    expect(panel.tileTop).toBeLessThanOrEqual(panel.skillRefs.abilityY.rect.y);
+    expect(panel.tileBox.y).toBe(panel.tileTop);
+  });
+
+  it('shows a mounted ability\'s live cooldown countdown, filling the bar as it recharges', () => {
+    const mech = new Mech({ chassisId: 'medium', abilityMounts: { abilityY: 'dash' } });
+    const snapshot = hudPlayerSnapshot({
+      id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null,
+      abilityStates: { abilityY: { active: false, burstRemaining: 0, cooldown: 2 } },
+    });
+    const { scene, registry } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    registry.set('hudPlayers', [snapshot]);
+    scene._updatePanel(scene.panels[0], snapshot);
+    const ref = scene.panels[0].skillRefs.abilityY;
+    expect(ref.subtitle.text).toBe('2.0s');
+    expect(ref.bar.visible).toBe(true);
+  });
+
+  it('shows READY once cooldown clears and ACTIVE mid-burst', () => {
+    const mech = new Mech({ chassisId: 'medium', abilityMounts: { abilityY: 'dash' } });
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+
+    const readySnap = hudPlayerSnapshot({
+      id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null,
+      abilityStates: { abilityY: { active: false, burstRemaining: 0, cooldown: 0 } },
+    });
+    scene._updatePanel(scene.panels[0], readySnap);
+    expect(scene.panels[0].skillRefs.abilityY.subtitle.text).toBe('READY');
+
+    const activeSnap = hudPlayerSnapshot({
+      id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null,
+      abilityStates: { abilityY: { active: true, burstRemaining: 0.1, cooldown: 4 } },
+    });
+    scene._updatePanel(scene.panels[0], activeSnap);
+    expect(scene.panels[0].skillRefs.abilityY.subtitle.text).toBe('ACTIVE');
+  });
+
+  it('shows PASSIVE for a mounted core item, with no cooldown state at all', () => {
+    const mech = new Mech({ chassisId: 'medium', coreMounts: { core: 'shield' } });
+    const snapshot = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    scene._updatePanel(scene.panels[0], snapshot);
+    const ref = scene.panels[0].skillRefs.core;
+    expect(ref.subtitle.text).toBe('PASSIVE');
   });
 });
