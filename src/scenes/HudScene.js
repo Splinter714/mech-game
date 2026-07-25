@@ -134,7 +134,7 @@ const ARMOR_SEAM_H = 7;         // px between plate seams down the armor bar
 // content" scale this console already uses elsewhere.
 // Exported (only tuning constant this file exports) purely so hudPanels.test.js can pin the
 // z-order fix's geometry without hardcoding a magic number that would silently drift from this one.
-export const ARMOR_PEEK_PAD = 6;
+export const ARMOR_PEEK_PAD = 10;
 const HP_COLOR = 0xd8433a;
 const HP_CAP = 0xff8f80;
 const SHIELD_BAR_COLOR = 0x5ec8e0;
@@ -142,6 +142,14 @@ const SHIELD_CAP = 0xd6f6ff;
 // Plain Graphics has no blur filter, so a couple of oversized, low-alpha copies behind the fill
 // stand in for one — the same trick `drawChevronGlow` above uses for the wayfinding chevron.
 const SHIELD_GLOW = [{ pad: 4, a: 0.10 }, { pad: 2, a: 0.20 }];
+// #495 (3rd playtest round): a FUSED-ONLY armor palette. Jackson: the armor peek plate's colour/
+// tone was wrong and too subtle to notice against the tile art. The shared ARMOR_PLATE/RIM/SEAM
+// above stay exactly as they were — BARS mode is explicitly unchanged — this is a warmer, brighter
+// bronze/brass tone used ONLY by `_paintFusedReadout`'s backing plate, so armor reads as its own
+// distinct material next to the cool blue->purple->red structure ramp and the cyan shield.
+const FUSED_ARMOR_PLATE = 0x8a6a3a;
+const FUSED_ARMOR_RIM = 0xe8bb64;
+const FUSED_ARMOR_SEAM = 0x2a1f10;
 
 // One vertical bar's dark backing + frame, always full height (see the palette note above).
 function drawBarTrack(g, x, top, w, h) {
@@ -1652,26 +1660,23 @@ export default class HudScene extends Phaser.Scene {
       // structure fill does. It gets a hair more opaque as structure drops, on top of the hue
       // shift, so a dying part reads as more urgent than a merely-tinted healthy one.
       //
-      // #495 follow-up (EXPERIMENTAL — Jackson: "can we try out a random flicker and some opacity
-      // changes and some 'static' effects, maybe some sparks?"): a damaged part's wash alpha now
-      // jitters (`hpFlicker`, data/hpFx.js) instead of sitting fixed, and gains scattered noise
-      // specks plus an occasional small spark on top. All three read urgency off the same
-      // `hpUrgency` curve, so they escalate together as the part empties and are completely inert
-      // on a healthy one (urgency 0 ⇒ flicker returns exactly 1, no specks, no sparks — this is
-      // easy to feel out live and just as easy to delete: everything for this bullet point is
-      // these few lines plus data/hpFx.js). A destroyed part skips it entirely — it already has
-      // its own fixed dead-cell fill + red cross below, and "glitching" wreckage that can never
-      // repair back up would read as a bug, not an in-world state.
+      // #495 (3rd playtest round — Jackson: "flicker/static/sparks should apply to the weapon
+      // button art, not the blue->red coloration"): the wash itself now sits at a STEADY alpha —
+      // only the hue shift carries urgency here — and the flicker moved onto the tile's own
+      // weapon-icon sprite below instead (`ref.icon`), so it reads as the WEAPON glitching under
+      // damage rather than the colour tint itself flickering. Static specks/sparks are unchanged
+      // (they already painted on top of the icon, being in this same graphics layer).
       const baseAlpha = destroyed ? 0.75 : 0.18 + (1 - hpFrac) * 0.42;
       const seed = TILE_ORDER.indexOf(loc) + panel.index * 4;
       const urgency = destroyed ? 0 : hpUrgency(hpFrac);
       const tSec = (this.time?.now ?? 0) / 1000;
-      const washAlpha = destroyed
-        ? baseAlpha
-        : Math.max(0, Math.min(1, baseAlpha * hpFlicker(tSec, seed, urgency)));
-      g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), washAlpha);
+      g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), baseAlpha);
       g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, R);
       if (!destroyed) {
+        // The icon's alpha was already set THIS frame by `updateSkillTile` (online/offline), so
+        // multiplying it here (rather than assigning a remembered value) can never compound
+        // across frames.
+        if (ref.icon) ref.icon.setAlpha(ref.icon.alpha * hpFlicker(tSec, seed, urgency));
         for (const speck of hpStaticSpecks(rect, tSec, seed, urgency)) {
           g.fillStyle(0xffffff, speck.alpha * 0.5);
           g.fillRect(speck.x - speck.size / 2, speck.y - speck.size / 2, speck.size, speck.size);
@@ -1686,10 +1691,10 @@ export default class HudScene extends Phaser.Scene {
         }
       }
 
-      // Armor: a plate BEHIND the tile (see the method doc above). Uses the target disc's own
-      // fixed armor tones (ARMOR_PLATE/ARMOR_RIM), not the structure colour ramp — a deliberate
-      // playtest choice so armor reads as a layer distinct from the structure wash rather than a
-      // second copy of it.
+      // Armor: a plate BEHIND the tile (see the method doc above). #495 (3rd playtest round —
+      // Jackson: wrong colour/tone and too subtle): now uses a dedicated FUSED_ARMOR_* bronze/
+      // brass palette instead of the shared bars-mode ARMOR_PLATE/RIM tones, and stands out
+      // further past the tile edge (ARMOR_PEEK_PAD 6 -> 10) so more of the lit plate is visible.
       if (bg) {
         const peek = {
           x: rect.x - ARMOR_PEEK_PAD, y: rect.y - ARMOR_PEEK_PAD,
@@ -1704,12 +1709,12 @@ export default class HudScene extends Phaser.Scene {
         bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, peekR);
         const drain = armorDrainRect(peek, armorFrac);
         if (drain.h > 0.5) {
-          bg.fillStyle(destroyed ? ARMOR_SEAM : ARMOR_PLATE, destroyed ? 0.6 : 0.95);
+          bg.fillStyle(destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_PLATE, destroyed ? 0.7 : 1);
           bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, peekR);
           // The lit edge is the drain LINE itself — the one part of the plate that actually
           // moves, so it's the one thing a glance needs to read "how much armor is left" in
           // whatever sliver of it is still peeking out from behind the tile.
-          bg.lineStyle(1.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 0.95);
+          bg.lineStyle(2, destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_RIM, 1);
           bg.beginPath();
           bg.moveTo(drain.x, drain.y);
           bg.lineTo(drain.x + drain.w, drain.y);
@@ -1732,16 +1737,18 @@ export default class HudScene extends Phaser.Scene {
     const p = mechPools(mech, INTEGRITY_ORDER);
     if (p.hasShield && panel.tileBox) {
       const arc = shieldArcLayout(panel.tileBox, p.shield);
-      g.lineStyle(2, SHIELD_BAR_COLOR, 0.22);
+      // #495 (3rd playtest round — Jackson: "shield line should be thicker"): main stroke 2.5 -> 4,
+      // track/glow widened to match so the thicker fill doesn't poke out past its own halo.
+      g.lineStyle(3, SHIELD_BAR_COLOR, 0.22);
       g.strokePoints(arc.track, false);
       const shieldCol = structureColor(p.shield);
       for (const side of [arc.left, arc.right]) {
         if (side.length < 2) continue;
         for (const { a } of SHIELD_GLOW) {
-          g.lineStyle(5, shieldCol, a);
+          g.lineStyle(7, shieldCol, a);
           g.strokePoints(side, false);
         }
-        g.lineStyle(2.5, shieldCol, 0.95);
+        g.lineStyle(4, shieldCol, 0.95);
         g.strokePoints(side, false);
       }
     }
