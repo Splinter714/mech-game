@@ -6,10 +6,17 @@
 // mirror their arena/world.js namesakes' TERRAIN-only half; the arena versions also consult
 // `this.wallEdges`, which the base doesn't have.
 import { ART_SCALE } from '../../art/index.js';
-import { hexToPixel, pixelToHex, axialKey, hexesAlongSegment } from '../../data/hexgrid.js';
-import { getTerrain, isPassable } from '../../data/terrain.js';
+import { hexToPixel, pixelToHex, axialKey, hexesAlongSegment, HEX_SIZE } from '../../data/hexgrid.js';
+import { getTerrain, isPassable, terrainSpeedFactor } from '../../data/terrain.js';
 import { DEPTH } from '../arena/shared.js';
-import { buildBaseTerrain } from './layout.js';
+import { buildBaseTerrain, CUSTOMIZATION_HEX, SCANNER_HEX } from './layout.js';
+
+// The two functional hexes get a visible ring + floating label — otherwise there is nothing
+// distinguishing them from ordinary ground, and a player has no way to tell where to walk.
+const TRIGGER_MARKERS = [
+  { hex: CUSTOMIZATION_HEX, label: 'GARAGE', color: 0x5ec8e0 },
+  { hex: SCANNER_HEX, label: 'DEPLOY', color: 0xefc14a },
+];
 
 export const BaseWorldMixin = {
   _buildBaseWorld() {
@@ -20,6 +27,14 @@ export const BaseWorldMixin = {
       const { x, y } = hexToPixel(q, r);
       const img = this.add.image(x, y, getTerrain(id).tex).setScale(1 / ART_SCALE).setDepth(DEPTH.TERRAIN);
       this.tileImages.set(k, img);
+    }
+    for (const { hex, label, color } of TRIGGER_MARKERS) {
+      const { x, y } = hexToPixel(hex.q, hex.r);
+      this.add.circle(x, y, HEX_SIZE * 0.8).setStrokeStyle(3, color, 0.9).setDepth(DEPTH.WORLD_UI);
+      this.add.text(x, y - HEX_SIZE * 1.6, label, {
+        fontFamily: 'monospace', fontSize: '16px', fontStyle: 'bold',
+        color: `#${color.toString(16).padStart(6, '0')}`,
+      }).setOrigin(0.5).setDepth(DEPTH.WORLD_UI);
     }
   },
 
@@ -35,6 +50,10 @@ export const BaseWorldMixin = {
 
   _blocked(x, y) {
     return !isPassable(this._terrainAt(x, y));
+  },
+
+  _speedFactorAt(x, y) {
+    return terrainSpeedFactor(this._terrainAt(x, y));
   },
 
   // Swept across every hex the segment crosses (not just its endpoint) so a fast mech grazing
