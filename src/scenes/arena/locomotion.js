@@ -14,8 +14,7 @@ import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
-import { DASH_SPEED_MULT } from '../../data/abilities.js';
-import { hasActiveEffect } from './abilities.js';
+import { activeSpeedMult } from './abilities.js';
 
 // #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
 // symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
@@ -221,16 +220,17 @@ export const LocomotionMixin = {
     const terrainScale = this._speedFactorAt(p.x, p.y);
     // #188/#189: Sprint (SPRINT_SPEED_MULT) is no longer player-triggered (#261) — it's now
     // Overclock-only, force-activated fuel-free for the powerup's duration (see arena/firing.js
-    // `_handleSprint`). #506: Dash (DASH_SPEED_MULT) is now a mountable ABILITY rather than a
-    // hardcoded built-in — `hasActiveEffect` asks "does this player have an active mounted
-    // ability whose effect is 'dash'" without caring which face button it's bound to, or
-    // whether one is even mounted (a mech with no dash-effect ability equipped just gets 1x).
-    // The two speed sources are independent and simply multiply together if both happen to be
-    // active at once — there's no special-casing needed, each just contributes its own factor.
+    // `_handleSprint`). #506/#498: Dash and Jump Blast are both mountable ABILITIES rather than
+    // hardcoded built-ins — `activeSpeedMult` asks "does this player have an active mounted
+    // ability with this effect, and if so what's its speed multiplier" without caring which face
+    // button it's bound to, or whether one is even mounted (no matching ability equipped just
+    // gets 1x). All these speed sources are independent and simply multiply together if more
+    // than one happens to be active at once — there's no special-casing needed.
     const sprintMult = p.sprint?.active ? SPRINT_SPEED_MULT : 1;
-    const dashMult = hasActiveEffect(p, 'dash') ? DASH_SPEED_MULT : 1;
+    const dashMult = activeSpeedMult(p, 'dash');
+    const jumpBlastMult = activeSpeedMult(p, 'jumpBlast');
     // #3 weight inertia drives the accel curve.
-    const maxSp = mv.maxSpeed * legF * terrainScale * sprintMult * dashMult;
+    const maxSp = mv.maxSpeed * legF * terrainScale * sprintMult * dashMult * jumpBlastMult;
     // Weight-driven inertia (#3): accelerate toward the throttle target at `accel`, but bleed
     // speed at the (lower) `decel` — so releasing the stick coasts the mech to a stop instead
     // of braking on a dime, and it "leans into" starts. Pick the rate per-axis by whether that

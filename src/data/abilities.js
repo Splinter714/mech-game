@@ -30,6 +30,29 @@ export const ABILITIES = {
     duration: DASH_BURST_DURATION,
     speedMult: DASH_SPEED_MULT,
   },
+  // #490: non-aimed AoE damage around the mech, on activation. No movement component — just a
+  // burst radius/damage pair the 'shieldBurst' effect (scenes/arena/abilities.js) applies at the
+  // player's own position the instant it triggers.
+  shieldBurst: {
+    name: 'Shield Burst',
+    effect: 'shieldBurst',
+    cooldown: 8,
+    duration: 0.15,   // just long enough to read as a beat, not a real "burst window"
+    radius: 90,
+    damage: 30,
+  },
+  // #498: a quick movement burst (like Dash, its own speedMult) that blasts AoE damage at the
+  // ARRIVAL point rather than the launch point — the 'jumpBlast' effect fires the blast on the
+  // burst's active→inactive transition, by which point the player has actually moved there.
+  jumpBlast: {
+    name: 'Jump Blast',
+    effect: 'jumpBlast',
+    cooldown: 6,
+    duration: 0.2,
+    speedMult: 2.2,
+    radius: 70,
+    damage: 25,
+  },
 };
 
 export function getAbility(id) {

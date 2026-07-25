@@ -7,6 +7,8 @@
 import { getAbility } from '../../data/abilities.js';
 import { initialAbilityState, canActivate, activateAbility, updateAbilityState } from '../../data/abilityState.js';
 import { ABILITY_SLOTS } from '../../data/anatomy.js';
+import { damageInRadius } from '../../data/aoe.js';
+import { otherLivePlayers } from './players.js';
 import { Audio } from '../../audio/index.js';
 
 // A fresh `{ [slot]: abilityState }` map for a newly-created player.
@@ -16,10 +18,24 @@ export function initAbilityStates() {
   return states;
 }
 
+// #490/#498: a non-aimed AoE burst centered on (x, y) — shared by every ability effect that
+// wants one, through the same per-owner damage dispatch every weapon hit uses (so co-op's
+// friendly-fire-on rule isn't duplicated). Hits every living enemy in radius, plus any OTHER
+// live player caught in the blast (never the caster).
+function burstAoeAt(scene, caster, x, y, radius, damage) {
+  const enemies = scene.enemies.filter((e) => !e.mech.isDestroyed());
+  for (const hit of damageInRadius(x, y, radius, damage, enemies)) {
+    scene._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, 0x5ec8e0, false, {});
+  }
+  for (const hit of damageInRadius(x, y, radius, damage, otherLivePlayers(scene, caster))) {
+    scene._damagePlayerAt(hit.amount, hit.target, {});
+  }
+}
+
 // Advance every ability slot this player has something mounted in: trigger on a fresh press
 // (gated by the shared cooldown/burst rules), tick the state machine, and let each effect kind
 // react to its own active/inactive edge. Called once per player per frame from firing.js.
-export function updateAbilities(intent, delta, player) {
+export function updateAbilities(scene, intent, delta, player) {
   const dt = delta / 1000;
   for (const slot of ABILITY_SLOTS) {
     const abilityId = player.mech.abilityMounts?.[slot];
@@ -34,12 +50,28 @@ export function updateAbilities(intent, delta, player) {
     next = updateAbilityState(next, dt);
     player.abilityStates[slot] = next;
 
-    // Stage 1 implements exactly one effect kind — 'dash' just needs the state machine's
-    // active flag (locomotion.js reads it via hasActiveEffect below); the cue below reuses the
-    // existing "movement ability engaged/disengaged" sound, same as the old dash bind did.
+    // Stage 1 implements 'dash' — its state machine's active flag is all locomotion.js needs
+    // (via activeSpeedMult below); the cue reuses the existing "movement ability engaged/
+    // disengaged" sound, same as the old dash bind did.
     if (def.effect === 'dash') {
       if (next.active && !wasActive) Audio.ui('sprintOn');
       else if (!next.active && wasActive) Audio.ui('sprintOff');
+    } else if (def.effect === 'shieldBurst') {
+      // #490: fires the instant it activates — no movement, no "arrival" to wait for.
+      if (next.active && !wasActive) {
+        burstAoeAt(scene, player, player.x, player.y, def.radius, def.damage);
+        Audio.ui('sprintOn');
+      }
+    } else if (def.effect === 'jumpBlast') {
+      // #498: the movement burst itself rides activeSpeedMult (locomotion.js) exactly like
+      // Dash; the blast fires on the OPPOSITE edge — active→inactive, i.e. once the burst has
+      // actually carried the player to wherever they land, not at the moment of the press.
+      if (next.active && !wasActive) {
+        Audio.ui('sprintOn');
+      } else if (!next.active && wasActive) {
+        burstAoeAt(scene, player, player.x, player.y, def.radius, def.damage);
+        Audio.ui('sprintOff');
+      }
     }
   }
 }
@@ -54,4 +86,16 @@ export function hasActiveEffect(player, name) {
     if (def?.effect === name && player.abilityStates[slot]?.active) return true;
   }
   return false;
+}
+
+// The active speed multiplier from a player's mounted abilities matching `name`, or 1 if none is
+// active — generalizes hasActiveEffect for movement-burst effects (dash, jumpBlast, ...) so a
+// new one doesn't need its own hardcoded constant threaded into locomotion.js.
+export function activeSpeedMult(player, name) {
+  for (const slot of ABILITY_SLOTS) {
+    const abilityId = player.mech.abilityMounts?.[slot];
+    const def = abilityId && getAbility(abilityId);
+    if (def?.effect === name && player.abilityStates[slot]?.active) return def.speedMult ?? 1;
+  }
+  return 1;
 }

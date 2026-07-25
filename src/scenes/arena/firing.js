@@ -179,7 +179,7 @@ export const FiringMixin = {
   // per-effect dispatch (currently just 'dash') that used to live here.
   // #348: per player — each player's own slots, own bursts, own cooldowns.
   _handleAbilities(intent, delta, player = primaryPlayerOf(this)) {
-    updateAbilities(intent, delta, player);
+    updateAbilities(this, intent, delta, player);
   },
 
   // Milliseconds between shots for a weapon: stream weapons use their fire rate, the

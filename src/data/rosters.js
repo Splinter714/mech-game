@@ -50,8 +50,9 @@ export const ROSTERS = {
         },
         // #506: Dash is now a mountable ability rather than a hardcoded built-in — every
         // default build equips it (on the top face button) so existing mobility isn't
-        // silently lost until a player rebuilds.
-        abilityMounts: { abilityY: 'dash' },
+        // silently lost until a player rebuilds. #490/#498: Shield Burst and Jump Blast also
+        // ride the defaults, since there's no Garage UI yet to mount them any other way.
+        abilityMounts: { abilityY: 'dash', abilityB: 'shieldBurst', abilityA: 'jumpBlast' },
         coreMounts: { core: 'shield' },
       },
       // #349: player 2's slot. Same chassis (every mech is locked to 'mediumPlayer' by the
@@ -65,7 +66,7 @@ export const ROSTERS = {
           leftTorso: ['machineGun'],
           rightTorso: ['clusterRocket'],
         },
-        abilityMounts: { abilityY: 'dash' },
+        abilityMounts: { abilityY: 'dash', abilityB: 'shieldBurst', abilityA: 'jumpBlast' },
         coreMounts: { core: 'shield' },
       },
       // #387: players 3 & 4. Each a complete, deployable default so a drop-in with an untouched
@@ -80,7 +81,7 @@ export const ROSTERS = {
           leftTorso: ['autocannon'],
           rightTorso: ['pulseLaser'],
         },
-        abilityMounts: { abilityY: 'dash' },
+        abilityMounts: { abilityY: 'dash', abilityB: 'shieldBurst', abilityA: 'jumpBlast' },
         coreMounts: { core: 'shield' },
       },
       [PLAYER4_MECH_KEY]: {
@@ -92,7 +93,7 @@ export const ROSTERS = {
           leftTorso: ['pulseLaser'],
           rightTorso: ['autocannon'],
         },
-        abilityMounts: { abilityY: 'dash' },
+        abilityMounts: { abilityY: 'dash', abilityB: 'shieldBurst', abilityA: 'jumpBlast' },
         coreMounts: { core: 'shield' },
       },
     }),
