@@ -34,7 +34,7 @@ export default class BaseScene extends Phaser.Scene {
   create() {
     const dpr = this.registry.get('dpr') || 1;
     this.cameras.main.setZoom(dpr);
-    this.cameras.main.setBackgroundColor('#171f18');
+    this.cameras.main.setBackgroundColor('#232629');   // dark concrete, matches the baseYard floor
     this.cameras.main.fadeIn(400, 13, 16, 20);
 
     buildHexTextures(this);

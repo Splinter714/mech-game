@@ -16,10 +16,11 @@ export const BASE_TRIGGERS = new Map([
   [axialKey(SCANNER_HEX.q, SCANNER_HEX.r), 'scanner'],
 ]);
 
-// A flat disc of ordinary passable ground — no biome, no hazards, no walls. `grass` is just a
-// convenient existing terrain id (any normal-movement id would render identically here).
+// A flat disc of `baseYard` — the same paved compound-floor terrain the arena's own enemy
+// bases use (data/terrain.js), so this reads as an actual built facility (concrete apron, #288)
+// rather than an open field. No biome, no hazards, no walls.
 export function buildBaseTerrain() {
   const terrain = new Map();
-  for (const { q, r } of range({ q: 0, r: 0 }, BASE_RADIUS)) terrain.set(axialKey(q, r), 'grass');
+  for (const { q, r } of range({ q: 0, r: 0 }, BASE_RADIUS)) terrain.set(axialKey(q, r), 'baseYard');
   return terrain;
 }
