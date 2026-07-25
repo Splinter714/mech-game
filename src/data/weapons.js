@@ -47,6 +47,10 @@
 //     weakSeekRadius     px — how far a weakSeek round "notices" targets (default 260)
 //   splash    blast radius in px (plasma/explosive)
 //   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
+//   travelAoe { radius, dps, tickMs? } — #492: the round damages everything in radius
+//             CONTINUOUSLY WHILE IN FLIGHT (not just on impact/landing, unlike groundFire
+//             above which only starts once the round detonates) — a slow-moving hazard cloud
+//             riding the projectile itself. tickMs defaults to 250.
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
@@ -374,6 +378,22 @@ export const WEAPONS = {
   // lobbed rounds), differing only in tuning numbers. Its tuning survived for a while as the
   // sentry turret kind's `weaponOverride` on napalm; #469 deleted that kind, so nothing mounts
   // the artillery numbers any more and napalm is purely the player's own lobber.
+  causticLobber: w({   // #492: a slow-drifting canister that vents a corrosive cloud the WHOLE
+    // way there, not just on impact — distinct from napalm, whose burn only starts once the
+    // round lands. A modest direct-hit component (below) plus travelAoe's continuous tick is
+    // most of its real output, so it rewards holding it over a crowd rather than a clean hit.
+    // Direct-hit DPS = damage / cycleTime(s): 18/1.8 = 10.0 — deliberately the lowest headline
+    // number in the ballistic row; travelAoe's 12 dps over however long it lingers over a target
+    // is where this weapon's damage actually comes from.
+    id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
+    damage: 18, range: { min: 40, opt: 380, max: 560 },
+    ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
+    delivery: {
+      hit: 'projectile', path: 'straight', velocity: 160,   // deliberately slow — the "cloud" has to linger to matter
+      splash: 24, kind: 'fire',
+      travelAoe: { radius: 60, dps: 12 },
+    },
+  }),
 
   // ── MISSILE ── three guidance archetypes: an all-at-once homing swarm, a rapid
   // stream of seekers, and a tight dumbfire cluster that flies straight as a clump. ──

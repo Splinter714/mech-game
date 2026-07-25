@@ -3,6 +3,7 @@
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
+import { damageInRadius } from '../../data/aoe.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
@@ -53,6 +54,10 @@ export const ProjectilesMixin = {
       // — reading as the bystander "blocking" the shot. Non-homing rounds and blind-fire lobs
       // (no live handle to scope to) keep the previous any-target-nearby behavior.
       const enemyShot = p.owner === 'enemy';
+      // #492: continuous area damage WHILE this round is in flight (before it ever detonates),
+      // ticked on its own cadence independent of the hit/impact resolution below — a round with
+      // no `travelAoe` (every weapon but Caustic Lobber today) never enters this block at all.
+      if (p.travelAoe) this._tickTravelAoe(p);
       // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
       // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
       const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
@@ -406,6 +411,34 @@ export const ProjectilesMixin = {
       this._drawProjectile(p);
     }
     if (this.projectiles.some((p) => p.dead)) this.projectiles = this.projectiles.filter((p) => !p.dead);
+  },
+
+  // #492: `p.travelAoe` (a weapon's `delivery.travelAoe`) damages everything within radius of
+  // the round's CURRENT position on a fixed cadence, for as long as the round is airborne — the
+  // targeting/falloff math is the shared pure `damageInRadius` (data/aoe.js), applied here
+  // through the same per-owner dispatch every other hit uses. A player round also catches
+  // OTHER players in the blast (co-op's friendly-fire-on rule, #348) but never the shooter; an
+  // enemy round catches every live player it passes near, matching how burning ground (#319) is
+  // an indiscriminate hazard rather than scoped to one target.
+  _tickTravelAoe(p) {
+    const now = this.time.now;
+    if (p._nextAoeTick == null) p._nextAoeTick = now;
+    if (now < p._nextAoeTick) return;
+    const { radius, dps, tickMs = 250 } = p.travelAoe;
+    p._nextAoeTick = now + tickMs;
+    const amount = Math.max(1, Math.round(dps * (tickMs / 1000)));
+    if (p.owner === 'enemy') {
+      for (const pl of livePlayersOf(this)) {
+        if (Math.hypot(pl.x - p.x, pl.y - p.y) < radius) this._damagePlayerAt(amount, pl, { weaponId: p.weaponId });
+      }
+    } else {
+      for (const hit of damageInRadius(p.x, p.y, radius, amount, this.enemies.filter((e) => !e.mech.isDestroyed()))) {
+        this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId });
+      }
+      for (const other of otherLivePlayers(this, p.shooter)) {
+        if (Math.hypot(other.x - p.x, other.y - p.y) < radius) this._damagePlayerAt(amount, other, { weaponId: p.weaponId });
+      }
+    }
   },
 
   // #168: a coarse uniform-grid spatial index over the living enemies, rebuilt once per frame.

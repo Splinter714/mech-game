@@ -532,6 +532,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     weaponId: weapon.id,
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,
+    // #492: an optional continuous area-damage tick WHILE the round is in flight (not just on
+    // impact/landing, unlike `ground` above which only starts once the round detonates). See
+    // scenes/arena/projectiles.js `_tickTravelAoe`.
+    travelAoe: d.travelAoe || null,
     // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.
