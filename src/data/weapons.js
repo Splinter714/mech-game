@@ -51,6 +51,11 @@
 //             CONTINUOUSLY WHILE IN FLIGHT (not just on impact/landing, unlike groundFire
 //             above which only starts once the round detonates) — a slow-moving hazard cloud
 //             riding the projectile itself. tickMs defaults to 250.
+//   force     { radius, strength, sign, tickMs? } — #491/#499: the round pushes (sign > 0) or
+//             pulls (sign < 0) every living enemy within radius, continuously while in flight,
+//             the same tick cadence as travelAoe (data/force.js `computeImpulse`). tickMs
+//             defaults to 250; `strength` is px/s of displacement at the very center, falling
+//             off linearly to 0 at the edge of `radius`.
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
@@ -552,6 +557,33 @@ export const WEAPONS = {
     // scale 0.8 — slightly smaller rockets, and clusterSpacing 3.5 pulls the clump tighter (#51
     // playtest): a denser, more compact salvo rather than a loose spread.
     delivery: { hit: 'projectile', guidance: 'dumbfire', pattern: 'spread', count: 5, cluster: true, clusterSpacing: 3.5, velocity: 1140, scale: 0.8 },
+  }),
+
+  // ── SUPPORT ── crowd control rather than raw damage — the `support` category (no ammo,
+  // battery recharge like energy) had no occupant until these two. Both a slow-moving projectile
+  // whose real payload is `delivery.force` (data/force.js), continuous for as long as it's in
+  // flight near a target, same architecture as Caustic Lobber's travelAoe (#492). ──
+  gravityWell: w({    // #491: always ATTRACTS — a slow orb that drags enemies toward its path
+    id: 'gravityWell', name: 'Gravity Well', category: 'support',
+    // Deliberately the lowest direct-hit damage in the catalog — this weapon's real value is
+    // dragging a crowd together (into the rest of your fire, or off an objective), not the hit.
+    damage: 8, range: { min: 40, opt: 350, max: 500 },
+    ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s), then 2s reload
+    delivery: {
+      hit: 'projectile', path: 'straight', velocity: 220,   // slow — the field needs time near a target to matter
+      kind: 'plasma',
+      force: { radius: 130, strength: 220, sign: -1 },
+    },
+  }),
+  repulsorPulse: w({   // #499: always REPELS — a slow orb that shoves enemies off their line
+    id: 'repulsorPulse', name: 'Repulsor Pulse', category: 'support',
+    damage: 8, range: { min: 40, opt: 350, max: 500 },
+    ammoMax: 4, slots: 2, cycleTime: 1600,
+    delivery: {
+      hit: 'projectile', path: 'straight', velocity: 220,
+      kind: 'plasma',
+      force: { radius: 130, strength: 260, sign: 1 },   // slightly stronger push than the pull above — reads more forceful
+    },
   }),
 };
 

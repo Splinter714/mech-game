@@ -536,6 +536,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // impact/landing, unlike `ground` above which only starts once the round detonates). See
     // scenes/arena/projectiles.js `_tickTravelAoe`.
     travelAoe: d.travelAoe || null,
+    // #491/#499: an optional continuous push/pull tick WHILE the round is in flight, same shape
+    // as travelAoe above but nudging position instead of dealing damage. See
+    // scenes/arena/projectiles.js `_tickTravelForce`.
+    force: d.force || null,
     // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.

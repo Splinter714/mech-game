@@ -4,6 +4,7 @@
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { damageInRadius } from '../../data/aoe.js';
+import { computeImpulse } from '../../data/force.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
@@ -58,6 +59,9 @@ export const ProjectilesMixin = {
       // ticked on its own cadence independent of the hit/impact resolution below — a round with
       // no `travelAoe` (every weapon but Caustic Lobber today) never enters this block at all.
       if (p.travelAoe) this._tickTravelAoe(p);
+      // #491/#499: continuous push/pull WHILE this round is in flight — player-fired only (no
+      // force weapon has been asked for on the enemy side), acting on living enemies only.
+      if (p.force && !enemyShot) this._tickTravelForce(p);
       // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
       // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
       const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
@@ -438,6 +442,25 @@ export const ProjectilesMixin = {
       for (const other of otherLivePlayers(this, p.shooter)) {
         if (Math.hypot(other.x - p.x, other.y - p.y) < radius) this._damagePlayerAt(amount, other, { weaponId: p.weaponId });
       }
+    }
+  },
+
+  // #491/#499: `p.force` (a weapon's `delivery.force`) pushes or pulls every living enemy within
+  // radius of the round's CURRENT position, on the same fixed-cadence tick `_tickTravelAoe` uses.
+  // Ticks AFTER `_updateEnemies` has already run this frame (see ArenaScene.update's call order),
+  // so the nudge visibly sticks for the frame and each enemy's own AI re-paths from wherever it
+  // ends up next frame — that tug-of-war is the whole feel, not a bug to smooth over.
+  _tickTravelForce(p) {
+    const now = this.time.now;
+    if (p._nextForceTick == null) p._nextForceTick = now;
+    if (now < p._nextForceTick) return;
+    const { radius, strength, sign, tickMs = 250 } = p.force;
+    p._nextForceTick = now + tickMs;
+    const dt = tickMs / 1000;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const { dx, dy } = computeImpulse(p.x, p.y, radius, strength, sign, e.x, e.y, dt);
+      e.x += dx; e.y += dy;
     }
   },
 
