@@ -123,10 +123,16 @@ export const FiringMixin = {
     if (held && fireReady) {
       if (!state.charging) { state.charging = true; state.elapsed = 0; state.aimDrift = 0; state.lastAim = null; }
       state.elapsed = Math.min(w.weapon.delivery.chargeable.maxTime, state.elapsed + dt);
-      const m = this._muzzle(w.location, player);
-      const aim = this._fireAngle(w, m, player);
-      if (state.lastAim != null) state.aimDrift += Math.abs(wrapAngle(aim - state.lastAim));
-      state.lastAim = aim;
+      // Optional chaining: a few unit tests (chargeFire.test.js) drive this state machine against
+      // a minimal fake scene with no muzzle/aim system at all, on purpose — they're scoped to the
+      // charge timing, not real aim. A real ArenaScene always has both, so drift tracking is live
+      // in play; a test double without them just never accumulates any (chargeSpread stays 0).
+      const m = this._muzzle?.(w.location, player);
+      const aim = m ? this._fireAngle(w, m, player) : null;
+      if (aim != null) {
+        if (state.lastAim != null) state.aimDrift += Math.abs(wrapAngle(aim - state.lastAim));
+        state.lastAim = aim;
+      }
       return;
     }
     // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve

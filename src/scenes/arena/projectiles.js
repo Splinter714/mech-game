@@ -204,7 +204,7 @@ export const ProjectilesMixin = {
       // at maxDist regardless); dumbfire rounds never reach here.
       if (seekerLive) {
         trackHomingSteering(p, prevAngle, dt);
-        const reason = homingGiveUpReason(p, Math.hypot(tx - p.x, ty - p.y));
+        const reason = homingGiveUpReason(p, Math.hypot(tx - p.x, ty - p.y), dt);
         if (reason) beginHomingGiveUp(p, reason);
       }
       // Cover: a round that flies into a wall detonates there (arcing rounds lob over). #41: if

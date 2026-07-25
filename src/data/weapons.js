@@ -476,7 +476,7 @@ export const WEAPONS = {
     // a doorway/chokepoint with 5 mines in one pull rather than placing one at a time.
     id: 'timedCharge', name: 'Timed Charge', category: 'ballistic',
     damage: 30, range: { min: 0, opt: 150, max: 190 },   // short + absolute: aim only steers direction, not distance
-    ammoMax: 4, slots: 2, cycleTime: 1800,   // #402: ~7.2s burst (4 pulls × 1.8s), then 2s reload
+    ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
       pattern: 'spread', count: 5, spreadAngle: 55,

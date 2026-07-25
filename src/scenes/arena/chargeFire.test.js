@@ -43,14 +43,18 @@ describe('#493 _handleChargeFire — accumulates charge, fires on release', () =
     scene._handleChargeFire(w, { fire: { rightArm: true } }, 400, p, true);   // exactly minTime
     scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);
     expect(scene.fireWeapon).toHaveBeenCalledTimes(1);
-    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.minDamageMult });
+    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.minDamageMult, chargeSpread: 0 });
   });
 
-  it('holding to maxTime auto-fires at maxDamageMult without needing a release', () => {
+  it('holding past maxTime does NOT auto-fire — it just holds at the cap until released', () => {
     const scene = makeScene(), w = makeWeapon(), p = player();
     scene._handleChargeFire(w, { fire: { rightArm: true } }, 2000, p, true);   // well past maxTime
+    expect(scene.fireWeapon).not.toHaveBeenCalled();
+    expect(p.chargeState.rightArm.elapsed).toBe(CHARGEABLE.maxTime);   // capped, not still climbing
+    expect(p.chargeState.rightArm.charging).toBe(true);
+    scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);   // the actual release
     expect(scene.fireWeapon).toHaveBeenCalledTimes(1);
-    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.maxDamageMult });
+    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.maxDamageMult, chargeSpread: 0 });
   });
 
   it('a release halfway between minTime and maxTime scales linearly', () => {

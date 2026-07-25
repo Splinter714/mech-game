@@ -365,8 +365,14 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
   const d = weapon.delivery || {};
   if (d.hit === 'contact') return { mode: 'contact', shots: [shot()] };
   // #499: a `wave` weapon (Repulsor Pulse) resolves INSTANTLY as a frontal cone at the muzzle —
-  // no travelling round at all, same "one shot, no fan" shape as contact/melee above.
-  if (d.wave) return { mode: 'wave', shots: [shot()] };
+  // no travelling round at all, same "one shot, no fan" shape as contact/melee above. Still
+  // respects `countMult` (Barrage doubling every weapon in the catalog, #137) by firing the wave
+  // itself `n` times in place rather than fanning — there's no lane/spread geometry for an
+  // instant cone to expand into.
+  if (d.wave) {
+    const n = emissionCount(d, countMult);
+    return { mode: 'wave', shots: Array.from({ length: n }, () => shot()) };
+  }
   const mode = d.hit === 'hitscan' ? 'hitscan' : 'projectile';
 
   // The ONE canonical "how many things per trigger pull" number, already multiplied by any
@@ -751,18 +757,49 @@ export function homingOutOfSeekTime(p, limit = HOMING_MAX_SEEK_SEC) {
   return (p.homingSeekTime || 0) >= limit;
 }
 
+// ── Stall detection (#418 follow-up, 2026-07-25 — "still spins sometimes") ─────────────────
+// A round chasing a target that reverses its strafe mid-flight can wobble in short alternating
+// arcs without ever tripping either check above: the intercept solution flips sign on each
+// reversal, so the SIGNED net-turn counter (deliberately signed so a weaving/leading shot isn't
+// falsely accused) partially cancels itself every reversal instead of accumulating past
+// HOMING_ORBIT_TURN — and the round never recedes past its closest approach either, since it's
+// still nominally "closing" on average, just never actually landing a hit. Distance progress is
+// the tell that survives a reversing target: track the best (closest) distance seen within a
+// rolling window, and give up if the round hasn't beaten that by a real margin within
+// HOMING_STALL_SEC. A genuine intercept keeps closing well inside that window; a round trapped
+// wobbling around a reversing target does not.
+const HOMING_STALL_SEC = 1.5;         // seconds allowed with no real distance progress before giving up
+const HOMING_STALL_PROGRESS_PX = 40;  // must close at least this much to reset the stall window
+
+export function homingIsStalled(p, dist, dt, stallSec = HOMING_STALL_SEC, progressPx = HOMING_STALL_PROGRESS_PX) {
+  if (p.homingStallDist == null || dist <= p.homingStallDist - progressPx) {
+    p.homingStallDist = dist;
+    p.homingStallSince = 0;
+    return false;
+  }
+  p.homingStallSince = (p.homingStallSince || 0) + (dt || 0);
+  return p.homingStallSince >= stallSec;
+}
+
+export { HOMING_STALL_SEC, HOMING_STALL_PROGRESS_PX };
+
 // THE single "should this round stop guiding?" question, covering every way a guided round can
 // fail to resolve its target. Returns the reason string (for readability/tests) or null:
 //   'overshoot' — closed, missed, now receding past the margin (the original #418 rule)
 //   'orbit'     — circling: net one-way steering past HOMING_ORBIT_TURN
 //   'fuel'      — seeker has been live longer than any real flight
-// The caller passes the round's CURRENT distance to its target; target-lost / target-destroyed
-// / unresolvable-target are the caller's own branch (it has no distance to report) and start the
-// same give-up with reason 'targetLost'.
-export function homingGiveUpReason(p, dist) {
+//   'stall'     — no real distance progress in HOMING_STALL_SEC (a reversing-target wobble that
+//                 fools both checks above — see the comment on homingIsStalled)
+// The caller passes the round's CURRENT distance to its target, and `dt` (seconds this frame) so
+// the stall clock can accumulate; omitting `dt` (every existing caller/test that predates 'stall')
+// simply never accumulates stall time, so this is a strict addition. target-lost / target-
+// destroyed / unresolvable-target are the caller's own branch (it has no distance to report) and
+// start the same give-up with reason 'targetLost'.
+export function homingGiveUpReason(p, dist, dt = 0) {
   if (homingShouldGiveUp(p, dist)) return 'overshoot';
   if (homingIsOrbiting(p)) return 'orbit';
   if (homingOutOfSeekTime(p)) return 'fuel';
+  if (homingIsStalled(p, dist, dt)) return 'stall';
   return null;
 }
 
