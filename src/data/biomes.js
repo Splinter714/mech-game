@@ -135,14 +135,17 @@ export function getBiome(id) {
 export const RECENCY_WINDOW = 4;
 const MIN_WEIGHT = 0.15;
 
-export function pickNextBiome(history = [], rng = Math.random) {
+// #514: `pool` (defaults to every biome, exactly the prior behavior) lets a caller restrict the
+// draw to a subset — e.g. GarageScene's deploy button drawing only from `unlockedBiomes()`
+// (data/missions.js) so it can't bypass the biome-gate MissionSelectScene enforces.
+export function pickNextBiome(history = [], rng = Math.random, pool = BIOME_IDS) {
   if (!history.length) {
     // First deploy of the session (or any time the caller has no history yet): plain uniform
     // pick, no fixed starting biome.
-    return BIOME_IDS[Math.floor(rng() * BIOME_IDS.length)];
+    return pool[Math.floor(rng() * pool.length)];
   }
   const recent = history.slice(-RECENCY_WINDOW);   // oldest-first; only the tail matters
-  const weights = BIOME_IDS.map((id) => {
+  const weights = pool.map((id) => {
     // Index from the END of the recent window: 0 = picked last deploy, RECENCY_WINDOW-1 =
     // picked as long ago as this window still tracks. Not found at all -> full weight.
     const idxFromEnd = [...recent].reverse().indexOf(id);
@@ -152,9 +155,9 @@ export function pickNextBiome(history = [], rng = Math.random) {
   });
   const total = weights.reduce((s, w) => s + w, 0);
   let roll = rng() * total;
-  for (let i = 0; i < BIOME_IDS.length; i++) {
+  for (let i = 0; i < pool.length; i++) {
     roll -= weights[i];
-    if (roll <= 0) return BIOME_IDS[i];
+    if (roll <= 0) return pool[i];
   }
-  return BIOME_IDS[BIOME_IDS.length - 1];   // float-rounding fallback
+  return pool[pool.length - 1];   // float-rounding fallback
 }

@@ -16,8 +16,9 @@ import { WEAPON_IDS } from '../data/weapons.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
 import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO } from '../data/anatomy.js';
-import { MECH_DEPLOYED, RUN_CURRENCY_KEY } from '../data/events.js';
+import { MECH_DEPLOYED, RUN_CURRENCY_KEY, DEEP_MISSIONS_WON_KEY } from '../data/events.js';
 import { RECENCY_WINDOW, pickNextBiome } from '../data/biomes.js';
+import { unlockedBiomes } from '../data/missions.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
@@ -845,7 +846,11 @@ export default class GarageScene extends Phaser.Scene {
     this.registry.set('deployCount', n + 1);
     const forced = this.registry.get('debugForceBiome');
     const history = this.registry.get('biomeHistory') || [];
-    const biome = forced || pickNextBiome(history, Math.random);
+    // #514: restricted to whichever biomes are unlocked, so this button can't bypass the gate
+    // MissionSelectScene enforces. `forced` (the smoke test's debug hook) is a deliberate
+    // override and skips the pool entirely, same as it always has.
+    const deepMissionsWon = this.registry.get(DEEP_MISSIONS_WON_KEY) || 0;
+    const biome = forced || pickNextBiome(history, Math.random, unlockedBiomes(deepMissionsWon));
     if (forced) this.registry.set('debugForceBiome', null);
     this.registry.set('biomeHistory', [...history, biome].slice(-RECENCY_WINDOW));
     this.registry.set('arenaBiome', biome);
@@ -853,6 +858,10 @@ export default class GarageScene extends Phaser.Scene {
     // (a prior run's `run` registry value would otherwise look "in progress" to
     // ArenaScene._initRun, which continues an existing run rather than starting fresh).
     this.registry.set('run', null);
+    // #514: this button never offers a deep-strike mission, so explicitly clear the flag — a
+    // stale `true` left over from a MissionSelectScene deep-mission deploy earlier in the
+    // session must not falsely credit a biome unlock for an ordinary Garage-launched run.
+    this.registry.set('deepMission', false);
     // #349: which builds are taking the field. One key in solo (unchanged), both in co-op —
     // this is the ONLY thing the arena needs in order to put a second, garage-built player on
     // the field (scenes/arena/coop.js `_spawnGarageCoopPlayers`).

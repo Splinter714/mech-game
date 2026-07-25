@@ -2,23 +2,26 @@ import Phaser from 'phaser';
 import { offerMissions } from '../data/missions.js';
 import { getBiome } from '../data/biomes.js';
 import { rollOutpostThreat } from '../data/outposts.js';
-import { OUTPOSTS_KEY } from '../data/events.js';
+import { OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY } from '../data/events.js';
 import { saveOutposts } from '../data/save.js';
 import { launchMission } from './base/launchMission.js';
 
 // #510: reached by walking onto the base's scanner hex. Presents a small set of candidate runs
-// (data/missions.js `offerMissions` — currently just distinct biome picks, since there's no
-// outpost content yet to differentiate missions further) and launches whichever the player
-// clicks. Deliberately a full scene (like GarageScene) rather than a panel baked into BaseScene,
-// for the same reason GarageScene is its own scene: a modal decision screen that takes over the
-// whole view, entered and exited by a full scene swap.
+// (data/missions.js `offerMissions`) and launches whichever the player clicks. Deliberately a
+// full scene (like GarageScene) rather than a panel baked into BaseScene, for the same reason
+// GarageScene is its own scene: a modal decision screen that takes over the whole view, entered
+// and exited by a full scene swap.
 //
 // #509 Stage 5: this is also where outpost threat gets rolled (data/outposts.js
 // `rollOutpostThreat`) — "each time the base-scan/mission-select surface is opened," per the
 // #297 design conversation. There's no dedicated "defend" mission yet, so a threatened outpost
 // just shows as a warning here; committing to ANY mission resolves it (launchMission.js).
+//
+// #514: offers are gated by which biomes are unlocked (data/missions.js `unlockedBiomes`) — the
+// frontier biome's offer is flagged `isDeep` ("DEEP STRIKE"); winning it unlocks the next biome.
 const UI = {
-  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
+  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', deep: '#efc14a',
+  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
 };
 
 export default class MissionSelectScene extends Phaser.Scene {
@@ -47,7 +50,8 @@ export default class MissionSelectScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
-    const offers = offerMissions();
+    const deepMissionsWon = this.registry.get(DEEP_MISSIONS_WON_KEY) || 0;
+    const offers = offerMissions(Math.random, undefined, deepMissionsWon);
     const cardW = 220, cardH = 260, gap = 30;
     const totalW = offers.length * cardW + (offers.length - 1) * gap;
     const startX = (this.W - totalW) / 2;
@@ -74,16 +78,16 @@ export default class MissionSelectScene extends Phaser.Scene {
   _buildCard(offer, x, y, w, h) {
     const biome = getBiome(offer.biomeId);
     const rect = this.add.rectangle(x + w / 2, y + h / 2, w, h, UI.btn, 1)
-      .setStrokeStyle(2, UI.panelEdge)
+      .setStrokeStyle(2, offer.isDeep ? UI.deep : UI.panelEdge)
       .setInteractive({ useHandCursor: true });
     this.add.text(x + w / 2, y + 30, biome.name.toUpperCase(), {
       fontFamily: 'monospace', fontSize: '16px', fontStyle: 'bold', color: UI.text,
     }).setOrigin(0.5);
-    this.add.text(x + w / 2, y + h - 30, 'EXPLORE', {
-      fontFamily: 'monospace', fontSize: '12px', color: UI.accent,
+    this.add.text(x + w / 2, y + h - 30, offer.isDeep ? 'DEEP STRIKE' : 'EXPLORE', {
+      fontFamily: 'monospace', fontSize: '12px', color: offer.isDeep ? UI.deep : UI.accent,
     }).setOrigin(0.5);
     rect.on('pointerover', () => rect.setFillStyle(UI.btnHover));
     rect.on('pointerout', () => rect.setFillStyle(UI.btn));
-    rect.on('pointerdown', () => launchMission(this, offer.biomeId));
+    rect.on('pointerdown', () => launchMission(this, offer.biomeId, offer.isDeep));
   }
 }

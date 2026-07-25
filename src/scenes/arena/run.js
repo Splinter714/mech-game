@@ -17,8 +17,8 @@
 import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
 } from '../../data/run.js';
-import { RUN_CURRENCY_KEY, OUTPOSTS_KEY } from '../../data/events.js';
-import { saveRunCurrency, saveOutposts } from '../../data/save.js';
+import { RUN_CURRENCY_KEY, OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY } from '../../data/events.js';
+import { saveRunCurrency, saveOutposts, saveDeepMissionsWon } from '../../data/save.js';
 import { claimOutpost } from '../../data/outposts.js';
 import { allPlayersDeadIn } from './players.js';
 
@@ -136,6 +136,15 @@ export const RunMixin = {
     const label = won ? 'RUN COMPLETE' : 'RUN OVER';
     const color = won ? '#7bd17b' : '#e2533a';
     this.registry.set('runOverBanner', { label, color, currency: this.run.currency });
+
+    // #514: winning a run launched as a deep mission (MissionSelectScene's "DEEP STRIKE" offer)
+    // unlocks the next biome. `deepMission` is set unconditionally by launchMission.js each
+    // deploy, so a loss or an ordinary explore run never falsely credits one.
+    if (won && this.registry.get('deepMission')) {
+      const n = (this.registry.get(DEEP_MISSIONS_WON_KEY) || 0) + 1;
+      this.registry.set(DEEP_MISSIONS_WON_KEY, n);
+      saveDeepMissionsWon(n);
+    }
 
     // Refs #281: keep a handle on this timer so a manual return-to-garage (toGarage(), called
     // directly by the G key / Select-B pad exit — see toGarage()'s own comment) can cancel it.

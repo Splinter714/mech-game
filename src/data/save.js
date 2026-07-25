@@ -149,4 +149,27 @@ export function saveOutposts(outposts) {
   }
 }
 
+// #514: how many "deep missions" the player has won (data/missions.js `unlockedBiomes` reads
+// this to decide which biomes are unlocked). Mirrors the run-currency pattern — a plain number,
+// defaults to 0, never throws.
+const DEEP_MISSIONS_WON_STORAGE_KEY = 'mech-game-deep-missions-won-v1';
+
+export function loadDeepMissionsWon() {
+  try {
+    const raw = localStorage.getItem(DEEP_MISSIONS_WON_STORAGE_KEY);
+    const n = raw != null ? Number(JSON.parse(raw)) : 0;
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveDeepMissionsWon(n) {
+  try {
+    localStorage.setItem(DEEP_MISSIONS_WON_STORAGE_KEY, JSON.stringify(n));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
 export { RUN_CURRENCY_KEY };

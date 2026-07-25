@@ -16,3 +16,8 @@ export const RUN_CURRENCY_KEY = 'runCurrency';
 // #511/#512: the registry key for the player's claimed outposts (data/outposts.js), loaded once
 // at boot (save.js loadOutposts) and persisted (saveOutposts) whenever it changes.
 export const OUTPOSTS_KEY = 'outposts';
+
+// #514: the registry key for how many "deep missions" the player has won — data/missions.js
+// `unlockedBiomes` reads this to decide which biomes are unlocked. Loaded once at boot
+// (save.js loadDeepMissionsWon) and persisted (saveDeepMissionsWon) on a deep-mission win.
+export const DEEP_MISSIONS_WON_KEY = 'deepMissionsWon';

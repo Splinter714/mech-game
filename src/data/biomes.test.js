@@ -194,4 +194,20 @@ describe('pickNextBiome (#217)', () => {
       expect(BIOME_IDS.includes(pickNextBiome([BIOME_IDS[0], BIOME_IDS[1]], () => r))).toBe(true);
     }
   });
+
+  // #514: a restricted `pool` never picks outside it — GarageScene's deploy button uses this so
+  // it can't bypass the biome-gate MissionSelectScene enforces.
+  it('a restricted pool never draws outside it, with or without history', () => {
+    const pool = [BIOME_IDS[0], BIOME_IDS[1]];
+    for (let i = 0; i < 200; i++) {
+      expect(pool).toContain(pickNextBiome([], Math.random, pool));
+      expect(pool).toContain(pickNextBiome([BIOME_IDS[0]], Math.random, pool));
+    }
+  });
+
+  it('a single-biome pool always returns that biome', () => {
+    const pool = [BIOME_IDS[0]];
+    expect(pickNextBiome([], () => 0.5, pool)).toBe(BIOME_IDS[0]);
+    expect(pickNextBiome([BIOME_IDS[0]], () => 0.5, pool)).toBe(BIOME_IDS[0]);
+  });
 });

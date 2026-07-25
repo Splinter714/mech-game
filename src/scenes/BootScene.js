@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { buildBaseTextures } from '../art/index.js';
-import { ROSTER_SPECIES, loadRunCurrency, loadOutposts } from '../data/save.js';
-import { RUN_CURRENCY_KEY, OUTPOSTS_KEY } from '../data/events.js';
+import { ROSTER_SPECIES, loadRunCurrency, loadOutposts, loadDeepMissionsWon } from '../data/save.js';
+import { RUN_CURRENCY_KEY, OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY } from '../data/events.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
 import { loadAllOverrides } from '../audio/sfxOverrides.js';
@@ -23,6 +23,8 @@ export default class BootScene extends Phaser.Scene {
     this.registry.set(RUN_CURRENCY_KEY, loadRunCurrency());
     // #511/#512: claimed outposts (existence + status only) persist across page loads too.
     this.registry.set(OUTPOSTS_KEY, loadOutposts());
+    // #514: how many deep missions have been won (drives which biomes are unlocked).
+    this.registry.set(DEEP_MISSIONS_WON_KEY, loadDeepMissionsWon());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).

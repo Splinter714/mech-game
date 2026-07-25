@@ -11,7 +11,7 @@ import { RECENCY_WINDOW } from '../../data/biomes.js';
 import { saveAllMechs, saveOutposts } from '../../data/save.js';
 import { resolveAllUndefendedLosses } from '../../data/outposts.js';
 
-export function launchMission(scene, biomeId) {
+export function launchMission(scene, biomeId, isDeep = false) {
   const allMechs = scene.registry.get('allMechs');
   const mech = allMechs?.[ACTIVE_MECH_KEY];
   if (!mech || !mech.isComplete()) {
@@ -27,6 +27,10 @@ export function launchMission(scene, biomeId) {
   scene.registry.set('arenaBiome', biomeId);
   scene.registry.set('run', null);
   scene.registry.set('coopMechKeys', [ACTIVE_MECH_KEY]);
+  // #514: flagged so run.js's _endRun knows a WIN here should count toward unlocking the next
+  // biome. Set unconditionally (not just when true) so a later non-deep deploy can't inherit a
+  // stale flag from a previous sortie.
+  scene.registry.set('deepMission', !!isDeep);
   // #509 Stage 5: there's no dedicated "defend" mission yet, so committing to ANY mission while
   // an outpost is under attack counts as not defending it — resolves every currently-attacked
   // outpost's loss check right here. A real defend-mission type (future work) would exempt
