@@ -110,6 +110,20 @@ export function fillShield(shield) {
   if (shieldPresent(shield)) shield.hp = shield.max;
 }
 
+// #495 (co-op respawn follow-up): the opposite of `fillShield` — instant EMPTY, plus clearing
+// the hit-pause so regen can start on the very next tick rather than waiting out a leftover
+// PAUSE window inherited from the death blow. A mech can die with any amount of charge on the
+// shield (e.g. a cockpit kill with the shield still half up), so "empty" has to be set
+// explicitly rather than assumed; `Mech.repairAll({ shield: false })` already skips the
+// full-refill `fillShield` call, this is the paired "make it actually zero" step for the one
+// caller (arena/coop.js `_respawnPlayer`) that wants a mech to come back with NO shield and
+// regen it the normal way, same as if it had just taken a big hit mid-fight.
+export function emptyShield(shield) {
+  if (!shield) return;
+  shield.hp = 0;
+  shield.pauseRemaining = 0;
+}
+
 // #381/#417: grant a TEMPORARY shield pool of `amount`. The pool PERSISTS UNTIL SPENT by incoming
 // damage — it does NOT time-expire; only `damageShield` shrinks it. #417: the grant is ADDITIVE and
 // UNCAPPED — each pickup ADDS its full `amount` ON TOP of whatever temp shield is already live, so

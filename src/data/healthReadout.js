@@ -18,14 +18,18 @@
 //                 THREE layers ride that same ramp, each by its OWN fraction (armor and shield
 //                 coloured in HudScene, structure here), so the readout speaks one colour language.
 //   'fused'     — #495: no separate block at all — armor/structure/shield fuse directly onto the
-//                 four weapon skill tiles. Per-tile PERIMETER = armor (the same drain-around-the-
-//                 frame trick paperdoll's outline uses, `perimeterRun`, just run against the tile's
-//                 own rect); per-tile WASH = structure (`structureColor`, painted over the tile's
-//                 own art rather than a separate cell); and ONE whole-mech shield DOME arcing over
-//                 the top+sides of the whole row (`shieldArcLayout`, below — a new shape: two
-//                 mirrored arcs that retract toward a shared 12-o'clock apex, not `ringSweep`'s
-//                 single clockwise sweep and not paperdoll's rectangular perimeter). All three still
-//                 ride the same structure-colour ramp, same as paperdoll.
+//                 four weapon skill tiles. Per-tile WASH = structure (`structureColor`, painted
+//                 over the tile's own art rather than a separate cell); per-tile DRAIN = armor —
+//                 a playtest follow-up replaced the original drain-around-the-frame perimeter
+//                 (`perimeterRun`, still what paperdoll's outline uses) with `armorDrainRect`,
+//                 below: a top-to-bottom "draining tank" overlay, because Jackson wanted armor to
+//                 read as depleting DOWN the tile, not around its edge; and ONE whole-mech shield
+//                 DOME arcing over the top+sides of the whole row (`shieldArcLayout`, below — a
+//                 shape of its own: two mirrored arcs, not `ringSweep`'s single clockwise sweep and
+//                 not paperdoll's rectangular perimeter). Structure still rides the structure-
+//                 colour ramp, same as paperdoll; armor now rides the target disc's own fixed
+//                 armor tone instead (see `armorDrainRect`'s own note) so it reads as a distinct
+//                 layer from structure rather than a second copy of the same ramp.
 //
 // An earlier fourth mode, the Diablo/PoE-style ORB readout, was built for that comparison and
 // DELETED after it (Jackson: "remove the circle option") — layout, fill polygon, paint path and
@@ -257,6 +261,27 @@ export function perimeterRun(rect, frac) {
   return pts;
 }
 
+// ── ARMOR DRAIN (fused) ─────────────────────────────────────────────────────────────────────
+//
+// #495 playtest (Jackson: "armor should not deplete AROUND the ability, it should deplete from
+// top to bottom"): replaces the fused readout's original per-tile PERIMETER (`perimeterRun`, run
+// against the tile's own rect — still what paperdoll's segment outline uses) with a DRAINING TANK
+// overlay instead. Full armor covers the tile top-to-bottom; as armor drains, the covered band's
+// TOP edge recedes downward, so what survives visually sits at the tile's own BOTTOM and shrinks
+// upward as armor is lost — never sideways, never around the frame.
+//
+// Pure geometry only: given the tile's own rect and the live armor fraction (0..1), returns the
+// overlay's own `{ x, y, w, h }` — full width, bottom pinned to the tile's own bottom edge, top
+// at `rect.y + rect.h * (1 - frac)` — plus `full`, true only at frac >= 1, so the paint step can
+// round the overlay's TOP corners to match the tile's own plate only when the overlay truly
+// covers the whole tile; a partial drain's top edge is a flat line, not a rounded corner, because
+// that's the drain line itself — the only part of the shape that actually moves.
+export function armorDrainRect(rect, frac) {
+  const f = Math.max(0, Math.min(1, frac ?? 0));
+  const h = f * rect.h;
+  return { x: rect.x, y: rect.y + (rect.h - h), w: rect.w, h, full: f >= 1 };
+}
+
 // ── SHIELD ARC (fused) ──────────────────────────────────────────────────────────────────────
 //
 // #495: the fused readout's shield is a DOME/CANOPY over the top+sides of the whole tile row —
@@ -273,11 +298,15 @@ export function perimeterRun(rect, frac) {
 // reach `overhang` px past the row's own edges and `rise` px above its top regardless of the row's
 // own proportions.
 export const SHIELD_ARC = {
-  overhang: 16,    // how far past the row's own left/right edges the dome's ends reach
-  rise: 26,        // how far above the row's own top edge the apex sits
-  sideDrop: 0.55,  // where the dome's ends land, as a fraction DOWN the row's own height — this is
-                   // what makes it hug the tiles' SIDES rather than stop dead level with their tops
-  steps: 10,       // polyline resolution per half-arc (mirrors `perimeterRun`'s plain-polyline idiom)
+  overhang: 16,   // how far past the row's own left/right edges the dome's ends reach
+  rise: 26,       // how far above the row's own top edge the apex sits
+  // #495 playtest (Jackson: "the shield arc should wrap the row of four ability buttons"): the
+  // ends now land at the row's own BOTTOM edge (1.0 = full row height) rather than ~55% down it,
+  // so each side genuinely wraps the tiles' full height instead of just arching over their tops
+  // — a capsule/bracket enclosing the row, not a partial droop. The apex height is unaffected:
+  // it's fixed at `rise` above the row's own top (`ecy - ry` below), independent of `sideDrop`.
+  sideDrop: 1.0,
+  steps: 10,      // polyline resolution per half-arc (mirrors `perimeterRun`'s plain-polyline idiom)
 };
 
 // One point on the dome's ellipse at angle `t` (radians, screen convention: 0 = +x, increasing
@@ -302,6 +331,15 @@ function domeArc(cx, ecy, rx, ry, a0, a1, steps) {
 // ALWAYS-drawn dim TRACK — the full dome, both ends fully extended, the same "empty space stays
 // legible" rule every other layer's backing follows — plus the two mirrored LIT arcs: empty at
 // frac 0, a full quarter-turn each at frac 1.
+//
+// #495 playtest (Jackson: shield should deplete from the MIDDLE out, not the sides in): each lit
+// arc is anchored at its OUTER end — `leftOuter`/`rightOuter`, the side stub nearest the tile
+// row's own edge — and grows TOWARD the shared apex as the fraction rises. So at frac 1 both arcs
+// reach all the way to the apex (the full dome); as the shield drains the reach shrinks back
+// toward the outer end, opening a gap at top-centre first and widening it outward, until at frac 0
+// nothing is left at all. This is the mirror image of the original cut, which anchored at the
+// apex and grew OUTWARD — meaning a half-shield used to read as "the centre survived, the sides
+// are gone," backwards from what a canopy retracting under fire should look like.
 export function shieldArcLayout(rect, frac) {
   const S = SHIELD_ARC;
   const cx = rect.x + rect.w / 2;
@@ -310,16 +348,20 @@ export function shieldArcLayout(rect, frac) {
   const ry = (ecy - rect.y) + S.rise;
   const apex = -Math.PI / 2;
   const quarter = Math.PI / 2;
+  const leftOuter = apex - quarter;
+  const rightOuter = apex + quarter;
   const f = Math.max(0, Math.min(1, frac ?? 0));
   const reach = f * quarter;
   return {
     cx, cy: ecy, rx, ry,
     track: [
-      ...domeArc(cx, ecy, rx, ry, apex, apex - quarter, S.steps).reverse(),
-      ...domeArc(cx, ecy, rx, ry, apex, apex + quarter, S.steps).slice(1),
+      ...domeArc(cx, ecy, rx, ry, apex, leftOuter, S.steps).reverse(),
+      ...domeArc(cx, ecy, rx, ry, apex, rightOuter, S.steps).slice(1),
     ],
-    left: reach > 0 ? domeArc(cx, ecy, rx, ry, apex, apex - reach, S.steps) : [],
-    right: reach > 0 ? domeArc(cx, ecy, rx, ry, apex, apex + reach, S.steps) : [],
+    // Each lit arc runs OUTER → apex, so index 0 is always the fixed outer stub and the LAST
+    // point is how far it has grown toward the shared apex — the opposite indexing from before.
+    left: reach > 0 ? domeArc(cx, ecy, rx, ry, leftOuter, leftOuter + reach, S.steps) : [],
+    right: reach > 0 ? domeArc(cx, ecy, rx, ry, rightOuter, rightOuter - reach, S.steps) : [],
   };
 }
 

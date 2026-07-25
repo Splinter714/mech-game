@@ -4,7 +4,7 @@ import {
   paperDollLayout, perimeterRun, PAPER_DOLL,
   mechPools, noneLayout,
   structureColor, hslToInt, STRUCTURE_RAMP,
-  fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC,
+  fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC, armorDrainRect,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
@@ -218,6 +218,56 @@ describe('#448 perimeter run (an outline that can show a fraction)', () => {
   });
 });
 
+// #495 playtest (Jackson: "armor should not deplete AROUND the ability, it should deplete from
+// top to bottom"): the fused readout's per-tile armor geometry, replacing `perimeterRun` for
+// that one layer — a draining-tank overlay anchored to the tile's own bottom edge.
+describe('#495 armor drain rect (fused, top-to-bottom)', () => {
+  const rect = { x: 100, y: 200, w: 40, h: 60 };
+
+  it('is zero-height at frac 0 and covers the whole tile at frac 1', () => {
+    const empty = armorDrainRect(rect, 0);
+    expect(empty.h).toBe(0);
+    const full = armorDrainRect(rect, 1);
+    expect(full.h).toBe(rect.h);
+    expect(full.y).toBe(rect.y);
+    expect(full.full).toBe(true);
+  });
+
+  it('is bottom-pinned: the overlay always reaches the tile\'s own bottom edge', () => {
+    for (const f of [0.1, 0.5, 0.9, 1]) {
+      const d = armorDrainRect(rect, f);
+      expect(d.y + d.h).toBeCloseTo(rect.y + rect.h, 6);
+    }
+  });
+
+  it("the TOP edge recedes downward as the fraction drops — never sideways", () => {
+    const d3 = armorDrainRect(rect, 0.3);
+    const d7 = armorDrainRect(rect, 0.7);
+    expect(d3.x).toBe(rect.x);
+    expect(d7.x).toBe(rect.x);
+    expect(d3.w).toBe(rect.w);
+    expect(d7.w).toBe(rect.w);
+    // Less armor ⇒ a shorter overlay ⇒ its top edge sits FURTHER down (a bigger y) than a
+    // healthier tile's — the "drains downward" behaviour Jackson asked for.
+    expect(d3.y).toBeGreaterThan(d7.y);
+  });
+
+  it('height scales linearly with the fraction', () => {
+    expect(armorDrainRect(rect, 0.25).h).toBeCloseTo(0.25 * rect.h, 6);
+    expect(armorDrainRect(rect, 0.75).h).toBeCloseTo(0.75 * rect.h, 6);
+  });
+
+  it('`full` is true only at frac >= 1 — a partial drain\'s top edge stays a flat, unrounded line', () => {
+    expect(armorDrainRect(rect, 0.99).full).toBe(false);
+    expect(armorDrainRect(rect, 1).full).toBe(true);
+  });
+
+  it('clamps out-of-range fractions', () => {
+    expect(armorDrainRect(rect, 1.5)).toEqual(armorDrainRect(rect, 1));
+    expect(armorDrainRect(rect, -0.4).h).toBe(0);
+  });
+});
+
 describe('#448 whole-mech aggregate pools', () => {
   const mech = (parts, shield = null) => ({
     parts,
@@ -356,10 +406,29 @@ describe('#495 shield arc (fused)', () => {
     expect(full.right.length).toBe(SHIELD_ARC.steps + 1);
   });
 
-  it("both arcs share the SAME apex point — the shared 12 o'clock they retract toward", () => {
+  // #495 playtest (Jackson: shield should deplete from the MIDDLE out, not the sides in): each
+  // arc is now anchored at its OUTER end (index 0) and grows toward the shared apex as the
+  // fraction rises — the reverse of the original cut, which anchored at the apex (index 0) and
+  // grew outward. So at full shield, the apex is the LAST point of each arc, not the first.
+  it("both arcs reach the SAME apex point at full shield — the shared 12 o'clock they meet at", () => {
     const full = shieldArcLayout(rect, 1);
-    expect(full.left[0]).toEqual(full.right[0]);
-    expect(full.left[0].y).toBeLessThan(rect.y);   // and it clears the row's own top edge
+    const leftApex = full.left[full.left.length - 1];
+    const rightApex = full.right[full.right.length - 1];
+    expect(leftApex).toEqual(rightApex);
+    expect(leftApex.y).toBeLessThan(rect.y);   // and it clears the row's own top edge
+  });
+
+  // The literal playtest ask: at LOW shield only two stubs near the outer sides survive, and the
+  // gap at top-centre (the apex end of each arc) is what's missing.
+  it('at low shield only a stub near each OUTER side survives — the apex end is what vanished first', () => {
+    const low = shieldArcLayout(rect, 0.15);
+    expect(low.left.length).toBeGreaterThan(1);
+    // The surviving points are the OUTER end (index 0) growing a short way toward the apex —
+    // none of them should have reached anywhere near the apex's own height.
+    const apexY = shieldArcLayout(rect, 1).left[shieldArcLayout(rect, 1).left.length - 1].y;
+    for (const pt of low.left) expect(pt.y).toBeGreaterThan(apexY);
+    // And the fixed outer stub itself (index 0) is unchanged regardless of how little survives.
+    expect(low.left[0]).toEqual(shieldArcLayout(rect, 1).left[0]);
   });
 
   it("is symmetric: the left arc mirrors the right arc around the row's own centre-x", () => {
@@ -392,15 +461,26 @@ describe('#495 shield arc (fused)', () => {
   it('the track runs left-end → apex → right-end as one continuous polyline', () => {
     const { track } = shieldArcLayout(rect, 1);
     const full = shieldArcLayout(rect, 1);
-    expect(track[0]).toEqual(full.left[full.left.length - 1]);
-    expect(track[track.length - 1]).toEqual(full.right[full.right.length - 1]);
+    expect(track[0]).toEqual(full.left[0]);
+    expect(track[track.length - 1]).toEqual(full.right[0]);
   });
 
   it('the dome clears the row: above the top edge, past both side edges', () => {
     const full = shieldArcLayout(rect, 1);
-    expect(full.left[0].y).toBeLessThan(rect.y);
-    expect(full.left[full.left.length - 1].x).toBeLessThan(rect.x);
-    expect(full.right[full.right.length - 1].x).toBeGreaterThan(rect.x + rect.w);
+    const leftApex = full.left[full.left.length - 1];
+    expect(leftApex.y).toBeLessThan(rect.y);
+    expect(full.left[0].x).toBeLessThan(rect.x);
+    expect(full.right[0].x).toBeGreaterThan(rect.x + rect.w);
+  });
+
+  // #495 playtest (Jackson: "the shield arc should wrap the row of four ability buttons"): each
+  // side now genuinely wraps down the FULL height of the tile row — the outer end lands exactly
+  // at the row's own bottom edge, not partway down it — reading as a capsule/bracket enclosing
+  // the row rather than an arch with a partial droop.
+  it("each side's outer end reaches the row's own BOTTOM edge — a full wrap, not a partial droop", () => {
+    const full = shieldArcLayout(rect, 1);
+    expect(full.left[0].y).toBeCloseTo(rect.y + rect.h, 5);
+    expect(full.right[0].y).toBeCloseTo(rect.y + rect.h, 5);
   });
 
   it('clamps out-of-range fractions to the endpoints', () => {

@@ -20,7 +20,7 @@ import {
 import {
   normalizeReadoutMode, nextReadoutMode,
   paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
-  fusedLayout, shieldArcLayout, FUSED_DOME_RISE,
+  fusedLayout, shieldArcLayout, FUSED_DOME_RISE, armorDrainRect,
 } from '../data/healthReadout.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
@@ -1525,14 +1525,16 @@ export default class HudScene extends Phaser.Scene {
   }
 
   // FUSED: #495. Armor/structure/shield fuse directly onto the four skill tiles rather than a
-  // separate block beside them. Per-tile PERIMETER = armor (`perimeterRun`, exactly the paper
-  // doll's trick, just run against the tile's OWN rect); per-tile WASH = structure
-  // (`structureColor`, painted straight over the tile instead of a separate cell — this mode has
-  // no cell of its own, the tile IS the segment); and ONE whole-mech shield DOME arcing over the
-  // top+sides of the row (`shieldArcLayout` — new geometry, see that module for why it isn't
-  // `ringSweep` or the paper doll's rectangular outline). Painted into `panel.fusedGfx`, which is
-  // added to the scene AFTER the tile row (see `_makePanel`) so it draws ON TOP of the tiles —
-  // `partBarsGfx` (every other mode's layer) draws BEFORE them and would be invisible here.
+  // separate block beside them. Per-tile WASH = structure (`structureColor`, painted straight
+  // over the tile instead of a separate cell — this mode has no cell of its own, the tile IS the
+  // segment); per-tile DRAIN = armor (`armorDrainRect` — a playtest follow-up: a top-to-bottom
+  // "draining tank" overlay, not the perimeter trick paperdoll's outline still uses, because
+  // Jackson wanted armor reading as depleting DOWN the tile rather than around its edge); and ONE
+  // whole-mech shield DOME arcing over the top+sides of the row (`shieldArcLayout` — its own
+  // geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
+  // outline). Painted into `panel.fusedGfx`, which is added to the scene AFTER the tile row (see
+  // `_makePanel`) so it draws ON TOP of the tiles — `partBarsGfx` (every other mode's layer) draws
+  // BEFORE them and would be invisible here.
   _paintFusedReadout(panel, mech) {
     const g = panel.fusedGfx;
     if (!g) return;
@@ -1553,15 +1555,26 @@ export default class HudScene extends Phaser.Scene {
       g.fillStyle(destroyed ? DOLL_DEAD_CELL : structureColor(hpFrac), destroyed ? 0.75 : 0.18 + (1 - hpFrac) * 0.42);
       g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, R);
 
-      // Armor: the tile's own perimeter, draining exactly like the paper doll's segment outline —
-      // dim full track, lit run over `armorFrac`, same ramp so all three fused layers still speak
-      // one colour language.
+      // Armor: a draining-tank overlay anchored to the tile's own BOTTOM edge (`armorDrainRect`) —
+      // full armor covers the tile top-to-bottom, and as it drains the covered band's top edge
+      // recedes downward, so what's left sits at the bottom and shrinks upward. Uses the target
+      // disc's own fixed armor tones (ARMOR_PLATE/ARMOR_RIM), not the structure colour ramp — a
+      // deliberate playtest choice so armor reads as a layer distinct from the structure wash
+      // underneath it rather than a second copy of the same ramp.
       g.lineStyle(2, BAR_EDGE, 0.9);
       g.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      const run = perimeterRun(rect, armorFrac);
-      if (run.length > 1) {
-        g.lineStyle(2.5, destroyed ? ARMOR_SEAM : structureColor(armorFrac), 1);
-        g.strokePoints(run, false);
+      const drain = armorDrainRect(rect, armorFrac);
+      if (drain.h > 0.5) {
+        const radii = { tl: drain.full ? R : 0, tr: drain.full ? R : 0, bl: R, br: R };
+        g.fillStyle(destroyed ? ARMOR_SEAM : ARMOR_PLATE, destroyed ? 0.5 : 0.6);
+        g.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, radii);
+        // The lit edge is the drain LINE itself — the one part of the overlay that actually
+        // moves, so it's the one thing a glance needs to read "how much armor is left."
+        g.lineStyle(1.5, destroyed ? ARMOR_SEAM : ARMOR_RIM, 0.95);
+        g.beginPath();
+        g.moveTo(drain.x, drain.y);
+        g.lineTo(drain.x + drain.w, drain.y);
+        g.strokePath();
       }
       if (destroyed) {
         g.lineStyle(1.5, HP_COLOR, 0.9);

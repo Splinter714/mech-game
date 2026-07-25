@@ -46,12 +46,18 @@ function stub(extra = {}) {
     add() { return o; },
     removeAll() { return o; },
     clear() { return o; },
-    fillStyle() { return o; },
+    fillStyle(color, alpha) { o._fillColor = color; o._fillAlpha = alpha; return o; },
     fillRect() { return o; },
     lineStyle(_w, color) { o._lineColor = color; return o; },
     strokeRect() { return o; },
     // #452: the console shell, the recessed bays and the rounded skill-tile plates.
-    fillRoundedRect() { return o; },
+    // #495: also the fused readout's per-tile HP wash and armor drain overlay — tracked (colour +
+    // geometry) so the armor-drain tests below can assert the overlay anchors to the tile's own
+    // BOTTOM edge and grows/shrinks in HEIGHT rather than being a stroked outline any more.
+    fillRoundedRect(x, y, w, h) {
+      (o.fillRuns ??= []).push({ color: o._fillColor, alpha: o._fillAlpha, x, y, w, h });
+      return o;
+    },
     strokeRoundedRect() { return o; },
     fillCircle() { return o; },
     // #448: the paper doll's draining outlines.
@@ -720,17 +726,44 @@ describe('HudScene health readout modes (#448)', () => {
       expect(p.statusText.text).toMatch(/RESPAWN/);
     });
 
-    it('strokes a draining armor outline directly on a damaged tile', () => {
+    // #495 playtest (Jackson: "armor should not deplete AROUND the ability, it should deplete
+    // from top to bottom"): the per-tile armor overlay is now a filled band anchored to the
+    // tile's own BOTTOM edge, whose height tracks the live armor fraction — not a stroked
+    // perimeter any more, and specifically NOT one that drains sideways/around the frame.
+    it('drains the per-tile armor overlay from the top down, anchored to the bottom edge', () => {
       const { scene } = fusedScene();
       const mech = new Mech({ chassisId: 'medium' });
-      mech.applyDamage('leftArm', 20);
+      mech.applyDamage('leftArm', 20);   // dents the arm's armor without destroying it
       scene._updateIntegrity(scene.panels[0], mech);
-      expect(scene.panels[0].fusedGfx.strokedPoints.length).toBeGreaterThan(1);
+      const rect = scene.panels[0].skillRefs.leftArm.rect;
+      const part = mech.parts.leftArm;
+      const armorFrac = part.armor / part.maxArmor;
+      const runs = scene.panels[0].fusedGfx.fillRuns ?? [];
+      // Distinguish the armor run from the HP wash run (which always covers the FULL tile
+      // height) by its height tracking the live armor fraction instead.
+      const armorRun = runs.find((r) => Math.abs(r.h - armorFrac * rect.h) < 0.5);
+      expect(armorRun).toBeTruthy();
+      // Bottom-pinned: the overlay's bottom edge sits exactly on the tile's own bottom edge...
+      expect(armorRun.y + armorRun.h).toBeCloseTo(rect.y + rect.h, 5);
+      // ...and its TOP edge has receded DOWN below the tile's own top, since armor isn't full.
+      expect(armorRun.y).toBeGreaterThan(rect.y);
     });
 
-    // #495: all three fused layers still ride the ONE structure-colour ramp, same as the paper
-    // doll — a low-armor tile's ring reads red, a half-shield dome reads purple-ish, etc.
-    it('colours the per-tile armor outline and the shield dome through the SAME structure ramp', () => {
+    it('a full-armor tile is covered top-to-bottom — the overlay reaches the tile\'s own top edge', () => {
+      const { scene } = fusedScene();
+      const mech = new Mech({ chassisId: 'medium' });   // undamaged: every location at full armor
+      scene._updateIntegrity(scene.panels[0], mech);
+      const rect = scene.panels[0].skillRefs.leftArm.rect;
+      const runs = scene.panels[0].fusedGfx.fillRuns ?? [];
+      const armorRun = runs.find((r) => Math.abs(r.h - rect.h) < 0.5);
+      expect(armorRun).toBeTruthy();
+      expect(armorRun.y).toBeCloseTo(rect.y, 5);
+    });
+
+    // #495: armor now rides the target disc's own fixed armor tone rather than the structure
+    // ramp — a deliberate playtest choice so it reads as a layer distinct from the HP wash, which
+    // still rides the ramp. The shield dome is unaffected and still rides the ramp too.
+    it('colours the shield dome through the structure ramp but NOT the armor overlay', () => {
       const { scene } = fusedScene();
       const armorFrac = 0.3, shieldFrac = 0.6;
       const mech = {
@@ -743,9 +776,10 @@ describe('HudScene health readout modes (#448)', () => {
         shieldTotalHp: () => 6,
       };
       scene._paintFusedReadout(scene.panels[0], mech);
-      const runColors = (scene.panels[0].fusedGfx.strokeRuns ?? []).map((r) => r.color);
-      expect(runColors).toContain(structureColor(armorFrac));
-      expect(runColors).toContain(structureColor(shieldFrac));
+      const strokeColors = (scene.panels[0].fusedGfx.strokeRuns ?? []).map((r) => r.color);
+      const fillColors = (scene.panels[0].fusedGfx.fillRuns ?? []).map((r) => r.color);
+      expect(strokeColors).toContain(structureColor(shieldFrac));
+      expect(fillColors).not.toContain(structureColor(armorFrac));
     });
 
     it('draws no shield dome at all for a build with no shield — its slot is simply absent', () => {

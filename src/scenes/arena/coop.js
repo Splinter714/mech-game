@@ -17,6 +17,7 @@ import { initialSprintState } from '../../data/sprint.js';
 import { initialDashState } from '../../data/dash.js';
 import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
 import { mechColorFor } from '../../data/mechColors.js';
+import { emptyShield } from '../../data/shield.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
 import {
@@ -414,7 +415,14 @@ export const CoopMixin = {
     const pt = this._validPlayerPos(pickRespawnPoint(view, threats, {
       isValid: (x, y) => this._isPassablePos(x, y),
     }));
-    player.mech.repairAll();
+    // #495 playtest: shields must not "recharge" on respawn. A mech can die with any charge on
+    // the shield at all (e.g. a cockpit kill with the shield still half up), so `repairAll`
+    // skips its own full shield fill (`{ shield: false }`) and this explicitly zeroes it instead
+    // — a respawned mech always comes back with NO shield and regens it through the normal
+    // mechanic (data/shield.js), same as if it had just taken a big hit mid-fight, not a free
+    // top-up for dying.
+    player.mech.repairAll({ shield: false });
+    emptyShield(player.mech.shield);
     player.mech.tickShield?.(0);
     player.x = pt.x; player.y = pt.y;
     player.vx = 0; player.vy = 0; player.speed = 0;

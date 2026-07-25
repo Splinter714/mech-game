@@ -361,6 +361,30 @@ describe('co-op placement always lands on passable ground (#348)', () => {
     expect(scene._validPlayerPos({ x: 12345, y: -999 })).toEqual({ x: 12345, y: -999 });
     expect(scene._isPassablePos(12345, -999)).toBe(true);
   });
+
+  // #495 playtest: a mid-run respawn must NOT come back with a "recharged" shield — the mech
+  // should return at zero shield charge and regen it through the normal mechanic, same as taking
+  // a big hit. This is distinct from every other `repairAll()` caller (garage/fresh-sortie deploy,
+  // enemy repair), which ARE a genuine full heal and stay untouched.
+  it('a respawn skips the shield refill and comes back at zero charge, pause cleared', () => {
+    const terrain = corridorTerrain();
+    const scene = arenaScene(terrain, { enemies: [{ x: 0, y: 400, mech: { isDestroyed: () => false } }] });
+    const p = scene.b;
+    p.dead = true;
+    const repairAllCalls = [];
+    p.mech = {
+      isDestroyed: () => false,
+      repairAll(opts) { repairAllCalls.push(opts); },
+      tickShield: () => {},
+      // A shield left partially charged at the moment of death (e.g. a cockpit kill) — the bug
+      // this fix closes is exactly this value surviving a respawn unchanged.
+      shield: { max: 40, hp: 22, pauseRemaining: 1800 },
+    };
+    scene._respawnPlayer(p);
+    expect(repairAllCalls).toEqual([{ shield: false }]);   // armor/hp/ammo still fully restored
+    expect(p.mech.shield.hp).toBe(0);                      // but the shield itself: zeroed
+    expect(p.mech.shield.pauseRemaining).toBe(0);          // and free to start regenerating now
+  });
 });
 
 // #387: the cap rose to four, and players 3 & 4 arrive as mid-sortie drop-ins. The join watcher
