@@ -53,6 +53,18 @@ export const ABILITIES = {
     radius: 70,
     damage: 25,
   },
+  // #497: summons a lightweight friendly drone that orbits the player and auto-fires at nearby
+  // enemies for the ability's `duration`, then despawns. `duration` doubles as the drone's
+  // lifespan on the SAME abilityState burst window every other ability uses — no new state
+  // machine needed. `cooldown` > `duration` so there's a real gap after it expires before a
+  // fresh one can be summoned (re-pressing mid-flight is a no-op like every other ability, since
+  // `canActivate` also gates on `!state.active`).
+  droneLauncher: {
+    name: 'Drone Launcher',
+    effect: 'droneLauncher',
+    cooldown: 15,
+    duration: 12,
+  },
 };
 
 export function getAbility(id) {

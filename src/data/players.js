@@ -71,6 +71,9 @@ export function makePlayer({
     // out-of-combat gate.
     respawn: null,
     lastHitAt: -Infinity,
+    // #497: this player's summoned friendly drone, if any — null when none is out. Owned by
+    // scenes/arena/friendlyDrones.js, not a pure-data concept (it carries a live view object).
+    friendlyDrone: null,
   };
 }
 

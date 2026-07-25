@@ -72,6 +72,17 @@ export function updateAbilities(scene, intent, delta, player) {
         burstAoeAt(scene, player, player.x, player.y, def.radius, def.damage);
         Audio.ui('sprintOff');
       }
+    } else if (def.effect === 'droneLauncher') {
+      // #497: the drone's own lifetime rides this SAME burst window (`next.active`) — spawn on
+      // activation, despawn the instant the burst ends, whether that's from running out its
+      // `duration` or (scenes/arena/friendlyDrones.js) the owner dying mid-flight.
+      if (next.active && !wasActive) {
+        scene._spawnFriendlyDrone?.(player);
+        Audio.ui('sprintOn');
+      } else if (!next.active && wasActive) {
+        scene._despawnFriendlyDrone?.(player);
+        Audio.ui('sprintOff');
+      }
     }
   }
 }

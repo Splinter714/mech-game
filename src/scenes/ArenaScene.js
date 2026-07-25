@@ -23,6 +23,7 @@ import { VisibilityMixin } from './arena/visibility.js';
 import { CoopMixin } from './arena/coop.js';
 import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
+import { FriendlyDronesMixin } from './arena/friendlyDrones.js';
 import { primaryPlayerOf, tickPlayerResources } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
@@ -372,6 +373,9 @@ export default class ArenaScene extends Phaser.Scene {
       this._handleFiring(pi, delta, player);
     }
     this._updateEnemies(dt, delta);
+    // #497: friendly drones orbit + auto-fire — after enemies have moved for the frame, so their
+    // target-picking reads current positions.
+    this._updateFriendlyDrones(dt);
     // #269 §5: tick every standing alert tower's wake-countdown sensor.
     this._updateAlertTowers(dt);
     // #269 §3 "rare multi-spawn exception": tick every dock's occasional-resupply cooldown.
@@ -508,7 +512,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.
