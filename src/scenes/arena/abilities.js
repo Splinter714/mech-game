@@ -83,6 +83,27 @@ export function updateAbilities(scene, intent, delta, player) {
         scene._despawnFriendlyDrone?.(player);
         Audio.ui('sprintOff');
       }
+    } else if (def.effect === 'cloak') {
+      // #500: purely a visual fade on the edges — `isPlayerStealthed` (scenes/arena/stealth.js)
+      // is what actually suppresses noise-aggro while `next.active` is true; nothing to spawn or
+      // tick here.
+      if (next.active && !wasActive) {
+        player.view?.setAlpha?.(0.35);
+        Audio.ui('sprintOn');
+      } else if (!next.active && wasActive) {
+        player.view?.setAlpha?.(1);
+        Audio.ui('sprintOff');
+      }
+    } else if (def.effect === 'smokeScreen') {
+      // #507: same activate/deactivate-edge spawn/despawn pattern as Drone Launcher — the
+      // cloud's lifetime rides this SAME burst window (`duration` = how long it lingers).
+      if (next.active && !wasActive) {
+        scene._spawnSmokeCloud?.(player, def.radius);
+        Audio.ui('sprintOn');
+      } else if (!next.active && wasActive) {
+        scene._despawnSmokeCloud?.(player);
+        Audio.ui('sprintOff');
+      }
     }
   }
 }

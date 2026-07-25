@@ -65,6 +65,28 @@ export const ABILITIES = {
     cooldown: 15,
     duration: 12,
   },
+  // #500: a brief personal stealth window — visually fades the mech and suppresses noise-aggro
+  // from its own shots (data/awareness.js's NOISE_AGGRO_RANGE) for `duration`, so a dormant
+  // enemy nearby doesn't get woken by the sound of firing while cloaked. Does NOT hide the
+  // player from an enemy that's already engaged/aware — this is "go quiet," not true invisibility.
+  cloak: {
+    name: 'Cloak',
+    effect: 'cloak',
+    cooldown: 14,
+    duration: 4,
+  },
+  // #507: a stationary area version of the same "suppress noise-aggro" mechanic Cloak grants
+  // personally — drop it and reposition while it covers the spot. Protects ANY live player
+  // standing in it (co-op cover), not just whoever cast it. Its lifetime rides the SAME
+  // abilityState burst window as Drone Launcher's summon (`duration` = how long the cloud
+  // lingers), spawned/despawned on the activate/deactivate edges.
+  smokeScreen: {
+    name: 'Smoke Screen',
+    effect: 'smokeScreen',
+    cooldown: 12,
+    duration: 6,
+    radius: 100,
+  },
 };
 
 export function getAbility(id) {

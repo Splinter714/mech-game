@@ -24,6 +24,7 @@ import { CoopMixin } from './arena/coop.js';
 import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { FriendlyDronesMixin } from './arena/friendlyDrones.js';
+import { StealthMixin } from './arena/stealth.js';
 import { primaryPlayerOf, tickPlayerResources } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
@@ -512,7 +513,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

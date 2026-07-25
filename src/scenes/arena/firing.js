@@ -17,6 +17,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 import { scheduleFireCues } from '../../audio/fireCues.js';
 import { updateSprintFuel } from '../../data/sprint.js';
 import { updateAbilities } from './abilities.js';
+import { isPlayerStealthed } from './stealth.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
 
@@ -278,10 +279,15 @@ export const FiringMixin = {
     // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
-    this._lastFireAt = this.time.now;
-    // #347/#348: the NOISE source that wakes enemies — whoever actually fired.
-    this._lastFireX = player.x;
-    this._lastFireY = player.y;
+    // #500/#507: a stealthed shooter (Cloak active, or standing in ANY player's Smoke Screen
+    // cloud) doesn't latch this at all — the shot still fires and still deals damage, it just
+    // doesn't give the shooter away to a dormant enemy nearby.
+    if (!isPlayerStealthed(this, player)) {
+      this._lastFireAt = this.time.now;
+      // #347/#348: the NOISE source that wakes enemies — whoever actually fired.
+      this._lastFireX = player.x;
+      this._lastFireY = player.y;
+    }
 
     // The shared delivery sim decides what one trigger pull emits (single / spread fan /
     // tight cluster / multi-pulse burst); each emission is realised from the live muzzle
