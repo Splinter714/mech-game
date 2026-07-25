@@ -233,12 +233,21 @@ export const WEAPONS = {
     // than reworking railLance's tuned numbers/enemy mounts.
     // At minTime (0.4s, a quick tap-and-release once past the floor): 30 x 0.5 = 15 damage.
     // At maxTime (1.6s, held to full): 30 x 2.5 = 75 damage — a genuine commitment payoff.
+    // Playtest correction (2026-07-25): a charge that hit maxTime USED to auto-fire the instant
+    // it capped out — Jackson: "should fire on release, not fire after a duration." Charge now
+    // simply HOLDS at maxTime once reached (no damage lost by holding past it) and only actually
+    // fires on the real button release, same as any charge below the cap. `maxSpreadDeg`: the
+    // shot's accuracy is judged at release — how much the aim angle DRIFTED while charging is
+    // scaled into an angular jitter on the actual shot (steady aim the whole hold = a pinpoint
+    // beam; jerking the reticle around while charging = a wide, inaccurate shot). See firing.js
+    // `_handleChargeFire`/`_releaseCharge`. A charging hold also now telegraphs as a growing arc
+    // that thickens into a full beam by maxTime (firing.js `_updateChargeVisuals`).
     id: 'chargeLance', name: 'Charge Lance', category: 'energy',
     damage: 30, range: { min: 0, opt: 460, max: 680 },
     ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s) if tapped at minTime every time
     delivery: {
       hit: 'hitscan', pattern: 'single', kind: 'rail',
-      chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5 },
+      chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5, maxSpreadDeg: 22 },
     },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover — now a saturating VOLLEY (#434)
@@ -339,6 +348,11 @@ export const WEAPONS = {
     // Direct-hit DPS = damage / cycleTime(s): 14/1.4 = 10.0 dps — low on purpose. The burn adds
     // 5 dps for 4s per landed hit (up to 20 bonus damage), refreshed rather than stacked on a
     // second hit within that window.
+    // Playtest follow-up (2026-07-25): the DoT itself was already real (Mech.tickStatusEffects
+    // routes every tick through applyDamage, covered by Mech.test.js) — what was missing was any
+    // visible sign it was happening. A coated enemy now flickers a green plasma glow for as long
+    // as the burn is active (scenes/arena/projectiles.js `_drawStatusEffects`), so the tick and
+    // the visual confirm each other.
     id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
     damage: 14, range: { min: 0, opt: 380, max: 560 },
     ammoMax: 4, slots: 2, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
@@ -437,29 +451,36 @@ export const WEAPONS = {
     // Direct-hit DPS = damage / cycleTime(s): 18/1.8 = 10.0 — deliberately the lowest headline
     // number in the ballistic row; travelAoe's 12 dps over however long it lingers over a target
     // is where this weapon's damage actually comes from.
+    // Playtest follow-up (2026-07-25): "should be larger, should be slower, and should give
+    // visuals striking out at the enemies it's damaging as it travels." Bumped up a size class
+    // (`delivery.scale`) and slowed further (160 -> 100), and every travelAoe tick now draws a
+    // brief bolt from the canister to each enemy it just damaged (scenes/arena/projectiles.js
+    // `_tickTravelAoe`) so the "corrosive cloud reaching out and zapping things" reads visually,
+    // not just in the damage log.
     id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
     damage: 18, range: { min: 40, opt: 380, max: 560 },
     ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'straight', velocity: 160,   // deliberately slow — the "cloud" has to linger to matter
-      splash: 24, kind: 'fire',
-      travelAoe: { radius: 60, dps: 12 },
+      hit: 'projectile', path: 'straight', velocity: 100,   // deliberately slow — the "cloud" has to linger to matter
+      splash: 30, kind: 'fire', scale: 1.6,
+      travelAoe: { radius: 75, dps: 14 },
     },
   }),
-  timedCharge: w({   // #488: a lobbed charge that detonates on a TIMER, not on impact — it flies
-    // its whole 1.3s fuse life regardless of whether it hits anything on the way, then blasts a
-    // REAL multi-target explosion (data/aoe.js) wherever it happens to be. Reads as "toss it
-    // ahead of where the enemy is HEADED and time the blast," rather than a direct-fire weapon —
-    // arm it too early and it's already gone off by the time they arrive; too late and it's still
-    // in the air. No direct-hit damage component at all: `damage` only matters for #402's
-    // ammo-economy shape (unused here since detonation is fuse-only) and is set to the blast's
-    // own damage so the fuse and any future direct-hit resolution would agree.
+  timedCharge: w({   // #488: reworked from a timed mid-air detonation into an actual MINEFIELD
+    // tool per playtest feedback — "more like a lobbed thing that places a proximity mine upon
+    // landing." One pull tosses a tight scatter of 5 charges a SHORT, FIXED distance in front of
+    // you (range does not extend with a locked target — this is a close-range area-denial toss,
+    // not a long-range shot), each one landing and arming as its own stationary proximity mine
+    // (data/aoe.js's blast math, but triggered by an enemy walking near it later rather than on
+    // impact — see scenes/arena/projectiles.js `_plantHazard`/`_updateHazards`). Lets you blanket
+    // a doorway/chokepoint with 5 mines in one pull rather than placing one at a time.
     id: 'timedCharge', name: 'Timed Charge', category: 'ballistic',
-    damage: 55, range: { min: 40, opt: 420, max: 620 },
-    ammoMax: 4, slots: 2, cycleTime: 1500,   // #402: ~6.0s burst (4 pulls × 1.5s), then 2s reload
+    damage: 30, range: { min: 0, opt: 150, max: 190 },   // short + absolute: aim only steers direction, not distance
+    ammoMax: 4, slots: 2, cycleTime: 1800,   // #402: ~7.2s burst (4 pulls × 1.8s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'arcing', velocity: 340, kind: 'plasma',
-      fuse: { mode: 'time', time: 1.3, radius: 70 },
+      hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
+      pattern: 'spread', count: 5, spreadAngle: 55,
+      hazard: { kind: 'mine', radius: 55, damage: 30, armDelay: 0.3, life: 7 },
     },
   }),
 
@@ -626,26 +647,32 @@ export const WEAPONS = {
   // battery recharge like energy) had no occupant until these two. Both a slow-moving projectile
   // whose real payload is `delivery.force` (data/force.js), continuous for as long as it's in
   // flight near a target, same architecture as Caustic Lobber's travelAoe (#492). ──
-  gravityWell: w({    // #491: always ATTRACTS — a slow orb that drags enemies toward its path
+  gravityWell: w({    // #491: reworked into a PLANTED crowd-control zone per playtest feedback —
+    // "let's make it a lot that then plants in place and sustains swirly dark purple pull orb for
+    // a while, like crowd control for a bit." Now a lobbed charge that lands and stays, sustaining
+    // a continuous pull field (swirling dark-purple orb visual, scenes/arena/projectiles.js
+    // `_drawHazard`) for a real duration rather than only pulling while airborne on its way past.
     id: 'gravityWell', name: 'Gravity Well', category: 'support',
     // Deliberately the lowest direct-hit damage in the catalog — this weapon's real value is
     // dragging a crowd together (into the rest of your fire, or off an objective), not the hit.
-    damage: 8, range: { min: 40, opt: 350, max: 500 },
-    ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s), then 2s reload
+    damage: 6, range: { min: 40, opt: 380, max: 520 },
+    ammoMax: 3, slots: 2, cycleTime: 2000,   // #402: ~6.0s burst (3 pulls × 2s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'straight', velocity: 220,   // slow — the field needs time near a target to matter
-      kind: 'plasma',
-      force: { radius: 130, strength: 220, sign: -1 },
+      hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
+      hazard: { kind: 'field', radius: 150, life: 5, force: { strength: 220, sign: -1 } },
     },
   }),
-  repulsorPulse: w({   // #499: always REPELS — a slow orb that shoves enemies off their line
+  repulsorPulse: w({   // #499: reworked from a slow travelling orb into an instant FRONT-FACING
+    // WAVE per playtest feedback ("more like a front-facing wave maybe?") — no round to land near
+    // an enemy at all; the instant the trigger's pulled, everything caught in a forward cone off
+    // the muzzle gets shoved (data/force.js's push/pull math, applied once instead of ticked over
+    // a flight) — see scenes/arena/firing.js `_fireWave`. Always REPELS.
     id: 'repulsorPulse', name: 'Repulsor Pulse', category: 'support',
-    damage: 8, range: { min: 40, opt: 350, max: 500 },
-    ammoMax: 4, slots: 2, cycleTime: 1600,
+    damage: 10, range: { min: 0, opt: 190, max: 190 },
+    ammoMax: 4, slots: 2, cycleTime: 1500,   // #402: ~6.0s burst (4 pulls × 1.5s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'straight', velocity: 220,
-      kind: 'plasma',
-      force: { radius: 130, strength: 260, sign: 1 },   // slightly stronger push than the pull above — reads more forceful
+      wave: true, kind: 'plasma',
+      force: { radius: 190, strength: 320, sign: 1, coneDeg: 110 },
     },
   }),
 };

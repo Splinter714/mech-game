@@ -379,6 +379,16 @@ export const ProjectilesMixin = {
       // end point — so a fast round that passes clean through the target in one frame still detonates.
       const toTarget = (targetGone || turretBlocked) ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);
       const landed = p.dist >= p.maxDist;
+      // #488/#491: a round carrying `p.hazard` (Timed Charge's mines, Gravity Well's pull field)
+      // never runs the normal impact/damage resolution below — instead of detonating, it PLANTS
+      // itself where it comes down and becomes a standalone stationary hazard, ticking on its own
+      // clock (see `_plantHazard`/`_updateHazards`).
+      if (p.hazard && (toTarget < HIT_RADIUS || landed)) {
+        p.dead = true;
+        p.stopTrajectorySfx?.();
+        this._plantHazard(p);
+        continue;
+      }
       if (toTarget < HIT_RADIUS || landed) {
         p.dead = true;
         p.stopTrajectorySfx?.();   // #56: ditto — impact/landing is the other death site
@@ -442,16 +452,40 @@ export const ProjectilesMixin = {
     const amount = Math.max(1, Math.round(dps * (tickMs / 1000)));
     if (p.owner === 'enemy') {
       for (const pl of livePlayersOf(this)) {
-        if (Math.hypot(pl.x - p.x, pl.y - p.y) < radius) this._damagePlayerAt(amount, pl, { weaponId: p.weaponId });
+        if (Math.hypot(pl.x - p.x, pl.y - p.y) < radius) {
+          this._damagePlayerAt(amount, pl, { weaponId: p.weaponId });
+          this._drawAoeTendril(p, pl.x, pl.y);
+        }
       }
     } else {
       for (const hit of damageInRadius(p.x, p.y, radius, amount, this.enemies.filter((e) => !e.mech.isDestroyed()))) {
         this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId });
+        this._drawAoeTendril(p, hit.target.x, hit.target.y);
       }
       for (const other of otherLivePlayers(this, p.shooter)) {
-        if (Math.hypot(other.x - p.x, other.y - p.y) < radius) this._damagePlayerAt(amount, other, { weaponId: p.weaponId });
+        if (Math.hypot(other.x - p.x, other.y - p.y) < radius) {
+          this._damagePlayerAt(amount, other, { weaponId: p.weaponId });
+          this._drawAoeTendril(p, other.x, other.y);
+        }
       }
     }
+  },
+
+  // #492 playtest follow-up: a brief jagged bolt from a travelAoe round (Caustic Lobber) to
+  // whatever it just damaged this tick — reads as the cloud "reaching out and striking" its
+  // victims instead of damage happening invisibly. Drawn into `projFx`, already cleared/redrawn
+  // this frame by `_updateProjectiles` above, so it needs no lifetime/cleanup of its own — it's
+  // just gone next frame unless the tick fires again.
+  _drawAoeTendril(p, tx, ty) {
+    const g = this.projFx;
+    const midX = (p.x + tx) / 2 + (Math.random() - 0.5) * 14;
+    const midY = (p.y + ty) / 2 + (Math.random() - 0.5) * 14;
+    g.lineStyle(2, p.color, 0.85);
+    g.beginPath();
+    g.moveTo(p.x, p.y);
+    g.lineTo(midX, midY);
+    g.lineTo(tx, ty);
+    g.strokePath();
   },
 
   // #491/#499: `p.force` (a weapon's `delivery.force`) pushes or pulls every living enemy within
@@ -539,6 +573,118 @@ export const ProjectilesMixin = {
       }
     }
     this._impactFx(p.x, p.y, p.color, p.kind, radius, p.weaponId);
+  },
+
+  // #488/#491: a round with `p.hazard` converts, on landing, into a standalone stationary object
+  // in `this.hazards` rather than resolving its normal impact. Two kinds today:
+  //   'mine'  (Timed Charge) — arms after `armDelay`, then waits for a living enemy/player to
+  //           wander within `radius`, detonating once (a real multi-target blast, data/aoe.js) —
+  //           or quietly expires after `life` seconds if nothing ever wanders in.
+  //   'field' (Gravity Well) — arms after `armDelay`, then continuously pulls living enemies
+  //           within `radius` (data/force.js) for `life` seconds, then expires with no blast.
+  _plantHazard(p) {
+    const h = p.hazard;
+    this.hazards.push({
+      x: p.x, y: p.y, owner: p.owner, shooter: p.shooter, kind: h.kind,
+      radius: h.radius, color: p.color, weaponId: p.weaponId,
+      armIn: h.armDelay ?? 0.25, life: h.life ?? 6,
+      damage: h.damage ?? p.damage,
+      force: h.force || null, _nextForceTick: 0,
+    });
+    this._impactFx(p.x, p.y, p.color, p.kind, 10, p.weaponId);
+  },
+
+  // Per-frame upkeep for every planted hazard — armed countdown, the mine's proximity check (or
+  // the field's continuous pull tick), its own expiry, and its live visual every frame.
+  _updateHazards(dt) {
+    const now = this.time.now;
+    for (const hz of this.hazards) {
+      if (hz.armIn > 0) { hz.armIn -= dt; this._drawHazard(hz); continue; }
+      hz.life -= dt;
+      if (hz.life <= 0) { hz.dead = true; continue; }
+      if (hz.kind === 'mine') {
+        const candidates = hz.owner === 'enemy'
+          ? livePlayersOf(this)
+          : this.enemies.filter((e) => !e.mech.isDestroyed());
+        const triggered = candidates.some((c) => Math.hypot(c.x - hz.x, c.y - hz.y) < hz.radius);
+        if (triggered) {
+          hz.dead = true;
+          if (hz.owner === 'enemy') {
+            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, livePlayersOf(this))) {
+              this._damagePlayerAt(hit.amount, hit.target, { weaponId: hz.weaponId });
+            }
+          } else {
+            const enemies = this.enemies.filter((e) => !e.mech.isDestroyed());
+            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, enemies)) {
+              this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, hz.color, false, { weaponId: hz.weaponId });
+            }
+            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, otherLivePlayers(this, hz.shooter))) {
+              this._damagePlayerAt(hit.amount, hit.target, { weaponId: hz.weaponId });
+            }
+          }
+          this._impactFx(hz.x, hz.y, hz.color, 'plasma', hz.radius, hz.weaponId);
+          continue;
+        }
+      } else if (hz.kind === 'field' && hz.force) {
+        if (now >= hz._nextForceTick) {
+          const tickMs = 250;
+          hz._nextForceTick = now + tickMs;
+          const dt2 = tickMs / 1000;
+          for (const e of this.enemies) {
+            if (e.mech.isDestroyed()) continue;
+            const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt2);
+            e.x += dx; e.y += dy;
+          }
+        }
+      }
+      this._drawHazard(hz);
+    }
+    if (this.hazards.some((hz) => hz.dead)) this.hazards = this.hazards.filter((hz) => !hz.dead);
+  },
+
+  // Live visual for one planted hazard, drawn into `projFx` (already cleared/redrawn this frame
+  // by `_updateProjectiles`). A mine reads as a small pulsing warning light; a field reads as a
+  // swirling dark-purple pull orb — a few dots orbiting the center, faster the longer it's lived.
+  _drawHazard(hz) {
+    const g = this.projFx;
+    const now = this.time.now;
+    if (hz.kind === 'mine') {
+      const pulse = 0.5 + 0.5 * Math.sin(now / 160);
+      g.lineStyle(2, 0xff5533, 0.3 + pulse * 0.5).strokeCircle(hz.x, hz.y, hz.radius * 0.28 + pulse * 2);
+      g.fillStyle(0xff5533, 0.85).fillCircle(hz.x, hz.y, 3.5);
+    } else if (hz.kind === 'field') {
+      const t = now / 1000;
+      g.fillStyle(0x2a0845, 0.16).fillCircle(hz.x, hz.y, hz.radius);
+      g.lineStyle(1.5, 0x8a2be2, 0.45).strokeCircle(hz.x, hz.y, hz.radius);
+      for (let i = 0; i < 3; i++) {
+        const a = t * 2.4 + (i * Math.PI * 2) / 3;
+        const r = hz.radius * 0.55;
+        g.fillStyle(0x9a4bf0, 0.85).fillCircle(hz.x + Math.cos(a) * r, hz.y + Math.sin(a) * r * 0.7, 5);
+      }
+    }
+  },
+
+  // #489 playtest follow-up: "should somehow give a visual that an enemy is coated" — a burning-
+  // green flicker over any enemy currently carrying the plasmaBurn status effect (data/
+  // statusEffects.js), so the DoT is visibly happening, not just a number ticking off-screen.
+  // Drawn into `projFx` after `_updateProjectiles` has already run this frame (status effects
+  // tick in `_updateEnemies`, earlier in ArenaScene.update, so this always reads THIS frame's
+  // live set).
+  _drawStatusEffects() {
+    const g = this.projFx;
+    const now = this.time.now;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const effects = e.mech.statusEffects || [];
+      if (!effects.some((s) => s.kind === 'plasmaBurn')) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(now / 110);
+      g.fillStyle(0x39ff6a, 0.16 + pulse * 0.12).fillCircle(e.x, e.y, 30 + pulse * 5);
+      for (let i = 0; i < 3; i++) {
+        const a = now / 240 + (i * Math.PI * 2) / 3;
+        const r = 18 + Math.sin(now / 90 + i) * 6;
+        g.fillStyle(0x9dff5a, 0.9).fillCircle(e.x + Math.cos(a) * r, e.y + Math.sin(a) * r, 2.4);
+      }
+    }
   },
 
   // #168: a coarse uniform-grid spatial index over the living enemies, rebuilt once per frame.

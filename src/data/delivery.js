@@ -364,6 +364,9 @@ export function projectileKind(weapon) {
 export function planEmissions(weapon, { countMult = 1 } = {}) {
   const d = weapon.delivery || {};
   if (d.hit === 'contact') return { mode: 'contact', shots: [shot()] };
+  // #499: a `wave` weapon (Repulsor Pulse) resolves INSTANTLY as a frontal cone at the muzzle —
+  // no travelling round at all, same "one shot, no fan" shape as contact/melee above.
+  if (d.wave) return { mode: 'wave', shots: [shot()] };
   const mode = d.hit === 'hitscan' ? 'hitscan' : 'projectile';
 
   // The ONE canonical "how many things per trigger pull" number, already multiplied by any
@@ -547,6 +550,11 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // resolution, either after a fixed TIME or once within RADIUS of a valid target. See
     // scenes/arena/projectiles.js `_tickFuse`/`_detonateFuse`.
     fuse: d.fuse || null,
+    // #488/#491: an optional PLANTED HAZARD — instead of detonating on landing, the round plants
+    // itself where it comes down and becomes a stationary object (a proximity mine, or a
+    // sustained pull field), ticking on its own clock rather than the round's flight. See
+    // scenes/arena/projectiles.js `_plantHazard`/`_updateHazards`.
+    hazard: d.hazard || null,
     // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.
@@ -795,6 +803,7 @@ export function rotateToward(a, target, maxStep) {
 }
 
 function wrapAngle(x) { return Math.atan2(Math.sin(x), Math.cos(x)); }
+export { wrapAngle };
 
 // ── Weak seek (Plasma Lance, #213) ───────────────────────────────────────────────────────
 // A Halo-Needler-style "these bolts have a mind of their own, a little" bias — deliberately

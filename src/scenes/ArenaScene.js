@@ -230,10 +230,12 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
+    this.chargeFx = this.add.graphics().setDepth(DEPTH.PROJECTILES); // #493: charge-up telegraph (redrawn each frame)
     this.projectiles = [];
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
+    this.hazards = [];                    // #488/#491: planted mines / pull fields
     this._nextHazardTick = 0;             // #508: damaging hazard terrain tick cadence
     // #254: the `_impactPool`/`_debrisPool` reset moved up above (before the opening spawn) — see
     // the comment there for why. Nothing left to reset in this spot.
@@ -391,9 +393,12 @@ export default class ArenaScene extends Phaser.Scene {
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
+    this._drawStatusEffects();            // #489: coated-in-plasma glow, after this frame's ticks
+    this._updateHazards(dt);              // #488/#491: planted mines / pull fields
     this._updateFirePatches();
     this._updateHazardTerrain();          // #508: damaging hazard terrain (mud/quicksand/etc.)
     this._updateBeams(delta);
+    this._updateChargeVisuals();          // #493: charge-up telegraph arcs
 
     // #60: bob/expire dropped collectibles, grab any the player touches, tick active buffs.
     this._updatePowerups(delta);

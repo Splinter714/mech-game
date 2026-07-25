@@ -6,7 +6,8 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, wrapAngle } from '../../data/delivery.js';
+import { computeImpulse } from '../../data/force.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash } from '../../art/index.js';
@@ -108,16 +109,24 @@ export const FiringMixin = {
   // `chargeable.maxTime`); releasing fires ONE shot scaled between `minDamageMult` (at
   // `minTime`) and `maxDamageMult` (at `maxTime`). Releasing before `minTime` wastes the charge
   // — no shot, no ammo spent — so a twitch-tap does nothing on purpose; this is a commitment
-  // weapon, not a faster machine gun. Reaching `maxTime` while still held auto-fires immediately
-  // rather than sitting at full charge doing nothing.
+  // weapon, not a faster machine gun.
+  // Playtest correction (2026-07-25): reaching `maxTime` used to auto-fire immediately. Jackson:
+  // "should fire on release, not fire after a duration." Charge now just HOLDS at the cap —
+  // nothing is lost by holding past it — and only actually fires on the real button release.
+  // While charging, this also tracks how much the AIM ANGLE drifted (see `_fireAngle`) — a
+  // steady hold releases a tight, accurate shot; a hold where the reticle wandered releases a
+  // wider, less accurate one (`_releaseCharge` turns the accumulated drift into `chargeSpread`).
   _handleChargeFire(w, intent, delta, player, fireReady) {
     const dt = delta / 1000;
     const held = !!intent.fire[w.location];
-    const state = (player.chargeState[w.location] ??= { charging: false, elapsed: 0 });
+    const state = (player.chargeState[w.location] ??= { charging: false, elapsed: 0, aimDrift: 0, lastAim: null });
     if (held && fireReady) {
-      if (!state.charging) { state.charging = true; state.elapsed = 0; }
+      if (!state.charging) { state.charging = true; state.elapsed = 0; state.aimDrift = 0; state.lastAim = null; }
       state.elapsed = Math.min(w.weapon.delivery.chargeable.maxTime, state.elapsed + dt);
-      if (state.elapsed >= w.weapon.delivery.chargeable.maxTime) this._releaseCharge(w, player, state);
+      const m = this._muzzle(w.location, player);
+      const aim = this._fireAngle(w, m, player);
+      if (state.lastAim != null) state.aimDrift += Math.abs(wrapAngle(aim - state.lastAim));
+      state.lastAim = aim;
       return;
     }
     // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve
@@ -129,12 +138,62 @@ export const FiringMixin = {
   },
 
   _releaseCharge(w, player, state) {
-    const { minTime, maxTime, minDamageMult = 1, maxDamageMult = 1 } = w.weapon.delivery.chargeable;
+    const { minTime, maxTime, minDamageMult = 1, maxDamageMult = 1, maxSpreadDeg = 20 } = w.weapon.delivery.chargeable;
     const frac = maxTime > minTime ? (state.elapsed - minTime) / (maxTime - minTime) : 1;
     const mult = minDamageMult + (maxDamageMult - minDamageMult) * Math.max(0, Math.min(1, frac));
-    this.fireWeapon(w, player, { chargeMult: mult });
+    // Aim drift accumulated over a ~1.6s hold rarely exceeds a couple radians for a genuinely
+    // steady hand; normalize against a generous "definitely wandered" reference so a rock-steady
+    // hold reads as ~0 spread and an actively-swept aim reads as close to the weapon's max.
+    const DRIFT_REFERENCE = 1.2; // rad of accumulated drift treated as "fully unsteady"
+    const unsteadiness = Math.max(0, Math.min(1, state.aimDrift / DRIFT_REFERENCE));
+    const chargeSpread = (unsteadiness * maxSpreadDeg * Math.PI) / 180;
+    this.fireWeapon(w, player, { chargeMult: mult, chargeSpread });
     state.charging = false;
     state.elapsed = 0;
+    state.aimDrift = 0;
+    state.lastAim = null;
+  },
+
+  // #493: while any of this player's slots is mid-charge, draw a growing telegraph — a thin arc
+  // at low charge, thickening and lengthening into a near-solid beam as it nears full charge —
+  // from the muzzle out along the current aim. Purely visual; drawn fresh every frame into the
+  // scene's dedicated `chargeFx` layer (cleared once per frame by `_updateChargeVisuals` below,
+  // called once for the whole scene rather than per-player/per-slot).
+  _drawChargeFor(player) {
+    for (const [location, state] of Object.entries(player.chargeState || {})) {
+      if (!state.charging) continue;
+      const w = player.mech.weapons().find((ww) => ww.location === location);
+      if (!w || !w.weapon.delivery.chargeable) continue;
+      const { maxTime } = w.weapon.delivery.chargeable;
+      const frac = maxTime > 0 ? Math.max(0, Math.min(1, state.elapsed / maxTime)) : 1;
+      const m = this._muzzle(location, player);
+      const angle = this._fireAngle(w, m, player);
+      const reach = 40 + (w.weapon.range.max || 400) * 0.5 * frac;
+      const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
+      const g = this.chargeFx;
+      const width = 1 + frac * 5;
+      g.lineStyle(width, color, 0.35 + frac * 0.55);
+      g.beginPath();
+      g.moveTo(m.x, m.y);
+      g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
+      g.strokePath();
+      if (frac > 0.15) {
+        const jitter = (1 - frac) * 6;
+        g.lineStyle(1, 0xffffff, 0.5 * frac);
+        for (let i = -1; i <= 1; i += 2) {
+          const a = angle + i * 0.03 * (1 - frac);
+          g.beginPath();
+          g.moveTo(m.x, m.y);
+          g.lineTo(m.x + Math.cos(a) * reach + (Math.random() - 0.5) * jitter, m.y + Math.sin(a) * reach + (Math.random() - 0.5) * jitter);
+          g.strokePath();
+        }
+      }
+    }
+  },
+
+  _updateChargeVisuals() {
+    this.chargeFx.clear();
+    for (const player of this.players) this._drawChargeFor(player);
   },
 
   // ── Manual reload (#402) ── R3/F tops off ALL of this player's weapons at once (the auto-
@@ -247,7 +306,10 @@ export const FiringMixin = {
   // shot's damage WITHOUT mutating the shared WEAPONS registry entry — `w` is reassigned to a
   // shallow clone carrying a scaled `weapon.damage` for the rest of this call only, so every
   // read below (planEmissions, _spawnProjectile, _fireHitscan, _melee) picks it up for free.
-  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1 } = {}) {
+  // `chargeSpread` (radians, default 0): an extra random angular jitter applied to this shot's
+  // launch angle, from how much the aim drifted during a charge hold (`_releaseCharge`) — 0 for
+  // every non-charging trigger pull.
+  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0 } = {}) {
     if (!this.scene.isActive()) return;
     if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
     // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
@@ -329,7 +391,10 @@ export const FiringMixin = {
         if (!this.scene.isActive()) return;
         const m = this._muzzle(w.location, player);
         const aimAngle = this._fireAngle(w, m, player);
-        const baseAngle = aimAngle + s.angleOffset;
+        // #493: an unsteady charge hold adds a random jitter to the actual launch angle — a
+        // steady hold's chargeSpread is 0, so this is a no-op for every ordinary trigger pull.
+        const jitter = chargeSpread ? (Math.random() - 0.5) * chargeSpread : 0;
+        const baseAngle = aimAngle + s.angleOffset + jitter;
         const perp = baseAngle + Math.PI / 2;
         const ox = m.x + Math.cos(perp) * s.lateral, oy = m.y + Math.sin(perp) * s.lateral;
         // #320: the muzzle ended up on the far side of a standing span from the mech's own chest —
@@ -341,6 +406,7 @@ export const FiringMixin = {
         // spread can be eaten by a wall corner while its siblings get out.
         if (this._muzzleWallBlocked?.(player.x, player.y, ox, oy)) return;
         if (plan.mode === 'contact') this._melee(w, ox, oy, baseAngle, 'player', player, { pullId });
+        else if (plan.mode === 'wave') this._fireWave(w, ox, oy, baseAngle, player);
         // #307: `lane`/`lateral` let a continuously-held beam own ONE persistent beam object
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
@@ -418,6 +484,39 @@ export const FiringMixin = {
       });
     }
     this.time.delayedCall(170, () => this.fx.clear());
+  },
+
+  // #499: Repulsor Pulse's "front-facing wave" — resolves INSTANTLY at the muzzle rather than
+  // spawning a travelling round. Every living enemy within `delivery.force.radius` AND inside a
+  // `coneDeg`-wide forward cone off `angle` takes a small direct hit and gets shoved by the same
+  // push/pull math a travelling force round would tick (data/force.js `computeImpulse`), just
+  // applied once instead of over a flight. Player-fired only, matching #491/#499's original
+  // scope (no force weapon has been asked for on the enemy side).
+  _fireWave(w, mx, my, angle, player) {
+    const { radius, strength, sign, coneDeg = 100 } = w.weapon.delivery.force;
+    const halfCone = (coneDeg * Math.PI / 180) / 2;
+    const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      const ex = e.x - mx, ey = e.y - my;
+      const dist = Math.hypot(ex, ey);
+      if (dist >= radius || dist < 1) continue;
+      if (Math.abs(wrapAngle(Math.atan2(ey, ex) - angle)) > halfCone) continue;
+      const { dx, dy } = computeImpulse(mx, my, radius, strength, sign, e.x, e.y, 1);
+      e.x += dx; e.y += dy;
+      const dmg = Math.max(1, Math.round(w.weapon.damage * (1 - dist / radius)));
+      this._damageEnemyAt(e, e.x, e.y, dmg, color, false, { weaponId: w.weapon.id });
+    }
+    // Sweeping crescent (shared drawSlash art, same as melee) sized to the wave's real radius —
+    // reads as a shockwave fanning out in front of the mech rather than a single swing.
+    for (const tt of [0.1, 0.35, 0.65, 1.0]) {
+      this.time.delayedCall(tt * 120, () => {
+        if (!this.scene.isActive()) return;
+        this.fx.clear();
+        drawSlash(this.fx, mx, my, angle, tt, color, 1, radius);
+      });
+    }
+    this.time.delayedCall(140, () => this.fx.clear());
   },
 
   // Damage multiplier vs. distance: full out to `opt`, falling to ~0.3 at `max` and a
