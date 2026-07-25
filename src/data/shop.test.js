@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   STARTING_UNLOCKED, SHOPPABLE_IDS, costOf, canAfford,
-  salvageAmount, SALVAGE_MIN, SALVAGE_MAX,
+  salvageAmount, SALVAGE_MIN, SALVAGE_MAX, kindOf,
 } from './shop.js';
 
 describe('shop economy', () => {
@@ -25,6 +25,14 @@ describe('shop economy', () => {
     const price = costOf(id);
     expect(canAfford(id, price)).toBe(true);
     expect(canAfford(id, price - 1)).toBe(false);
+  });
+
+  // #297: every current unlockable is a weapon — kindOf tags what a future non-weapon
+  // unlockable (chassis, outpost type, passive, ability) would be, with no matching entry
+  // required for existing/future weapon ids to default correctly.
+  it('kindOf: every shoppable id (and any unlisted id) defaults to weapon', () => {
+    for (const id of SHOPPABLE_IDS) expect(kindOf(id)).toBe('weapon');
+    expect(kindOf('someFutureNonWeaponUnlockable')).toBe('weapon');
   });
 
   it('salvageAmount stays within its band and is deterministic given an rng', () => {

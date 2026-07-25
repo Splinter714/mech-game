@@ -45,6 +45,21 @@ export function costOf(id) {
 // set / build a fresh locked-by-default set.
 export const SHOPPABLE_IDS = [...WEAPON_IDS];
 
+// #297: the unlock mechanism itself (costOf/canAfford/SHOPPABLE_IDS above, loadUnlocked/
+// saveUnlocked in save.js) was already id-agnostic — nothing in it actually cares what an id
+// NAMES, only the catalog ever listed was weapons. `kindOf` tags what KIND of thing an
+// unlockable id is, defaulting to 'weapon' for anything not explicitly overridden — so every
+// existing (and future) weapon id, including ones added to weapons.js by other in-flight work,
+// is automatically 'weapon' with no matching entry needed here. A later stage folds in a
+// non-weapon unlock (chassis, outpost building type, passive, ability) by tagging ITS ids in
+// KIND_OVERRIDES and adding them to whatever list feeds a shoppable catalog — the cost/afford/
+// persist plumbing above doesn't change. Empty today: no non-weapon unlockable exists yet.
+const KIND_OVERRIDES = {};
+
+export function kindOf(id) {
+  return KIND_OVERRIDES[id] ?? 'weapon';
+}
+
 // Salvage drops (#65): a small SCRAP pickup dropped at some destroyed enemies' positions,
 // separate from the timed-buff powerups (data/powerups.js) but rolled at the same kill site.
 export const SALVAGE_DROP_CHANCE = 0.35;
