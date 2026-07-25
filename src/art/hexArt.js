@@ -934,11 +934,20 @@ const CIN_EMBER = buildMottle(0xea, 11, 0.7, 1.6, 0.9);
 const CIN_PLATE = buildMottle(0x113, 16, 5, 11.5, 0.6);
 const CIN_SEAM = buildStreaks(0x114, { count: 16, len: 30, segs: 3, wobble: 0.3 });
 
-// TIER 1 — crust: dark cooled plates with a MOLTEN CRACK NETWORK glowing through — same fracture
-// primitive as brokenIce, inverted palette (dark plate / hot line instead of pale plate / cold line).
+// TIER 1 — crust: dark cooled plates with a faint residual warmth. Used to carry a MOLTEN CRACK
+// NETWORK glowing through (the same fracture primitive as brokenIce) — #476 moves that identity
+// off crust entirely, since #475 gave cinderField (volcanic's hazard) that same crack-over-plates
+// look, leaving crust (volcanic's CHANNEL) needing its own read distinct from it.
 const CRUST_PLATE = buildMottle(0xeb, 15, 5, 11, 0.6);
 const CRUST_WARM = buildMottle(0xec, 19, 4, 9, 0.5);
-const CRUST_CRACK = buildStreaks(0xed, { count: 20, len: 30, segs: 3, wobble: 0.3 });
+// #476: crust reworked to echo the RIVER's settled channel treatment (owner's pick, having seen
+// both options) instead of the old glowing crack network — the exact same "map symbol" streak
+// recipe as RIV_FLOW below (five long lines, pinned near-horizontal, a gentle regular undulation),
+// just its own seed so the two channels' lines don't happen to wobble in lockstep.
+const CRUST_FLOW = buildStreaks(0x115, {
+  count: 5, len: 54, segs: 24, angle: 0, angleJitter: 0.05,
+  wave: { amp: 2.6, period: 24, jitter: 0.12 },
+});
 
 // TIER 1 — dryRiver: a baked bed. Dense, FINE, dark crazing (many more, much shorter streaks than
 // crust's cracks) over warm bed tones and pale dry sandbanks. No glow anywhere.
@@ -1257,15 +1266,17 @@ const DETAIL = {
     sg.fillStyle(0x201d19, 0.5); for (const [dx, dy, w] of [[-6, 4, 15], [7, -4, 13], [-9, -3, 12]]) sg.fillEllipse(C.cx + dx, C.cy + dy, w, 2.4);
     sg.fillStyle(0xff6a1e, 0.8); sg.fillCircle(C.cx + 4, C.cy + 5, 0.9); sg.fillCircle(C.cx - 7, C.cy - 4, 0.8);
   },
-  // Cooling lava crust: dark plates with molten cracks glowing through.
-  // #471: was three hand-placed cracks over a 26x16 ellipse. Now a full-tile network of molten
-  // cracks over full-tile dark plates — the glow is LINEAR here, which is what separates crust
-  // from cinderField's field of glowing POINTS.
+  // Cooling lava crust — volcanic's CHANNEL (the winding-strip role river/dryRiver/slush/canal
+  // fill for their own biomes). #476 rework: this used to glow with the same molten-crack network
+  // #475 has since given to cinderField (volcanic's hazard blob), which made the two tiles read as
+  // near-duplicates. Now dark cooled plates with a faint residual warmth (no glow at all — that's
+  // cinderField's language now) and a few calm flow-direction lines echoing the river's own settled
+  // "map symbol" treatment (CRUST_FLOW, toned warm and low-contrast so it recedes into the plate
+  // instead of drawing the eye) — a channel you can tell apart from the hazard at a glance.
   hex_crust: (sg) => {
-    mottle(sg, CRUST_PLATE, 0x140c09, 0.45);       // dark cooled plates
-    mottle(sg, CRUST_WARM, 0x3a1408, 0.34);        // heat still in the rock
-    streaks(sg, CRUST_CRACK, 0xff5a14, 0.80, 1.4); // molten crack
-    streaks(sg, CRUST_CRACK, 0xffc23a, 0.55, 0.6); // white-hot core of the crack
+    mottle(sg, CRUST_PLATE, 0x140c09, 0.45);        // dark cooled plates
+    mottle(sg, CRUST_WARM, 0x2c1006, 0.20);         // faint residual warmth, no glow
+    streaks(sg, CRUST_FLOW, 0x5a2c16, 0.16, 2.4);   // simple flow-direction lines, low contrast
   },
   // #289/#464: the ashen FLOOR (ash mounds live in CANOPY_DETAIL.fumarole) + a faint vent ember
   // and cinder flecks — one tile for both the standing `fumarole` hex and its cleared state. The
