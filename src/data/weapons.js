@@ -66,6 +66,13 @@
 //             within `radius` of a living valid target. Either way the detonation is a REAL
 //             multi-target blast (data/aoe.js `damageInRadius` over `splash`), not the normal
 //             single-target hit-tolerance splash.
+//   chargeable { minTime, maxTime, minDamageMult?, maxDamageMult? } — #493: PLAYER-ONLY (enemy
+//             fire never holds a trigger). Bypasses the normal auto-repeat cooldown model —
+//             holding the fire button accumulates charge up to `maxTime` seconds (auto-firing
+//             the instant it caps out); releasing before `minTime` fires nothing at all and
+//             wastes the charge. Damage scales linearly between `minDamageMult` (at `minTime`,
+//             default 1) and `maxDamageMult` (at `maxTime`, default 1). See scenes/arena/
+//             firing.js `_handleChargeFire`/`_releaseCharge`.
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
@@ -219,6 +226,20 @@ export const WEAPONS = {
     damage: 52, range: { min: 120, opt: 400, max: 640 },
     ammoMax: 4, slots: 2, cycleTime: 1650,   // #408: ~6.6s burst (4 pulls × 1.65s), then 2s reload
     delivery: { hit: 'hitscan', pattern: 'single', kind: 'rail' },
+  }),
+  chargeLance: w({   // #493: hold to charge, release to fire — Rail Lance's flavor text has
+    // always described a "slow charge," but mechanically it was just a normal cooldown-gated
+    // single shot; this is the weapon that actually does it, as its own separate entry rather
+    // than reworking railLance's tuned numbers/enemy mounts.
+    // At minTime (0.4s, a quick tap-and-release once past the floor): 30 x 0.5 = 15 damage.
+    // At maxTime (1.6s, held to full): 30 x 2.5 = 75 damage — a genuine commitment payoff.
+    id: 'chargeLance', name: 'Charge Lance', category: 'energy',
+    damage: 30, range: { min: 0, opt: 460, max: 680 },
+    ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s) if tapped at minTime every time
+    delivery: {
+      hit: 'hitscan', pattern: 'single', kind: 'rail',
+      chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5 },
+    },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover — now a saturating VOLLEY (#434)
     id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',

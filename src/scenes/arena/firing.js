@@ -57,6 +57,7 @@ export const FiringMixin = {
   _handleFiring(intent, delta, player = primaryPlayerOf(this)) {
     player.heldAudio ??= {};
     player.fireCooldowns ??= {};
+    player.chargeState ??= {};   // #493: per-slot { charging, elapsed } for chargeable weapons
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
@@ -65,6 +66,13 @@ export const FiringMixin = {
     const noReload = !!this._buffMods?.().noReload;
     for (const w of player.mech.weapons()) {
       const fireReady = w.ready || (noReload && w.online);
+      // #493: a chargeable weapon (delivery.chargeable) bypasses the normal auto-repeat-on-
+      // cooldown model entirely — hold to charge, release to fire, no held-beam/held-audio
+      // tracking (neither applies to a single charged shot). See `_handleChargeFire` below.
+      if (w.weapon.delivery.chargeable) {
+        this._handleChargeFire(w, intent, delta, player, fireReady);
+        continue;
+      }
       let cd = (player.fireCooldowns[w.location] ?? 0) - delta;
       if (intent.fire[w.location] && cd <= 0 && fireReady) {
         this.fireWeapon(w, player);
@@ -93,6 +101,39 @@ export const FiringMixin = {
       else if (!held && wasHeld) Audio.stopHeld(audioKey);
       player.heldAudio[w.location] = held;
     }
+  },
+
+  // ── Hold-to-charge firing (#493) ── holding the trigger accumulates charge (capped at
+  // `chargeable.maxTime`); releasing fires ONE shot scaled between `minDamageMult` (at
+  // `minTime`) and `maxDamageMult` (at `maxTime`). Releasing before `minTime` wastes the charge
+  // — no shot, no ammo spent — so a twitch-tap does nothing on purpose; this is a commitment
+  // weapon, not a faster machine gun. Reaching `maxTime` while still held auto-fires immediately
+  // rather than sitting at full charge doing nothing.
+  _handleChargeFire(w, intent, delta, player, fireReady) {
+    const dt = delta / 1000;
+    const held = !!intent.fire[w.location];
+    const state = (player.chargeState[w.location] ??= { charging: false, elapsed: 0 });
+    if (held && fireReady) {
+      if (!state.charging) { state.charging = true; state.elapsed = 0; }
+      state.elapsed = Math.min(w.weapon.delivery.chargeable.maxTime, state.elapsed + dt);
+      if (state.elapsed >= w.weapon.delivery.chargeable.maxTime) this._releaseCharge(w, player, state);
+      return;
+    }
+    // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve
+    // whatever charge had accumulated, if any.
+    if (state.charging) {
+      if (state.elapsed >= w.weapon.delivery.chargeable.minTime) this._releaseCharge(w, player, state);
+      else { state.charging = false; state.elapsed = 0; }
+    }
+  },
+
+  _releaseCharge(w, player, state) {
+    const { minTime, maxTime, minDamageMult = 1, maxDamageMult = 1 } = w.weapon.delivery.chargeable;
+    const frac = maxTime > minTime ? (state.elapsed - minTime) / (maxTime - minTime) : 1;
+    const mult = minDamageMult + (maxDamageMult - minDamageMult) * Math.max(0, Math.min(1, frac));
+    this.fireWeapon(w, player, { chargeMult: mult });
+    state.charging = false;
+    state.elapsed = 0;
   },
 
   // ── Manual reload (#402) ── R3/F tops off ALL of this player's weapons at once (the auto-
@@ -201,8 +242,13 @@ export const FiringMixin = {
   // singleton — the converge pick, the ammo pool, the muzzle geometry, the noise source, the
   // beam-lane key — now reads that player, so two players firing the same weapon in the same
   // frame never touch each other's state.
-  fireWeapon(w, player = primaryPlayerOf(this)) {
+  // #493: `chargeMult` (default 1, from `_releaseCharge` for a chargeable weapon) scales this
+  // shot's damage WITHOUT mutating the shared WEAPONS registry entry — `w` is reassigned to a
+  // shallow clone carrying a scaled `weapon.damage` for the rest of this call only, so every
+  // read below (planEmissions, _spawnProjectile, _fireHitscan, _melee) picks it up for free.
+  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1 } = {}) {
     if (!this.scene.isActive()) return;
+    if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
     // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
     // nothing picked this frame) does not fire — no dumbfire fallback. The trigger pull is a no-op:
     // nothing spawns, no ammo spent, no cooldown-worthy shot actually happened. `convergeTarget`
