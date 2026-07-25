@@ -74,7 +74,11 @@ export const ProjectilesMixin = {
       // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
       // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
       const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
-      const hitEnemy = enemyShot
+      // Playtest pass (Gravity Well/Caustic Lobber, 2026-07-25): `p.ignoresEnemyHit` opts a round
+      // out of the "detonate near an enemy" resolution entirely — it never resolves a target here,
+      // so it flies past enemies untouched (its real payload — travelAoe's tendril, or the planted
+      // hazard below — still finds them independently). It still resolves on cover/landing below.
+      const hitEnemy = enemyShot || p.ignoresEnemyHit
         ? null
         : lockedLive
           ? (lockedLive.mech.isDestroyed() ? null : lockedLive)
@@ -224,7 +228,11 @@ export const ProjectilesMixin = {
       // Cover is still cover for every enemy shooter and for every ground target — this exists so
       // that a helicopter the targeting rules let you lock over a base wall is a helicopter you can
       // actually hit, rather than lock saying yes and the shot saying no.
-      if (!p.arc && !p.ignoresCover) {
+      // Playtest pass: `p.hitsCoverWhileArcing` opts an arcing round OUT of the "arcing rounds lob
+      // clean over cover" rule (#316) while keeping its lofted visual — it should still detonate
+      // against a wall/destructible hex like a straight-fired round (Gravity Well, 2026-07-25).
+      const checksCover = !p.arc || p.hitsCoverWhileArcing;
+      if (checksCover && !p.ignoresCover) {
         // #288: base wall spans live on the boundaries BETWEEN hexes, so there's no tile under the
         // round to look up — and a fast round covers far more ground in one step than the wall's
         // ~14px thickness, so a point check at the step's endpoint could step clean over it. Test
@@ -309,7 +317,7 @@ export const ProjectilesMixin = {
       //     still takes its resolution own-hex roll where it comes down.
       // The round plays its OWN normal impact FX at the exact point it was caught (p.x, p.y),
       // reading as the shot being stopped right there. Symmetric — enemy rounds obey it identically.
-      if (!p.arc && !p.airTarget && !p.dead) {
+      if (checksCover && !p.airTarget && !p.dead) {
         const curKey = this._hexKeyAt(p.x, p.y);
         if (curKey !== p._lastHexKey) {
           p._lastHexKey = curKey;
@@ -589,7 +597,12 @@ export const ProjectilesMixin = {
       radius: h.radius, color: p.color, weaponId: p.weaponId,
       armIn: h.armDelay ?? 0.25, life: h.life ?? 6,
       damage: h.damage ?? p.damage,
-      force: h.force || null, _nextForceTick: 0,
+      // Playtest pass (Gravity Well, 2026-07-25): the DRAWN circle can be smaller than the actual
+      // pull `radius` — Jackson wants the visual to read as "where things end up" (near the
+      // centre, since the pull is strong) rather than depicting the full reach of the field.
+      // Defaults to the same value as `radius` for any other 'field' hazard that doesn't opt in.
+      visualRadius: h.visualRadius ?? h.radius,
+      force: h.force || null,
     });
     this._impactFx(p.x, p.y, p.color, p.kind, 10, p.weaponId);
   },
@@ -597,7 +610,6 @@ export const ProjectilesMixin = {
   // Per-frame upkeep for every planted hazard — armed countdown, the mine's proximity check (or
   // the field's continuous pull tick), its own expiry, and its live visual every frame.
   _updateHazards(dt) {
-    const now = this.time.now;
     for (const hz of this.hazards) {
       if (hz.armIn > 0) { hz.armIn -= dt; this._drawHazard(hz); continue; }
       hz.life -= dt;
@@ -626,15 +638,15 @@ export const ProjectilesMixin = {
           continue;
         }
       } else if (hz.kind === 'field' && hz.force) {
-        if (now >= hz._nextForceTick) {
-          const tickMs = 250;
-          hz._nextForceTick = now + tickMs;
-          const dt2 = tickMs / 1000;
-          for (const e of this.enemies) {
-            if (e.mech.isDestroyed()) continue;
-            const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt2);
-            e.x += dx; e.y += dy;
-          }
+        // Playtest pass (2026-07-25): "make the pull more smooth instead of jerky." This used to
+        // apply a quarter-second's worth of displacement in one lump every 250ms — 15 idle frames
+        // between each visible nudge at 60fps. Applying the same total impulse continuously, every
+        // frame at its own real `dt`, gives the identical net pull over time but reads as a smooth
+        // drift instead of a stutter-step.
+        for (const e of this.enemies) {
+          if (e.mech.isDestroyed()) continue;
+          const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt);
+          e.x += dx; e.y += dy;
         }
       }
       this._drawHazard(hz);
@@ -654,11 +666,16 @@ export const ProjectilesMixin = {
       g.fillStyle(0xff5533, 0.85).fillCircle(hz.x, hz.y, 3.5);
     } else if (hz.kind === 'field') {
       const t = now / 1000;
-      g.fillStyle(0x2a0845, 0.16).fillCircle(hz.x, hz.y, hz.radius);
-      g.lineStyle(1.5, 0x8a2be2, 0.45).strokeCircle(hz.x, hz.y, hz.radius);
+      // Playtest pass: the drawn orb uses `visualRadius` (defaults to the real pull `radius` for
+      // any hazard that doesn't tune it) — Gravity Well's is deliberately much smaller than its
+      // actual pull reach, so the orb reads as the landing zone the pull drags things INTO rather
+      // than the whole area it reaches out to grab from.
+      const vr = hz.visualRadius ?? hz.radius;
+      g.fillStyle(0x2a0845, 0.16).fillCircle(hz.x, hz.y, vr);
+      g.lineStyle(1.5, 0x8a2be2, 0.45).strokeCircle(hz.x, hz.y, vr);
       for (let i = 0; i < 3; i++) {
         const a = t * 2.4 + (i * Math.PI * 2) / 3;
-        const r = hz.radius * 0.55;
+        const r = vr * 0.55;
         g.fillStyle(0x9a4bf0, 0.85).fillCircle(hz.x + Math.cos(a) * r, hz.y + Math.sin(a) * r * 0.7, 5);
       }
     }

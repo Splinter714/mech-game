@@ -825,13 +825,21 @@ export const FiringMixin = {
     // rounds just run out at max range. This travel budget is what the kinematic round flies.
     let maxDist = maxRange;
     if (d.path === 'arcing') {
-      const primary = primaryPlayerOf(this);
-      const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: primary.x, y: primary.y });
-      // arcMaxDist (data/delivery.js, #77 follow-up) takes `aimAngle` — the weapon's un-offset
-      // CENTRE bearing — not `angle` (this shot's own possibly fan-offset launch heading). See
-      // that function's comment for why using the shot's own angle here regressed both missile
-      // range and Swarm Rack's flight path.
-      maxDist = arcMaxDist(x, y, aimAngle, tgt, maxRange, w.weapon.range?.opt ?? 160);
+      // Playtest pass (Gravity Well, 2026-07-25): `delivery.fixedRange` opts a lobbed weapon OUT
+      // of target-seeking entirely — it always flies its own optimal-range distance, whatever the
+      // lock says, so the toss reads as a consistent, repeatable lob rather than one whose length
+      // varies with whatever's locked. Skips arcMaxDist's target-ahead check altogether.
+      if (d.fixedRange) {
+        maxDist = w.weapon.range?.opt ?? 160;
+      } else {
+        const primary = primaryPlayerOf(this);
+        const tgt = owner === 'player' ? (seekTarget ?? { x, y }) : (seekTarget ?? { x: primary.x, y: primary.y });
+        // arcMaxDist (data/delivery.js, #77 follow-up) takes `aimAngle` — the weapon's un-offset
+        // CENTRE bearing — not `angle` (this shot's own possibly fan-offset launch heading). See
+        // that function's comment for why using the shot's own angle here regressed both missile
+        // range and Swarm Rack's flight path.
+        maxDist = arcMaxDist(x, y, aimAngle, tgt, maxRange, w.weapon.range?.opt ?? 160);
+      }
       // #376: CONSTANT HORIZONTAL SPEED. This deliberately replaces the old constant-apex
       // rule ("hold flight time fixed so every arc peaks at the same height", which derived
       // speed as maxDist / (opt / velocity)). That made velocity a function of RANGE — a

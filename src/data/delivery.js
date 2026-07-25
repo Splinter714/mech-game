@@ -561,6 +561,21 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // sustained pull field), ticking on its own clock rather than the round's flight. See
     // scenes/arena/projectiles.js `_plantHazard`/`_updateHazards`.
     hazard: d.hazard || null,
+    // Playtest pass (Gravity Well/Caustic Lobber, 2026-07-25): an opt-in exemption from the
+    // normal "detonate when close to an enemy" resolution — this round is never considered to
+    // have HIT an enemy at all (see projectiles.js's `hitEnemy` computation), so it flies past
+    // them untouched. It still detonates on cover (walls/soft-cover/landing) exactly like any
+    // other round — this only removes the enemy-proximity trigger, nothing else. Weapons whose
+    // real payload is a lingering AoE tick (Caustic Lobber's travelAoe) or a planted zone
+    // (Gravity Well's hazard) want the crowd pulled/cooked over time, not detonated by the first
+    // body the round brushes past.
+    ignoresEnemyHit: !!d.ignoresEnemyHit,
+    // Same playtest pass: an ARCING round normally lobs clean over cover (#316's "only an arcing
+    // round still lobs over" rule) — this opts a specific arcing weapon OUT of that so it still
+    // detonates against a wall/destructible hex like a straight-fired round, while keeping its
+    // visual loft (`arc` above stays true for the sprite-scale arc effect). See projectiles.js's
+    // cover-check gates.
+    hitsCoverWhileArcing: !!d.hitsCoverWhileArcing,
     // #377: which loft easing the fake "height" follows (see arcLoft above). Defaults to the
     // symmetric 'lob' parabola every arcing weapon used before, so only a weapon that opts in
     // via `delivery.arcProfile` changes shape.

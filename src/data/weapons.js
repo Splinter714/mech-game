@@ -457,13 +457,19 @@ export const WEAPONS = {
     // brief bolt from the canister to each enemy it just damaged (scenes/arena/projectiles.js
     // `_tickTravelAoe`) so the "corrosive cloud reaching out and zapping things" reads visually,
     // not just in the damage log.
+    // Playtest follow-up #2 (2026-07-25): "make the damaging tendril range larger, and make the
+    // projectile itself not hit enemies, only hit cover." The canister used to also detonate a
+    // direct hit + splash the instant it drifted within HIT_RADIUS of an enemy, on top of the
+    // travelAoe tick — `ignoresEnemyHit` removes that so the canister drifts THROUGH a crowd,
+    // dragging its (now much wider) tendril reach across everyone in range the whole way, and
+    // stops for nothing but a wall/soft cover or its own max range.
     id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
     damage: 18, range: { min: 40, opt: 380, max: 560 },
     ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'straight', velocity: 100,   // deliberately slow — the "cloud" has to linger to matter
-      splash: 30, kind: 'fire', scale: 1.6,
-      travelAoe: { radius: 75, dps: 14 },
+      splash: 30, kind: 'fire', scale: 1.6, ignoresEnemyHit: true,
+      travelAoe: { radius: 130, dps: 14 },
     },
   }),
   timedCharge: w({   // #488: reworked from a timed mid-air detonation into an actual MINEFIELD
@@ -652,14 +658,30 @@ export const WEAPONS = {
     // a while, like crowd control for a bit." Now a lobbed charge that lands and stays, sustaining
     // a continuous pull field (swirling dark-purple orb visual, scenes/arena/projectiles.js
     // `_drawHazard`) for a real duration rather than only pulling while airborne on its way past.
+    // Playtest follow-up (2026-07-25): "stronger pull but smaller visual area, so the visual is
+    // more where enemies end up, not the full range of the pull" plus "smoother, not jerky", plus
+    // "always a consistent lob distance that doesn't hit enemies directly but does hit cover."
+    // Four changes, all in `delivery`/the field hazard below:
+    //   * `force.strength` 220 -> 330 and pull `radius` 150 -> 210 — a stronger, farther-reaching
+    //     tug (scenes/arena/projectiles.js `_updateHazards`'s field branch).
+    //   * `visualRadius` 65 — the drawn orb (`_drawHazard`) is now well inside the real pull
+    //     radius, reading as the landing zone the crowd gets dragged INTO rather than the whole
+    //     area the field can grab from.
+    //   * the field's own pull tick no longer chunks into a 250ms lump (visibly jerky); it now
+    //     applies every frame at the real frame `dt`, same net pull, smooth drift.
+    //   * `fixedRange` + `ignoresEnemyHit` + `hitsCoverWhileArcing`: the lob no longer shortens to
+    //     land near whatever's locked (always flies its own `range.opt`), no longer detonates
+    //     early just because it drifted near an enemy on the way, and — despite still being an
+    //     arcing lob — now stops on a wall/destructible hex instead of lobbing clean over it.
     id: 'gravityWell', name: 'Gravity Well', category: 'support',
-    // Deliberately the lowest direct-hit damage in the catalog — this weapon's real value is
-    // dragging a crowd together (into the rest of your fire, or off an objective), not the hit.
+    // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead of
+    // resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card math.
     damage: 6, range: { min: 40, opt: 380, max: 520 },
     ammoMax: 3, slots: 2, cycleTime: 2000,   // #402: ~6.0s burst (3 pulls × 2s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
-      hazard: { kind: 'field', radius: 150, life: 5, force: { strength: 220, sign: -1 } },
+      fixedRange: true, ignoresEnemyHit: true, hitsCoverWhileArcing: true,
+      hazard: { kind: 'field', radius: 210, visualRadius: 65, life: 5, force: { strength: 330, sign: -1 } },
     },
   }),
   repulsorPulse: w({   // #499: reworked from a slow travelling orb into an instant FRONT-FACING
