@@ -66,6 +66,14 @@ export const ABILITY_SLOT_LAYOUT = {
   abilityX: { dx: -1, dy: 0 },
 };
 
+// Core slot (#496): a third, passive/always-on slot type — neither aimed (a weapon) nor
+// activated (an ability). Shields are the first (only, so far) core item: previously a fixed
+// chassis baseline every player mech got unconditionally, now an equip CHOICE (data/coreItems.js)
+// like everything else — a build that skips it trades survivability for something else. One slot
+// today; kept as a list (like the others) rather than a single scalar constant in case a second
+// core item type ever wants a second slot.
+export const CORE_SLOTS = ['core'];
+
 // Skill slots: the four arm/side-torso slots hold weapons (bound to triggers/bumpers). The
 // head is NOT a skill slot — it's not targetable either any more (#128). #188: there is no
 // ability slot any more — L3/Space is a hardcoded built-in (Sprint, data/sprint.js), not a

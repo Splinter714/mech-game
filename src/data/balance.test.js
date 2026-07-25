@@ -16,12 +16,12 @@ import { LOCATIONS } from './anatomy.js';
 import { CHASSIS } from './chassis/index.js';
 import { rosterToughnessBounds } from './rosterBounds.js';
 import { tickShield, SHIELD_PAUSE_MS, SHIELD_REGEN_FRACTION } from './shield.js';
-import { readFileSync } from 'node:fs';
+import { CORE_ITEMS } from './coreItems.js';
 
-// The player's shield is configured at deploy time rather than on the chassis (it predates this
-// pass — see PLAYER_SHIELD in scenes/ArenaScene.js). Mirrored here so the player's row can be
-// asserted as a whole; the value is cross-checked against the scene below.
-const PLAYER_SHIELD_MAX = 100;
+// The player's shield is a CORE_SLOTS equip choice (#496) resolved at deploy time rather than a
+// chassis baseline. Mirrored here so the player's row can be asserted as a whole; the value is
+// the single source of truth in coreItems.js, cross-checked below.
+const PLAYER_SHIELD_MAX = CORE_ITEMS.shield.max;
 
 // structure / armor / shield, exactly as the owner gave them.
 const TABLE = {
@@ -79,11 +79,10 @@ describe('#299: every unit hits its confirmed structure / armor / shield numbers
 });
 
 describe('#299: the player shield baseline', () => {
-  // ArenaScene can't be imported here (it pulls in Phaser), so pin the literal by reading the
-  // source — enough to catch the two drifting apart, which is the only failure mode that matters.
-  it('PLAYER_SHIELD is just a 100-point pool (#382: pause/regen are shared constants in shield.js)', () => {
-    const src = readFileSync(new URL('../scenes/ArenaScene.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/const PLAYER_SHIELD = \{ max: 100 \};/);
+  // #496: the shield is now a CORE_SLOTS equip choice rather than an ArenaScene constant, so this
+  // is a plain import assertion — no more reading ArenaScene's source as a Phaser-avoidance hack.
+  it('Shield is just a 100-point pool (#382: pause/regen are shared constants in shield.js)', () => {
+    expect(CORE_ITEMS.shield.max).toBe(100);
   });
 });
 

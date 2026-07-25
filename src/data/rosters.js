@@ -52,6 +52,7 @@ export const ROSTERS = {
         // default build equips it (on the top face button) so existing mobility isn't
         // silently lost until a player rebuilds.
         abilityMounts: { abilityY: 'dash' },
+        coreMounts: { core: 'shield' },
       },
       // #349: player 2's slot. Same chassis (every mech is locked to 'mediumPlayer' by the
       // migrate hook above anyway), a different but equally complete opening kit.
@@ -65,6 +66,7 @@ export const ROSTERS = {
           rightTorso: ['clusterRocket'],
         },
         abilityMounts: { abilityY: 'dash' },
+        coreMounts: { core: 'shield' },
       },
       // #387: players 3 & 4. Each a complete, deployable default so a drop-in with an untouched
       // slot gets a real mech. Loadouts vary the opening kit so four machines read as distinct on
@@ -79,6 +81,7 @@ export const ROSTERS = {
           rightTorso: ['pulseLaser'],
         },
         abilityMounts: { abilityY: 'dash' },
+        coreMounts: { core: 'shield' },
       },
       [PLAYER4_MECH_KEY]: {
         chassisId: 'mediumPlayer',
@@ -90,6 +93,7 @@ export const ROSTERS = {
           rightTorso: ['autocannon'],
         },
         abilityMounts: { abilityY: 'dash' },
+        coreMounts: { core: 'shield' },
       },
     }),
   },

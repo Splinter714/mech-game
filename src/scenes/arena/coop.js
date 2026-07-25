@@ -12,6 +12,7 @@
 import { buildMechTextures } from '../../art/index.js';
 import { playerMechArt } from '../../art/playerMechLook.js';
 import { Mech } from '../../data/Mech.js';
+import { shieldConfigFor } from '../../data/coreItems.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initAbilityStates } from './abilities.js';
@@ -214,7 +215,10 @@ export const CoopMixin = {
     const host = primaryPlayerOf(this).mech;
     const saved = this.allMechs?.[mechKeyForPlayer(index)];
     const mech = new Mech(joinerBuild(saved, host));
-    mech.configureShield(this._playerShieldConfig ?? {});
+    // #496: this player's OWN shield, resolved from their OWN core-slot build — not copied from
+    // the host. A joiner who built without a shield fights without one, same as any other build
+    // choice; see ArenaScene's identical deploy-time call for player 1.
+    mech.configureShield(shieldConfigFor(mech.coreMounts));
     return mech;
   },
 

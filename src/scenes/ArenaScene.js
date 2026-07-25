@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
+import { shieldConfigFor } from '../data/coreItems.js';
 import { range } from '../data/hexgrid.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TouchStickHud } from '../input/TouchStickHud.js';
@@ -27,17 +28,14 @@ import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 
-// #246: the player's native full-mech shield baseline — a real trait present from the start of
-// every sortie, not something that only exists once a Shield powerup is picked up (most enemy
-// mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy kinds opt in).
-// #299: `max` raised 50 -> 100 as part of the owner-set balance table. (#324: the armor/structure
-// half of that table was being multiplied by 7 at deploy and now reads honestly as 2100/1400 in
-// chassis/mediumPlayer.js — the shield is separate, unaffected, and stays 100.)
-// #380 made the shield a REWARD FOR BREAKING CONTACT (long pause, fast refill). #382 then unified
-// pause+regen across EVERY shield: the 3000ms pause and the 25%-of-max/sec regen live as shared
-// constants in shield.js (the player 100 pool refills in the same 4s as a 5-point drone), so the
-// only per-owner shield dial that remains here is the pool SIZE.
-const PLAYER_SHIELD = { max: 100 };
+// #246: the player's full-mech shield — a real trait present from the start of every sortie IF
+// equipped (most enemy mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy
+// kinds opt in). #299: pool size raised 50 -> 100 as part of the owner-set balance table. #380
+// made the shield a REWARD FOR BREAKING CONTACT (long pause, fast refill); #382 then unified
+// pause+regen across EVERY shield (3000ms pause, 25%-of-max/sec regen, shield.js) so the only
+// per-owner dial left is the pool SIZE. #496: it's no longer a fixed baseline every player mech
+// gets unconditionally — it's now the CORE_SLOTS equip choice (data/coreItems.js), resolved per
+// mech from its own build below, so a build that skips it fights with no shield at all.
 
 // The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
 // (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
@@ -105,13 +103,13 @@ export default class ArenaScene extends Phaser.Scene {
     // passes were reasoned against the wrong figure. It now lives in the chassis totals
     // (data/chassis/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500). repairAll() above is
     // all the deploy path needs.
-    // #246: (re)establish the player's native shield baseline fresh each sortie — redeploy-safe
-    // and idempotent (never compounds, always starts this deploy at full charge with no
-    // lingering powerup boost from a prior run).
-    activeMech.configureShield(PLAYER_SHIELD);
-    // #348: remembered so a JOINING player's mech gets the identical native shield baseline —
-    // co-op must not hand player 2 a differently-durable machine (coop.js `_mechForPlayer`).
-    this._playerShieldConfig = PLAYER_SHIELD;
+    // #246/#496: (re)establish the player's shield fresh each sortie, resolved from THIS mech's
+    // own core-slot build (data/coreItems.js `shieldConfigFor`) — redeploy-safe and idempotent
+    // (never compounds, always starts this deploy at full charge with no lingering powerup boost
+    // from a prior run). #348: co-op joiners resolve their OWN shield the same way, from their
+    // own build (coop.js `_mechForPlayer`) — there's no shared config to remember any more, each
+    // mech just asks its own coreMounts.
+    activeMech.configureShield(shieldConfigFor(activeMech.coreMounts));
     this.registry.set('playerMech', activeMech);
     // #423: start this sortie's run-stats accumulator now that the player mech (biome/chassis/
     // loadout) is known. Everything downstream emits events into it; it commits to history on

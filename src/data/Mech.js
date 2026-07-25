@@ -5,10 +5,11 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, CORE_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import { isAbility } from './abilities.js';
+import { isCoreItem } from './coreItems.js';
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
@@ -63,6 +64,14 @@ export class Mech {
     for (const slot of ABILITY_SLOTS) {
       const id = data.abilityMounts?.[slot];
       this.abilityMounts[slot] = isAbility(id) ? id : null;
+    }
+
+    // #496: core slots — a third, passive/always-on mount type (currently just Shield). Same
+    // stale-id-dropping treatment as the other two mount types above.
+    this.coreMounts = {};
+    for (const slot of CORE_SLOTS) {
+      const id = data.coreMounts?.[slot];
+      this.coreMounts[slot] = isCoreItem(id) ? id : null;
     }
 
     // Per-weapon ammo: a parallel array to mounts[loc] holding each weapon's current
@@ -362,6 +371,26 @@ export class Mech {
     return id;
   }
 
+  // ── Core slots (#496) ─────────────────────────────────────────────────────────────────────
+  canMountCore(slot, itemId) { return loadout.canMountCore(this.coreMounts, slot, itemId); }
+  coreSlotOf(itemId) { return loadout.coreLocationOf(this.coreMounts, itemId); }
+
+  mountCore(slot, itemId) {
+    const res = this.canMountCore(slot, itemId);
+    if (res.ok) {
+      const prevSlot = this.coreSlotOf(itemId);
+      if (prevSlot && prevSlot !== slot) this.coreMounts[prevSlot] = null;
+      this.coreMounts[slot] = itemId;
+    }
+    return res;
+  }
+
+  unmountCore(slot) {
+    const id = this.coreMounts[slot];
+    this.coreMounts[slot] = null;
+    return id;
+  }
+
   // ── Weapons & ammo ────────────────────────────────────────────────────────
   // Every mounted weapon with its resolved stats, whether it's online (its part is
   // intact), its current ammo (null = unlimited), and whether it's ready to fire
@@ -501,8 +530,9 @@ export class Mech {
     const mounts = {};
     const damage = {};
     const abilityMounts = { ...this.abilityMounts };
+    const coreMounts = { ...this.coreMounts };
     for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
     for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, hp: this.parts[loc].hp };
-    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, abilityMounts, damage };
+    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, abilityMounts, coreMounts, damage };
   }
 }

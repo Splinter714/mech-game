@@ -3,12 +3,10 @@
 //
 // Two separate claims live in that one sentence, and they had different answers:
 //
-//   (b) the BALANCE one — does player 2 have a shield AT ALL? The player's 100-point shield is
-//       configured at DEPLOY (`activeMech.configureShield(PLAYER_SHIELD)`), not in the chassis
-//       data, so a joining player who never gets that call fights with zero shield and is
-//       meaningfully weaker than player 1. This was already handled (coop.js `_mechForPlayer`
-//       re-applies the remembered `_playerShieldConfig`) — these tests lock it down so it stays
-//       handled on both join paths, since nothing was asserting it.
+//   (b) the BALANCE one — does player 2 have a shield AT ALL? #496 later made the shield an
+//       equip CHOICE (data/coreItems.js CORE_SLOTS) resolved from each mech's OWN build, rather
+//       than a single deploy-time constant copied to every player — so this now locks down that
+//       a joiner's shield comes from THEIR build, independent of the host's.
 //
 //   (a) the COSMETIC one — the actual bug. There was exactly ONE outline set, built against the
 //       phase-1 `this.playerView` accessor onto `players[0]`, so player 2's real shield had
@@ -24,45 +22,52 @@ import { PowerupsMixin } from './powerups.js';
 import { Mech } from '../../data/Mech.js';
 import { makePlayer } from '../../data/players.js';
 import { SHIELD_MECH_PART_KEYS } from './shieldOutline.js';
+import { CORE_ITEMS, shieldConfigFor } from '../../data/coreItems.js';
 
-const PLAYER_SHIELD = { max: 100 };  // #382: just a pool size — pause/regen are shared constants
+// ── (b) every player's mech resolves its OWN shield from its OWN build ──────────────────────
 
-// ── (b) every player's mech gets the deploy-time shield config ──────────────────────────────
-
-describe('#364(b): player 2 is not deployed with a weaker machine than player 1', () => {
+describe('#364(b)/#496: each player\'s shield comes from their own build, not the host\'s', () => {
   // The joiner path, run for real: `_mechForPlayer` is what builds the second player's Mech on
   // BOTH ways in — the mid-sortie START join and the garage co-op flow both funnel through
   // `_addPlayer` → `_mechForPlayer`, so covering it covers both.
-  const joinerScene = (shieldConfig) => Object.assign({
-    players: [{ ...makePlayer({ id: 0, x: 0, y: 0 }), mech: new Mech({ chassisId: 'mediumPlayer' }) }],
-    allMechs: {},
-    _playerShieldConfig: shieldConfig,
+  const joinerScene = (savedMech2) => Object.assign({
+    players: [{ ...makePlayer({ id: 0, x: 0, y: 0 }), mech: new Mech({ chassisId: 'mediumPlayer', coreMounts: { core: 'shield' } }) }],
+    allMechs: savedMech2 ? { mech2: savedMech2 } : {},
   }, CoopMixin);
 
-  it('gives the joining player the identical native shield baseline player 1 got', () => {
-    const scene = joinerScene(PLAYER_SHIELD);
+  it('gives a joiner who equipped a shield the same pool size the host has', () => {
+    const scene = joinerScene({ chassisId: 'mediumPlayer', coreMounts: { core: 'shield' } });
     const host = scene.players[0].mech;
-    host.configureShield(PLAYER_SHIELD);
+    host.configureShield(shieldConfigFor(host.coreMounts));   // what ArenaScene's deploy does
 
     const mech = scene._mechForPlayer(1);
 
     expect(mech).not.toBe(host);                       // an independent damage sink
     expect(mech.shield.max).toBe(host.shield.max);
-    expect(mech.shield.max).toBe(PLAYER_SHIELD.max);
+    expect(mech.shield.max).toBe(CORE_ITEMS.shield.max);
   });
 
-  it('starts that shield FULL, so player 2 does not walk on with an empty pool', () => {
-    const mech = joinerScene(PLAYER_SHIELD)._mechForPlayer(1);
-    expect(mech.shield.hp).toBe(PLAYER_SHIELD.max);
+  it('starts that shield FULL, so the joiner does not walk on with an empty pool', () => {
+    const mech = joinerScene({ chassisId: 'mediumPlayer', coreMounts: { core: 'shield' } })._mechForPlayer(1);
+    expect(mech.shield.hp).toBe(CORE_ITEMS.shield.max);
   });
 
-  it('deploy remembers PLAYER_SHIELD for the joiner instead of applying it to one mech only', () => {
-    // The wiring that makes the above reachable in the real game: ArenaScene must both configure
-    // the active mech AND publish the same config for `_mechForPlayer` to re-apply. Asserted
-    // against the source because create() needs a full Phaser scene to run.
-    const src = readFileSync(new URL('../ArenaScene.js', import.meta.url), 'utf8');
-    expect(src).toMatch(/activeMech\.configureShield\(PLAYER_SHIELD\)/);
-    expect(src).toMatch(/this\._playerShieldConfig = PLAYER_SHIELD/);
+  it('gives a joiner who did NOT equip a shield none at all — independent of the host having one', () => {
+    const scene = joinerScene({ chassisId: 'mediumPlayer', coreMounts: { core: null } });
+    const host = scene.players[0].mech;
+    expect(host.shield.max).toBe(0);   // host never had configureShield called in this fake scene
+
+    const mech = scene._mechForPlayer(1);
+    expect(mech.shield.max).toBe(0);
+  });
+
+  it('the real deploy/join wiring calls shieldConfigFor on each mech\'s own coreMounts', () => {
+    // ArenaScene can't be imported here (it pulls in Phaser), so pin the literal by reading the
+    // source — enough to catch the two drifting apart, which is the only failure mode that matters.
+    const arenaSrc = readFileSync(new URL('../ArenaScene.js', import.meta.url), 'utf8');
+    expect(arenaSrc).toMatch(/activeMech\.configureShield\(shieldConfigFor\(activeMech\.coreMounts\)\)/);
+    const coopSrc = readFileSync(new URL('./coop.js', import.meta.url), 'utf8');
+    expect(coopSrc).toMatch(/mech\.configureShield\(shieldConfigFor\(mech\.coreMounts\)\)/);
   });
 });
 
