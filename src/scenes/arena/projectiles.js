@@ -62,6 +62,10 @@ export const ProjectilesMixin = {
       // #491/#499: continuous push/pull WHILE this round is in flight — player-fired only (no
       // force weapon has been asked for on the enemy side), acting on living enemies only.
       if (p.force && !enemyShot) this._tickTravelForce(p);
+      // #488: a fuse detonates the round independent of its normal hit/landing resolution below
+      // — skip straight to the next round once it goes off, exactly like a direct hit/landing
+      // does (both set p.dead and `continue`).
+      if (p.fuse && this._tickFuse(p, dt)) { this._detonateFuse(p); continue; }
       // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
       // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
       const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
@@ -462,6 +466,50 @@ export const ProjectilesMixin = {
       const { dx, dy } = computeImpulse(p.x, p.y, radius, strength, sign, e.x, e.y, dt);
       e.x += dx; e.y += dy;
     }
+  },
+
+  // #488: has `p.fuse` tripped this frame? 'time' fires once its flight clock reaches
+  // `fuse.time` seconds, REGARDLESS of whether it's near anything — a round with nothing to hit
+  // still goes off on schedule. 'proximity' fires the instant a valid target (the round's own
+  // side's enemy) comes within `fuse.radius`, which can be wider than the normal HIT_RADIUS so it
+  // can go off before physically reaching a target.
+  _tickFuse(p, dt) {
+    const { mode, time, radius } = p.fuse;
+    if (mode === 'time') {
+      p._fuseElapsed = (p._fuseElapsed ?? 0) + dt;
+      return p._fuseElapsed >= time;
+    }
+    if (mode === 'proximity') {
+      if (p.owner === 'enemy') {
+        return livePlayersOf(this).some((pl) => Math.hypot(pl.x - p.x, pl.y - p.y) < radius);
+      }
+      return this.enemies.some((e) => !e.mech.isDestroyed() && Math.hypot(e.x - p.x, e.y - p.y) < radius);
+    }
+    return false;
+  },
+
+  // #488: the fuse's actual detonation — a REAL multi-target blast (data/aoe.js), unlike the
+  // normal single-target hit-tolerance splash the impact/landing resolution below uses. Player
+  // rounds also catch other players (co-op friendly-fire-on) but never the shooter, same as
+  // `_tickTravelAoe`/Shield Burst/Jump Blast.
+  _detonateFuse(p) {
+    p.dead = true;
+    p.stopTrajectorySfx?.();
+    const radius = p.fuse.radius || p.splash || 40;
+    if (p.owner === 'enemy') {
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, livePlayersOf(this))) {
+        this._damagePlayerAt(hit.amount, hit.target, { weaponId: p.weaponId });
+      }
+    } else {
+      const enemies = this.enemies.filter((e) => !e.mech.isDestroyed());
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, enemies)) {
+        this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId });
+      }
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, otherLivePlayers(this, p.shooter))) {
+        this._damagePlayerAt(hit.amount, hit.target, { weaponId: p.weaponId });
+      }
+    }
+    this._impactFx(p.x, p.y, p.color, p.kind, radius, p.weaponId);
   },
 
   // #168: a coarse uniform-grid spatial index over the living enemies, rebuilt once per frame.

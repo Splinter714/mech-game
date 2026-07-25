@@ -60,6 +60,12 @@
 //             status effect (data/statusEffects.js) at the location the hit resolved to —
 //             periodic damage that outlasts the shot itself. Mech-kind targets only (no
 //             HpBody/vehicle-kind support yet). `kind` defaults to 'plasmaBurn'.
+//   fuse      { mode: 'time' | 'proximity', time?, radius? } — #488: detonates the round
+//             independent of its normal hit/landing resolution — 'time' after `time` seconds
+//             of flight regardless of whether it hit anything, 'proximity' the instant it comes
+//             within `radius` of a living valid target. Either way the detonation is a REAL
+//             multi-target blast (data/aoe.js `damageInRadius` over `splash`), not the normal
+//             single-target hit-tolerance splash.
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, slots, cycleTime
@@ -417,6 +423,22 @@ export const WEAPONS = {
       hit: 'projectile', path: 'straight', velocity: 160,   // deliberately slow — the "cloud" has to linger to matter
       splash: 24, kind: 'fire',
       travelAoe: { radius: 60, dps: 12 },
+    },
+  }),
+  timedCharge: w({   // #488: a lobbed charge that detonates on a TIMER, not on impact — it flies
+    // its whole 1.3s fuse life regardless of whether it hits anything on the way, then blasts a
+    // REAL multi-target explosion (data/aoe.js) wherever it happens to be. Reads as "toss it
+    // ahead of where the enemy is HEADED and time the blast," rather than a direct-fire weapon —
+    // arm it too early and it's already gone off by the time they arrive; too late and it's still
+    // in the air. No direct-hit damage component at all: `damage` only matters for #402's
+    // ammo-economy shape (unused here since detonation is fuse-only) and is set to the blast's
+    // own damage so the fuse and any future direct-hit resolution would agree.
+    id: 'timedCharge', name: 'Timed Charge', category: 'ballistic',
+    damage: 55, range: { min: 40, opt: 420, max: 620 },
+    ammoMax: 4, slots: 2, cycleTime: 1500,   // #402: ~6.0s burst (4 pulls × 1.5s), then 2s reload
+    delivery: {
+      hit: 'projectile', path: 'arcing', velocity: 340, kind: 'plasma',
+      fuse: { mode: 'time', time: 1.3, radius: 70 },
     },
   }),
 
