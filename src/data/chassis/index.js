@@ -11,6 +11,11 @@ import { HEAVY_CONFIG } from './heavy.js';
 // mediumPlayer.js). Registered like any other chassis; rosters.js force-migrates player mechs
 // onto this id, and nothing in ENEMIES references it.
 import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
+// #529: two more COSMETIC-ONLY player chassis variants (same stats as mediumPlayer, different
+// art shape) for the Mech Lab's chassis-select tab — see strikerPlayer.js/colossusPlayer.js for
+// why they're separate configs rather than an in-place art swap.
+import { STRIKER_PLAYER_CONFIG } from './strikerPlayer.js';
+import { COLOSSUS_PLAYER_CONFIG } from './colossusPlayer.js';
 
 // Relative bulk of each damage-tracked location, used to distribute armor + HP (#246:
 // renamed from "structure" — plain language, same layering) from the chassis' baseline
@@ -93,10 +98,19 @@ export function makeChassis(cfg) {
 
 // Built registry: weight-class id → full chassis def.
 export const CHASSIS = Object.fromEntries(
-  [LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG, MEDIUM_PLAYER_CONFIG].map((cfg) => [cfg.id, makeChassis(cfg)]),
+  [
+    LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG,
+    MEDIUM_PLAYER_CONFIG, STRIKER_PLAYER_CONFIG, COLOSSUS_PLAYER_CONFIG,
+  ].map((cfg) => [cfg.id, makeChassis(cfg)]),
 );
 
 export const CHASSIS_IDS = Object.keys(CHASSIS);
+
+// #529: the chassis ids a PLAYER may actually pick in the Mech Lab's chassis-select tab (tab 0)
+// — cosmetic-only variants, all sharing mediumPlayer's stat block. In display/cycle order.
+// rosters.js's migrate hook uses this to decide whether a saved chassisId is a legal player pick
+// (kept as-is) or a stale/enemy one (force-migrated to mediumPlayer).
+export const PLAYER_CHASSIS_IDS = ['mediumPlayer', 'strikerPlayer', 'colossusPlayer'];
 
 export function getChassis(id) {
   return CHASSIS[id] ?? CHASSIS.medium;

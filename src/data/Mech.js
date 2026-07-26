@@ -137,6 +137,26 @@ export class Mech {
   get weightClass() { return this._chassis.weightClass; }
   get movement() { return this._chassis.movement; }
 
+  // #529: switch this mech onto a different chassis (the Mech Lab's cosmetic chassis-select tab
+  // — mediumPlayer/strikerPlayer/colossusPlayer, all identical stats). Re-reads every damage-
+  // tracked location's max armor/hp off the new chassis and clamps current values down to it (a
+  // no-op for the cosmetic variants above, since their totals are identical, but kept general so
+  // this stays correct even if a future chassis switch ever DOES change totals). Mounts/ammo/
+  // shield/name/color are untouched — only the chassis (art + movement + location maxes) changes.
+  setChassis(chassisId) {
+    this.chassisId = chassisId;
+    this._chassis = getChassis(chassisId);
+    for (const loc of LOCATIONS) {
+      const def = this._chassis.locations[loc];
+      const part = this.parts[loc];
+      if (!part) continue;
+      part.maxArmor = def.maxArmor;
+      part.maxHp = def.maxHp;
+      part.armor = Math.min(part.armor, def.maxArmor);
+      part.hp = Math.min(part.hp, def.maxHp);
+    }
+  }
+
   // Total max hit points across every location (armor + structure summed) — one scalar
   // "how tough is this build" figure (light ≈266, medium ≈416, heavy ≈616 at base chassis
   // stats). #90: gives callers (e.g. the powerup drop-chance scaling) a `.maxHp` uniform

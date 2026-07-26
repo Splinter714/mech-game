@@ -824,3 +824,43 @@ describe('Mech status effects (#489 — Plasma\'s burn DoT)', () => {
     expect(m.statusEffects).toEqual([]);
   });
 });
+
+describe('Mech#setChassis (#529 — the Mech Lab\'s cosmetic chassis-select tab)', () => {
+  it('updates chassisId and the live chassis getter', () => {
+    const m = new Mech({ chassisId: 'mediumPlayer' });
+    m.setChassis('strikerPlayer');
+    expect(m.chassisId).toBe('strikerPlayer');
+    expect(m.chassis.id).toBe('strikerPlayer');
+  });
+
+  it('is a no-op on current armor/hp when switching between chassis with identical totals', () => {
+    const m = new Mech({ chassisId: 'mediumPlayer' });
+    m.applyDamage('leftArm', 10);
+    const before = { ...m.parts.leftArm };
+    m.setChassis('colossusPlayer');
+    expect(m.parts.leftArm.armor).toBe(before.armor);
+    expect(m.parts.leftArm.hp).toBe(before.hp);
+    expect(m.parts.leftArm.maxArmor).toBe(before.maxArmor);
+    expect(m.parts.leftArm.maxHp).toBe(before.maxHp);
+  });
+
+  it('clamps current armor/hp down if the new chassis has a LOWER max (defensive, not exercised by the cosmetic variants)', () => {
+    const m = new Mech({ chassisId: 'heavy' });   // heavy has more total armor/hp than light
+    m.setChassis('light');
+    for (const loc of ['leftTorso', 'rightTorso', 'leftArm', 'rightArm']) {
+      expect(m.parts[loc].armor).toBeLessThanOrEqual(m.parts[loc].maxArmor);
+      expect(m.parts[loc].hp).toBeLessThanOrEqual(m.parts[loc].maxHp);
+    }
+  });
+
+  it('leaves mounts/ammo/shield/name/color untouched', () => {
+    const m = new Mech({
+      chassisId: 'mediumPlayer', name: 'Trooper-01', color: 0x427ffa,
+      mounts: { rightArm: ['autocannon'] },
+    });
+    m.setChassis('strikerPlayer');
+    expect(m.mounts.rightArm).toEqual(['autocannon']);
+    expect(m.name).toBe('Trooper-01');
+    expect(m.color).toBe(0x427ffa);
+  });
+});

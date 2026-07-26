@@ -40,6 +40,19 @@ describe('garage persistence', () => {
     const all = loadAllMechs();
     expect(all.mech1.chassisId).toBe('mediumPlayer');
   });
+
+  // #529: the Mech Lab's chassis-select tab lets a player pick strikerPlayer/colossusPlayer
+  // (cosmetic-only variants) — that pick must persist across a save/load round-trip now, not be
+  // reset back to mediumPlayer like a stale pre-#248 chassisId is.
+  it('#529: a saved cosmetic chassis pick (strikerPlayer/colossusPlayer) survives load unchanged', () => {
+    for (const id of ['strikerPlayer', 'colossusPlayer']) {
+      globalThis.localStorage.setItem('mech-game-mechs-v1', JSON.stringify({
+        mech1: { chassisId: id, name: 'Cosmetic Pick', mounts: {} },
+      }));
+      const all = loadAllMechs();
+      expect(all.mech1.chassisId).toBe(id);
+    }
+  });
 });
 
 describe('unlocked-catalog persistence (#65)', () => {

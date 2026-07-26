@@ -1,16 +1,55 @@
 import { describe, it, expect } from 'vitest';
-import { CHASSIS, CHASSIS_IDS, getChassis, makeChassis } from './index.js';
+import {
+  CHASSIS, CHASSIS_IDS, PLAYER_CHASSIS_IDS, getChassis, makeChassis,
+} from './index.js';
 import { LIGHT_CONFIG } from './light.js';
 import { MEDIUM_CONFIG } from './medium.js';
 import { HEAVY_CONFIG } from './heavy.js';
 import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
+import { STRIKER_PLAYER_CONFIG } from './strikerPlayer.js';
+import { COLOSSUS_PLAYER_CONFIG } from './colossusPlayer.js';
 
 describe('CHASSIS — weight-class movement stats', () => {
   // #299 added 'mediumPlayer' — the PLAYER's own medium-class stat block, separated from the
   // enemy medium the Warden rides (see chassis/mediumPlayer.js). It's a stat variant of
-  // 'medium', not a fourth weight class, and shares medium's movement verbatim.
-  it('defines the three expected player weight classes', () => {
-    expect(CHASSIS_IDS.filter((id) => id !== 'mediumPlayer').sort()).toEqual(['heavy', 'light', 'medium']);
+  // 'medium', not a fourth weight class, and shares medium's movement verbatim. #529 added two
+  // more cosmetic-only player variants (strikerPlayer/colossusPlayer) — also stat variants, not
+  // new weight classes.
+  it('defines the three expected non-player weight classes', () => {
+    expect(CHASSIS_IDS.filter((id) => !PLAYER_CHASSIS_IDS.includes(id)).sort()).toEqual(['heavy', 'light', 'medium']);
+  });
+
+  // #529: cosmetic-only chassis variants for the Mech Lab's chassis-select tab — same stats as
+  // mediumPlayer, different art shape only ("same stats, just different art cosmetically").
+  it('#529: strikerPlayer/colossusPlayer are registered and share mediumPlayer\'s stats exactly', () => {
+    for (const id of ['strikerPlayer', 'colossusPlayer']) {
+      expect(CHASSIS_IDS).toContain(id);
+      const { art: pArt, ...pRest } = CHASSIS.mediumPlayer;
+      const { art: vArt, ...vRest } = CHASSIS[id];
+      expect(vRest).toEqual({ ...pRest, id, name: CHASSIS[id].name });
+    }
+  });
+
+  it('#529: PLAYER_CHASSIS_IDS lists exactly the three player-pickable cosmetic chassis, mediumPlayer first', () => {
+    expect(PLAYER_CHASSIS_IDS).toEqual(['mediumPlayer', 'strikerPlayer', 'colossusPlayer']);
+  });
+
+  it('#529: strikerPlayer/colossusPlayer art differs from mediumPlayer only in bodyLen/bodyWid/accent', () => {
+    for (const [cfg, expected] of [
+      [STRIKER_PLAYER_CONFIG, { bodyLen: 34, bodyWid: 26, accent: 0x49e88f }],
+      [COLOSSUS_PLAYER_CONFIG, { bodyLen: 52, bodyWid: 44, accent: 0x9a6ad6 }],
+    ]) {
+      expect(cfg.art.bodyLen).toBe(expected.bodyLen);
+      expect(cfg.art.bodyWid).toBe(expected.bodyWid);
+      expect(cfg.art.accent).toBe(expected.accent);
+      // Everything else in `art` (the leg shape override) is inherited from mediumPlayer verbatim.
+      expect(cfg.art.shape).toEqual(MEDIUM_PLAYER_CONFIG.art.shape);
+      // ...and every non-art field (movement, totals) is untouched.
+      const { art: _a, ...rest } = cfg;
+      const { art: _b, id: _id, name: _name, ...mediumRest } = MEDIUM_PLAYER_CONFIG;
+      const { id: _id2, name: _name2, ...cfgRest } = rest;
+      expect(cfgRest).toEqual(mediumRest);
+    }
   });
 
   // #299: the whole-chassis totals are now an exact contract, not "whatever the per-location

@@ -4,6 +4,7 @@
 // entry, not new loader code. Default builds are plain Mech.toJSON()-shaped data.
 
 import { Mech } from './Mech.js';
+import { PLAYER_CHASSIS_IDS } from './chassis/index.js';
 
 // Player 1's build slot. Still THE slot as far as every single-player path is concerned —
 // #349 added exactly one more ('mech2', player 2's persistent build in local co-op), it did not
@@ -37,7 +38,15 @@ export const ROSTERS = {
     // untouched, so removing this one-line migrate hook fully re-enables them later.
     // #299: the target is now 'mediumPlayer' — the player's own medium-class stat block
     // (chassis/mediumPlayer.js, 200/300/100) rather than the enemy medium the Warden uses.
-    migrate: (data) => ({ ...data, chassisId: 'mediumPlayer' }),
+    // #529: the Mech Lab's chassis-select tab lets a player pick one of PLAYER_CHASSIS_IDS
+    // (mediumPlayer/strikerPlayer/colossusPlayer — cosmetic-only variants, identical stats) —
+    // that choice must now SURVIVE a save/load round-trip instead of being force-reset every
+    // load. Only a chassisId that ISN'T one of those three (an old light/heavy/medium/enemy pick
+    // from before #248, or a stale/unknown value) still gets force-migrated onto mediumPlayer.
+    migrate: (data) => ({
+      ...data,
+      chassisId: PLAYER_CHASSIS_IDS.includes(data.chassisId) ? data.chassisId : 'mediumPlayer',
+    }),
     defaultRoster: () => ({
       [ACTIVE_MECH_KEY]: {
         chassisId: 'mediumPlayer',
