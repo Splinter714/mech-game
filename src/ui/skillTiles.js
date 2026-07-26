@@ -227,8 +227,12 @@ export function weaponAbilityRows(x, w, {
   const abilityH = Math.round(weapons[0].h / 2);
   const abilityTop = weapons[0].y - rowGap - abilityH;
   const abilityGap = gap * 1.5;
-  const leftW = Math.round(size * 1.5);
-  const rightW = Math.round(size * 1.5);
+  // #526 playtest follow-up: "shield/AMS slot should be wider" — nudged the split from the
+  // original 1.5/1/1.5 to 1.35/1.3/1.35 (still summing to 4x weapon-tile-widths, so the row
+  // keeps lining up with the weapon row below). Tunable, not locked — revisit if it still
+  // reads too narrow/wide in play.
+  const leftW = Math.round(size * 1.35);
+  const rightW = Math.round(size * 1.35);
   // The core tile takes whatever's left of the row's fixed total width — nominally `size`, but
   // this is what keeps the OUTER edges exact regardless of the `Math.round`s above.
   const midW = Math.max(0, rowW - leftW - rightW - abilityGap * 2);
