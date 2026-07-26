@@ -5,8 +5,12 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../audio/index.js', () => ({ Audio: { ui: vi.fn() } }));
 
-import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_ALPHA } from './abilities.js';
+import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_ALPHA, CLOAK_GLOW_ALPHA, CLOAK_GLOW_TINT } from './abilities.js';
 import { ABILITIES } from '../../data/abilities.js';
+
+// Mirrors art/mechArt.js's own `PIVOT_LOCATIONS` (side torsos then arms) — the four weapon-carrying
+// slots that get a muzzle-glow overlay sprite (mechView.js `makeMechParts`).
+const PIVOT_LOCATIONS = ['leftTorso', 'rightTorso', 'leftArm', 'rightArm'];
 
 // Mirrors abilities.js's own local `MECH_PART_KEYS` (kept private there, and deliberately not
 // imported from shieldOutline.js — see that file's comment on why: it pulls in the real
@@ -39,11 +43,18 @@ function fakePartSprite(key) {
   return sprite;
 }
 
+// A minimal stand-in for a per-slot muzzle-glow overlay sprite (mechView.js `makeMechParts`'s
+// `glow[loc]`) — just enough surface for setCloakVisual's mute/restore branch.
+function fakeGlowSprite() {
+  return { setAlpha: vi.fn(), setTint: vi.fn(), clearTint: vi.fn() };
+}
+
 // A minimal stand-in for a `_makeMechView` container: `setAlpha` plus the six named part
-// sprites `setCloakVisual` (abilities.js) reaches into.
+// sprites `setCloakVisual` (abilities.js) reaches into, plus a `glow` map of per-slot overlays.
 function fakeMechView() {
-  const view = { setAlpha: vi.fn() };
+  const view = { setAlpha: vi.fn(), glow: {} };
   for (const part of MECH_PART_KEYS) view[part] = fakePartSprite(`mechTex_${part}`);
+  for (const loc of PIVOT_LOCATIONS) view.glow[loc] = fakeGlowSprite();
   return view;
 }
 
@@ -204,6 +215,33 @@ describe('#500 cloak (follow-up) — GENUINE desaturation (not a tint) + translu
   it('is a safe no-op with no view at all (a bare test double)', () => {
     const scene = makeScene([]);
     const player = makePlayer({ abilityX: 'cloak' });
+    expect(() => updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player)).not.toThrow();
+  });
+
+  it('#500 (fourth pass) mutes every per-slot muzzle-glow overlay on activation and restores it on deactivation', () => {
+    const scene = makeScene([]);
+    const player = makePlayer({ abilityX: 'cloak' });
+    player.view = fakeMechView();
+
+    updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
+    for (const loc of PIVOT_LOCATIONS) {
+      expect(player.view.glow[loc].setAlpha).toHaveBeenCalledWith(CLOAK_GLOW_ALPHA);
+      expect(player.view.glow[loc].setTint).toHaveBeenCalledWith(CLOAK_GLOW_TINT);
+    }
+
+    updateAbilities(scene, { ability: noAbility }, ABILITIES.cloak.duration * 1000, player);
+    for (const loc of PIVOT_LOCATIONS) {
+      expect(player.view.glow[loc].setAlpha).toHaveBeenLastCalledWith(1);
+      expect(player.view.glow[loc].clearTint).toHaveBeenCalled();
+    }
+  });
+
+  it('#500 (fourth pass) is a safe no-op when a view has no glow map at all (e.g. an enemy-shaped or older test double)', () => {
+    const scene = makeScene([]);
+    const player = makePlayer({ abilityX: 'cloak' });
+    player.view = fakeMechView();
+    delete player.view.glow;
+
     expect(() => updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player)).not.toThrow();
   });
 });

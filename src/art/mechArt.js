@@ -548,9 +548,38 @@ export function reskinMech(scene, key, mech, opts) {
 // unit tests use (no `.textures`, or a `.textures` with no real canvas backing) — those tests
 // assert the ORCHESTRATION (which key a sprite gets pointed at), not the pixel math itself, which
 // has its own pure unit test (data/desaturate.test.js) and is otherwise verified live.
-const CLOAK_OUTLINE_THICKNESS_PX = 6;   // raster px at ART_SCALE(4x) ≈ 2 display px at ARENA_MECH_SCALE(0.34)
+//
+// #500 (fourth pass, owner playtest: "cloak wireframe is pretty good" + three follow-ups) —
+// CLOAK_OUTLINE_THICKNESS_PX nudged down from 6 → 4 raster px ("slightly thinner", not a redesign).
+//
+// CLOAK_FILL_ALPHA_MULT raised from 0.55 → 0.92 to fix "legs bleeding through the torso": the
+// mech view stacks hull/torsos/arms/turret as SIBLING sprites in one container (mechView.js
+// `makeMechParts`), each independently alpha-blended, under one container-level CLOAK_ALPHA
+// (abilities.js). With every part's OWN fill baked to the SAME ~0.55 alpha, a region where (say)
+// the torso covers the hull composites THREE layers deep (background, then hull-over-background,
+// then torso-over-that) while a region with only the torso showing composites just two — so the
+// hull's grey silhouette/pose visibly echoes through the torso above it wherever they overlap,
+// read as "legs bleeding through". This is inherent to independently-alpha'd sibling sprites: no
+// choice of EQUAL alpha removes the double-transparency seam, only the alpha's overall magnitude
+// changes how visible it is.
+//
+// The technically clean fix would flatten the whole cloaked stack into one pre-composited texture
+// per pose change (draw every part at FULL alpha into a Phaser RenderTexture, preserving normal
+// opaque occlusion, then display THAT single result at reduced alpha) — but that means adding a
+// wholly new rendering primitive (RenderTexture is unused anywhere else in this codebase) that has
+// to be re-drawn on every gait tick, turret slew, and convergence-tilt change (i.e. nearly every
+// frame a cloaked player is moving/aiming), wired through locomotion.js/mechView.js's per-frame
+// pose sync, correctly interleaved with the muzzle-glow reload-blink visibility toggle — real
+// surface area for a visual regression that (per the owner's process for this pass) can't be
+// verified live before landing. So this takes the documented simpler fallback instead: push each
+// part's OWN baked alpha up near-opaque (0.92) so a part fully covers whatever's directly behind it
+// wherever it visually overlaps (any bleed-through left is a ~8% ghost, well under the noise floor
+// at the arena's actual on-screen mech scale) and let the rim outline + desaturation + the
+// container's own CLOAK_ALPHA (unchanged) carry the entire "translucent ghost" read instead of
+// each part's own transparency doing much of the work.
+const CLOAK_OUTLINE_THICKNESS_PX = 4;   // raster px at ART_SCALE(4x) ≈ 1.3 display px at ARENA_MECH_SCALE(0.34)
 const CLOAK_OUTLINE_RGB = 235;          // bright near-white rim, distinct from any desaturated grey fill
-const CLOAK_FILL_ALPHA_MULT = 0.55;     // interior fill pushed more transparent than the rim line
+const CLOAK_FILL_ALPHA_MULT = 0.92;     // near-opaque so overlapping parts don't double-composite/ghost
 
 export function desaturateTexture(scene, key) {
   const dstKey = `${key}_grey`;

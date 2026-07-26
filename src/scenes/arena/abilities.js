@@ -9,7 +9,7 @@ import { initialAbilityState, canActivate, activateAbility, updateAbilityState }
 import { ABILITY_SLOTS } from '../../data/anatomy.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { otherLivePlayers } from './players.js';
-import { desaturateTexture } from '../../art/mechArt.js';
+import { desaturateTexture, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { Audio } from '../../audio/index.js';
 
 // The six mech part-sprite names on a mech view (locomotion.js `_makeMechView`) — mirrors
@@ -46,6 +46,18 @@ export const CLOAK_ALPHA = 0.45;      // dim enough to read as translucent; the 
                                        // this, so the combined look is a lit wireframe silhouette
                                        // rather than a flat grey one.
 
+// #500 (fourth pass, owner playtest on the wireframe rework: "cloak wireframe is pretty good" +
+// three follow-ups) — the per-slot muzzle-glow overlay (#433 MUZZLE_GLOW_SUFFIX/drawPartGlow,
+// mounted above its part in mechView.js `makeMechParts`) is a small saturated/near-white emissive
+// blob on an otherwise-transparent canvas. It's a CHILD of `view`, so CLOAK_ALPHA above already
+// dims it along with everything else — but a glow's hot core is baked bright enough that even at
+// CLOAK_ALPHA it still pops against the muted, desaturated body around it. Unlike the body (which
+// genuinely needs per-pixel desaturation — see desaturate.js's header on why tint can't do that
+// for a saturated panel), a small emissive dot reads as "muted" from a plain tint + extra alpha
+// just fine, so this stays a cheap sprite-level dim rather than another desaturateTexture bake.
+export const CLOAK_GLOW_ALPHA = 0.35;   // stacks multiplicatively with the container's own CLOAK_ALPHA
+export const CLOAK_GLOW_TINT = 0x8a8a8a; // mid-grey multiply — knocks the hot core/halo down several notches
+
 // Apply/clear Cloak's visual on a player's mech view: swap every non-hull part sprite to a
 // genuinely-desaturated `_grey` texture variant (baked fresh from whatever the part's CURRENT
 // texture is, so it always matches the mech's live damage state) plus the container's own alpha
@@ -72,6 +84,20 @@ function setCloakVisual(scene, player, active) {
     } else if (sprite._cloakBaseKey) {
       sprite.setTexture(sprite._cloakBaseKey);
       sprite._cloakBaseKey = null;
+    }
+  }
+  // #500 (fourth pass): mute each mounted weapon's glow overlay alongside the body. Guarded the
+  // same way as the part sprites above (`?.`) so a hand-rolled test double's partial/absent
+  // `view.glow` never throws — the real mech view always has one overlay per PIVOT_LOCATIONS slot.
+  for (const loc of PIVOT_LOCATIONS) {
+    const glowSprite = view.glow?.[loc];
+    if (!glowSprite?.setAlpha) continue;
+    if (active) {
+      glowSprite.setAlpha(CLOAK_GLOW_ALPHA);
+      glowSprite.setTint?.(CLOAK_GLOW_TINT);
+    } else {
+      glowSprite.setAlpha(1);
+      glowSprite.clearTint?.();
     }
   }
 }
