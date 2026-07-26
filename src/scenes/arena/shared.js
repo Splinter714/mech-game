@@ -8,6 +8,7 @@ import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 import { hexCorners } from '../../data/hexgrid.js';
 import { liveToughnessBounds } from '../../data/rosterBounds.js';
+import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/mediumPlayer.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
@@ -269,6 +270,36 @@ export function approach(cur, target, maxStep) {
   if (cur < target) return Math.min(cur + maxStep, target);
   if (cur > target) return Math.max(cur - maxStep, target);
   return cur;
+}
+
+// #501/#522: the player's live fast-vs-slow movement resolution, shared by BOTH scenes that
+// drive a player mech (ArenaScene's `_drive`/`_stepGait` in locomotion.js, and BaseScene's
+// `_driveBase`/`_stepGaitBase` in base/locomotion.js). Factored out here after a real bug: the
+// two scenes each grew their own copy of "how do I turn a player into a movement-stats object",
+// and BaseScene's copy never got updated when #501's follow-up flipped the ARENA default to
+// fast/legacy — it just read `player.mech.movement` raw, forever, so a fresh player in the base
+// silently kept the old #501 slow experiment's numbers while the arena had already moved on.
+// One resolver both scenes call means that kind of drift can't happen again.
+//
+// `applyMovementToggle` mutates `player.legacyMovement` — seeds a fresh player (`undefined`) to
+// `true` (fast/legacy is the default a player starts with — Jackson: "make fast-mech movement
+// the default, toggle to slow with d-pad"), then flips it on `intent.movementTogglePressed`
+// (D-pad down, edge-detected once per player in Controls.js). Call once per drive frame, before
+// resolving movement stats.
+export function applyMovementToggle(player, intent) {
+  if (player.legacyMovement === undefined) player.legacyMovement = true;
+  if (intent.movementTogglePressed) player.legacyMovement = !player.legacyMovement;
+}
+
+// The movement-stats object (`maxSpeed`/`accel`/`decel`/`turnRate`/`turretSlew`/`stepInterval`/
+// `stepBob`/`footShake`/…) a player should drive with THIS frame: the fast/legacy override on
+// top of the chassis' own `movement` block if `player.legacyMovement` is true (or unset — `?? true`
+// covers a mid-frame ordering edge case, e.g. `_stepGait` reading this before `_drive` has run
+// once for a brand-new player), or the raw chassis movement (the #501 slow/twist-slew
+// re-experiment) if it's been toggled off.
+export function resolveMovement(player) {
+  const legacy = player.legacyMovement ?? true;
+  return legacy ? { ...player.mech.movement, ...LEGACY_MOVEMENT_OVERRIDE } : player.mech.movement;
 }
 
 // #86 — one shared turret/heading rotation step, used by the player's turret slew, every

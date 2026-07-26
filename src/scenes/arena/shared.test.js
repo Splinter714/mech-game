@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   explosionCategoryFor, deathScaleFor, DEATH_SCALE_MAX, nearestLocation, resolveHitLocation,
-  pickLiveWeighted,
+  pickLiveWeighted, applyMovementToggle, resolveMovement,
 } from './shared.js';
 import { rosterToughnessBounds, liveToughnessBounds } from '../../data/rosterBounds.js';
 import { Mech } from '../../data/Mech.js';
+import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/mediumPlayer.js';
 
 // #107 (+ #301): which discrete destruction-explosion-SOUND category a dying enemy falls into,
 // bucketed off `.toughness` (structure + armor + shield — uniform across Mech/HpBody per #106)
@@ -216,3 +217,60 @@ describe('pickLiveWeighted (#231 — player weighted-random hit-location redirec
 // distance clamp. Coverage for that lives in dormantWake.test.js (scene-level, since the
 // unconstrained behavior is now just "the same movement any non-hold-ground unit already runs,"
 // nothing left to unit-test as a standalone pure function).
+
+// #522: `applyMovementToggle`/`resolveMovement` are the ONE shared resolver behind the player's
+// fast/legacy-vs-slow-#501-experiment movement config — used by both ArenaScene's `_drive`/
+// `_stepGait` (arena/locomotion.js) and BaseScene's `_driveBase`/`_stepGaitBase`
+// (base/locomotion.js). Factored out here after a real bug: BaseScene had its own copy that never
+// got updated when #501's follow-up flipped the arena default to fast/legacy, so a fresh player in
+// the base silently stayed on the old slow experiment's numbers forever ("in-base movement feels
+// much slower than the arena"). Testing the resolver directly here covers both call sites at once;
+// base/locomotion.test.js additionally drives `_driveBase` end-to-end to prove BaseScene actually
+// calls through to this.
+describe('applyMovementToggle + resolveMovement (#522 shared fast/legacy movement resolver)', () => {
+  function makePlayer(rawMovement) {
+    return { mech: { movement: rawMovement } };
+  }
+
+  const RAW_MOVEMENT = { maxSpeed: 50, accel: 10, decel: 5, turnRate: 0.5, stepInterval: 200, stepBob: 3 };
+
+  it('resolveMovement defaults an unset legacyMovement to the fast/legacy override', () => {
+    const player = makePlayer(RAW_MOVEMENT);
+    const mv = resolveMovement(player);
+    expect(mv.maxSpeed).toBe(LEGACY_MOVEMENT_OVERRIDE.maxSpeed);
+    expect(mv.accel).toBe(LEGACY_MOVEMENT_OVERRIDE.accel);
+    expect(mv.decel).toBe(LEGACY_MOVEMENT_OVERRIDE.decel);
+    expect(mv.turnRate).toBe(LEGACY_MOVEMENT_OVERRIDE.turnRate);
+    // Fields the override doesn't touch still come from the raw chassis movement.
+    expect(mv.stepInterval).toBe(RAW_MOVEMENT.stepInterval);
+    expect(mv.stepBob).toBe(RAW_MOVEMENT.stepBob);
+  });
+
+  it('resolveMovement returns the raw chassis movement unchanged once legacyMovement is false', () => {
+    const player = makePlayer(RAW_MOVEMENT);
+    player.legacyMovement = false;
+    expect(resolveMovement(player)).toEqual(RAW_MOVEMENT);
+  });
+
+  it('applyMovementToggle seeds a fresh player to legacyMovement true (fast/legacy is the default)', () => {
+    const player = makePlayer(RAW_MOVEMENT);
+    applyMovementToggle(player, { movementTogglePressed: false });
+    expect(player.legacyMovement).toBe(true);
+  });
+
+  it('applyMovementToggle flips legacyMovement on a pressed edge, and flips back on the next', () => {
+    const player = makePlayer(RAW_MOVEMENT);
+    applyMovementToggle(player, { movementTogglePressed: false });   // seeds true
+    applyMovementToggle(player, { movementTogglePressed: true });
+    expect(player.legacyMovement).toBe(false);
+    applyMovementToggle(player, { movementTogglePressed: true });
+    expect(player.legacyMovement).toBe(true);
+  });
+
+  it('applyMovementToggle does not touch an already-set legacyMovement when not pressed', () => {
+    const player = makePlayer(RAW_MOVEMENT);
+    player.legacyMovement = false;
+    applyMovementToggle(player, { movementTogglePressed: false });
+    expect(player.legacyMovement).toBe(false);
+  });
+});

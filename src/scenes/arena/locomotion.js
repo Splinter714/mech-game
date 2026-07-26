@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, approach, mechMuzzleTipOffset, partMuzzle, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, applyMovementToggle, approach, mechMuzzleTipOffset, partMuzzle, resolveMovement, rotateToward, unitDepth } from './shared.js';
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { makeMechParts, poseMechParts } from '../../art/mechView.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
@@ -15,7 +15,6 @@ import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
 import { activeSpeedMult } from './abilities.js';
-import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/mediumPlayer.js';
 
 // #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
 // symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
@@ -206,23 +205,26 @@ export const LocomotionMixin = {
   // PLAYER, alongside its own `intent` from its own controller.
   // #501: `player.legacyMovement` toggled live by D-pad down (`intent.movementTogglePressed`,
   // edge-detected once per player in Controls.js so a held button can't repeat-toggle every
-  // frame). `undefined` on a fresh player defaults to false — the shipped slower/twist-slew
-  // feel — same as if the field had never existed before this toggle was added.
+  // frame). Fast/legacy is the default (`?? true`) — only the #501 slower/twist-slew
+  // re-experiment itself needs opting INTO, not out of (see `_drive`'s `applyMovementToggle`
+  // call below for the seeding).
+  //
+  // Thin wrapper over the shared resolver (shared.js `resolveMovement`) — kept as a mixin method
+  // since `_stepGait` below and several tests/callers reach it via `this._movementFor`. The
+  // actual fast/legacy-vs-raw-chassis logic lives in ONE place (shared.js) now, shared with
+  // BaseScene's `_driveBase`/`_stepGaitBase` (base/locomotion.js) — see that helper's comment
+  // for the bug this replaced (BaseScene silently never applying the fast/legacy override).
   _movementFor(player) {
-    // `?? true`: fast/legacy is the default even before `_drive` has run once for this player
-    // (e.g. a mid-frame ordering edge case) — matches the explicit seeding in `_drive` below.
-    const legacy = player.legacyMovement ?? true;
-    return legacy ? { ...player.mech.movement, ...LEGACY_MOVEMENT_OVERRIDE } : player.mech.movement;
+    return resolveMovement(player);
   },
 
   _drive(intent, dt, player = primaryPlayerOf(this)) {
     const p = player;
     // #501 follow-up: fast/legacy is the DEFAULT (Jackson: "make fast-mech movement the
     // default, toggle to slow with d-pad") — only the #501 re-experiment itself needs opting
-    // INTO via D-pad down, not out of. `undefined` (a fresh player) is seeded true here rather
-    // than relying on falsy-undefined, so the default is explicit rather than incidental.
-    if (p.legacyMovement === undefined) p.legacyMovement = true;
-    if (intent.movementTogglePressed) p.legacyMovement = !p.legacyMovement;
+    // INTO via D-pad down, not out of. Seeding + the toggle edge itself live in shared.js's
+    // `applyMovementToggle` now, shared with BaseScene's `_driveBase`.
+    applyMovementToggle(p, intent);
     const mv = this._movementFor(p);
     const legF = p.mech.legFactor();
 

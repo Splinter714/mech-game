@@ -3,17 +3,27 @@
 // enemy-crush checks (the base has no enemies) and no weapon-convergence part-tilt (nothing
 // mounted fires here). The CONTROL FEEL is otherwise identical to a live run on purpose — same
 // twin-stick mapping (left stick/WASD drives, right stick/mouse aims the turret independently
-// of travel), same weight-inertia-free instant movement/turning (matching the arena's own
-// INSTANT_TURNING/INSTANT_VELOCITY), same terrain speed scaling, same swept wall/edge
-// collision, and the full footfall gait (frame stepping, footstep FX + camera shake, body
-// bob) — reusing `_makeMechView`/`_syncTilts`/`_syncPivots`/`_footImpactFx`/`_footShake` from
-// LocomotionMixin directly (see BaseScene.js), since none of those five have any combat
-// coupling of their own. No sprint/dash yet (#509 Stage 1 scope — those are player abilities,
-// not core locomotion).
+// of travel), same terrain speed scaling, same swept wall/edge collision, and the full footfall
+// gait (frame stepping, footstep FX + camera shake, body bob) — reusing
+// `_makeMechView`/`_syncTilts`/`_syncPivots`/`_footImpactFx`/`_footShake` from LocomotionMixin
+// directly (see BaseScene.js), since none of those five have any combat coupling of their own.
+// No sprint/dash yet (#509 Stage 1 scope — those are player abilities, not core locomotion).
+//
+// #522 fix: this used to read `p.mech.movement` raw — the chassis' base numbers, which are the
+// #501 slow/twist-slew re-experiment's figures (`mediumPlayer.js`), never the fast/legacy
+// override the ARENA defaults every fresh player to. So a fresh base walk was silently always
+// slow even after #501's follow-up made fast/legacy the game-wide default, which is why base
+// movement read as "much slower than the original arena movement." Now shares the exact same
+// per-player `legacyMovement` state/toggle and resolver the arena uses (shared.js
+// `applyMovementToggle`/`resolveMovement`) instead of a second, independently-drifting copy —
+// same D-pad-down toggle works here too. Movement itself stays weight-inertia-free/instant
+// either way (this trimmed copy never grew the arena's accel/decel ramp or rate-limited turn —
+// out of #509 Stage 1 scope), so the toggle here only changes which stat block (maxSpeed/
+// stepInterval/stepBob/footShake/…) is in play, applied instantly like the rest of this file.
 import Phaser from 'phaser';
 import { PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, PLAYER_WALL_COLLIDE_RADIUS, approach } from '../arena/shared.js';
+import { ARENA_MECH_SCALE, PLAYER_WALL_COLLIDE_RADIUS, applyMovementToggle, approach, resolveMovement } from '../arena/shared.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 
@@ -24,7 +34,8 @@ const BOB_EASE_POWER = 1.15;
 export const BaseLocomotionMixin = {
   _driveBase(intent, dt) {
     const p = this.player;
-    const mv = p.mech.movement;
+    applyMovementToggle(p, intent);
+    const mv = resolveMovement(p);
     const legF = p.mech.legFactor();
     const terrainScale = this._speedFactorAt(p.x, p.y);
     const maxSp = mv.maxSpeed * legF * terrainScale;
@@ -64,7 +75,7 @@ export const BaseLocomotionMixin = {
 
   _stepGaitBase(dt) {
     const p = this.player;
-    const mv = p.mech.movement;
+    const mv = resolveMovement(p);
     const legF = p.mech.legFactor();
     let bob = 0;
     if (Math.abs(p.speed) > 5 && legF > 0) {
