@@ -1018,15 +1018,16 @@ export default class GarageScene extends Phaser.Scene {
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
       if (e.pressed(PAD.SELECT)) { this._toggleReady(i); continue; }
-      if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
-      if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
+      // Bumpers move the live slot cursor (weapon/ability sub-items); triggers cycle tabs. D-pad
+      // left/right is one more way to move the slot cursor, same as the bumpers.
+      if (e.pressed(PAD.LB)) { this._navSlot(col, -1); continue; }
+      if (e.pressed(PAD.RB)) { this._navSlot(col, 1); continue; }
       if (e.pressed(PAD.DPAD_LEFT)) { this._navSlot(col, -1); continue; }
       if (e.pressed(PAD.DPAD_RIGHT)) { this._navSlot(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
       if (e.pressed(PAD.DPAD_DOWN)) { this._navRow(col, 1); continue; }
-      // LT/RT are one more way to move the live slot cursor, same as D-pad left/right.
-      if (e.pressed(PAD.LT)) { this._navSlot(col, -1); continue; }
-      if (e.pressed(PAD.RT)) { this._navSlot(col, 1); continue; }
+      if (e.pressed(PAD.LT)) { this._cycleLabTab(col, -1); continue; }
+      if (e.pressed(PAD.RT)) { this._cycleLabTab(col, 1); continue; }
       if (e.pressed(PAD.A)) { this._confirmOrSelect(col); continue; }
       if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
       // The left stick mirrors the D-pad exactly (up/down row-nav, left/right slot-nav), with
