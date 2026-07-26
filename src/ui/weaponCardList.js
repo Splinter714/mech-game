@@ -21,12 +21,17 @@ import { orderByLock } from './catalogOrder.js';
 // arms the picked item); `selectedId` highlights one.
 //
 // Usage:
-//   const list = new WeaponCardList(scene, { x, y, w, h, ids, onSelect, selectedId });
+//   const list = new WeaponCardList(scene, { x, y, w, h, ids, onSelect, selectedId, compact });
 //   // in scene.update(): list.update(time, delta);
 //   list.setIds(newIds);        // refilter (e.g. eligible items for a slot)
 //   list.setSelected(id);
 //   list.setRegion(x, y, w, h); // on resize
 //   list.destroy();
+//
+// #505 (second correction): `compact: true` (see COMPACT_* below) shrinks every card's
+// height/label width/emitter size for use inside a narrow Garage column — GarageScene's one
+// catalog per player, up to 4 on screen at once. The full-size default is unchanged and stays
+// what ArtPreviewScene's standalone Weapon Lab tab uses.
 
 const UI = {
   panel: 0x161b22, panelEdge: 0x2a333f, panelSel: 0x1b2430, stage: 0x0b0e12,
@@ -36,6 +41,15 @@ const UI = {
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
+
+// #505 (second correction): a `compact` list keeps the exact same live-fire-preview card shape
+// (mount emitter + real shot/beam sim + name/category/stats) at a much smaller footprint, so it
+// fits inside a Garage COLUMN that can be as narrow as 1/4 of the screen at 4 players — the
+// full-size numbers above stay the Weapon Lab's (ArtPreviewScene) untouched default. Text still
+// word-wraps within labelW regardless of mode, so neither size ever overflows into the stage.
+const COMPACT_CARD_H = 60;
+const COMPACT_CARD_GAP = 6;
+const COMPACT_LABEL_W = 108;
 
 // #197 (re-scoped): every catalog card auto-fires a live shot/beam demo on a loop and plays
 // its real fire/trajectory/impact sound automatically — with no way to turn it off, that's
@@ -69,6 +83,8 @@ export function saveAutoFireEnabled(enabled) {
 const MOUNT_BASE_OY = (DESIGN / 2 + MOUNT_FRONT_Y) / DESIGN;   // weapon base within the texture
 const EMIT_SIZE = 44;
 const EMIT_BACK = 8;
+const COMPACT_EMIT_SIZE = 26;
+const COMPACT_EMIT_BACK = 4;
 
 // #120: the card preview's travel distance used to just be `Math.min(card.stageW, ...)` —
 // since almost every weapon's real range comfortably exceeds a card's pixel width, nearly
@@ -84,12 +100,23 @@ export class WeaponCardList {
   // with a "🔒 N SCRAP" overlay in place of its stats. `onSelect` still fires on click either
   // way; the caller (GarageScene) decides whether that's an attempted purchase or a mount.
   // Omitting them (the Weapon Lab's usage) shows every card fully unlocked, unchanged.
-  constructor(scene, { x, y, w, h, ids, onSelect = null, selectedId = null, isLocked = null, costOf = null } = {}) {
+  // #505 (second correction): `compact` shrinks card height/gap/label width/emitter size for a
+  // narrow Garage column (see COMPACT_* above) — everything else (the live delivery sim, the
+  // scroll/mask/drag behaviour, onSelect/isLocked/costOf) is identical to the full-size list.
+  constructor(scene, {
+    x, y, w, h, ids, onSelect = null, selectedId = null, isLocked = null, costOf = null, compact = false,
+  } = {}) {
     this.scene = scene;
     this.onSelect = onSelect;
     this.selectedId = selectedId;
     this.isLocked = isLocked;
     this.costOf = costOf;
+    this.compact = compact;
+    this.cardH = compact ? COMPACT_CARD_H : CARD_H;
+    this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
+    this.labelW = compact ? COMPACT_LABEL_W : LABEL_W;
+    this.emitSize = compact ? COMPACT_EMIT_SIZE : EMIT_SIZE;
+    this.emitBack = compact ? COMPACT_EMIT_BACK : EMIT_BACK;
     this.region = { x, y, w, h };
     this._scrollY = 0;
     this._maxScroll = 0;
@@ -162,8 +189,8 @@ export class WeaponCardList {
       ? -1 : Math.min(this.cards.length - 1, i);
     for (const c of this.cards) this._paintSelection(c);
     if (this._focus >= 0) {
-      const top = this._focus * (CARD_H + CARD_GAP);
-      this._setScroll(scrollToShow(this._scrollY, top, CARD_H, this.region.h, this._maxScroll));
+      const top = this._focus * (this.cardH + this.cardGap);
+      this._setScroll(scrollToShow(this._scrollY, top, this.cardH, this.region.h, this._maxScroll));
     }
   }
 
@@ -201,9 +228,17 @@ export class WeaponCardList {
     const color = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : coreItem ? 0xefc14a : 0x7bd17b;
     const c = this.scene.add.container(0, 0);
 
-    const panel = this.scene.add.rectangle(0, 0, 100, CARD_H, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
+    // #505 (second correction): row geometry/font sizes scale down in `compact` mode (a narrow
+    // Garage column) — everything else about the card (live emitter + delivery-sim preview,
+    // lock overlay, selection) is identical between the two sizes.
+    const cardH = this.cardH;
+    const nameY = this.compact ? 6 : 14, catY = this.compact ? 18 : 33, statsY = this.compact ? 29 : 50;
+    const nameSize = this.compact ? '10px' : '14px', catSize = this.compact ? '8px' : '11px', statsSize = this.compact ? '8px' : '10px';
+    const wrapW = Math.max(40, this.labelW - 24);
+
+    const panel = this.scene.add.rectangle(0, 0, 100, cardH, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
     const stage = this.scene.add.rectangle(0, 0, 100, 100, UI.stage).setOrigin(0, 0);
-    const swatch = this.scene.add.rectangle(14, 16, 4, CARD_H - 32, color).setOrigin(0, 0);
+    const swatch = this.scene.add.rectangle(14, 16, 4, cardH - (this.compact ? 12 : 32), color).setOrigin(0, 0);
     // The weapon's actual on-mech mount hardware IS the emitter the live preview fires from —
     // the same silhouette drawWeaponMount() paints on the body. The texture points up and is
     // anchored at its base (design centre-x, frontY); rotating +90° aims the barrel to the
@@ -212,22 +247,24 @@ export class WeaponCardList {
     const emitter = weapon
       ? this.scene.add.image(0, 0, mountIconKey(id)).setOrigin(0.5, MOUNT_BASE_OY).setRotation(Math.PI / 2)
       : null;
-    const name = this.scene.add.text(0, 14, item.name, { fontFamily: 'monospace', fontSize: '14px', color: UI.text });
-    const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : coreItem ? 'Core' : 'Ability';
-    const cat = this.scene.add.text(0, 33, catLabel, {
-      fontFamily: 'monospace', fontSize: '11px', color: Phaser.Display.Color.IntegerToColor(color).rgba,
+    const name = this.scene.add.text(0, nameY, item.name, {
+      fontFamily: 'monospace', fontSize: nameSize, color: UI.text, wordWrap: { width: wrapW },
     });
-    const stats = this.scene.add.text(0, 50, this._statLines(item, weapon, coreItem), {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.dim, lineSpacing: 2,
+    const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : coreItem ? 'Core' : 'Ability';
+    const cat = this.scene.add.text(0, catY, catLabel, {
+      fontFamily: 'monospace', fontSize: catSize, color: Phaser.Display.Color.IntegerToColor(color).rgba, wordWrap: { width: wrapW },
+    });
+    const stats = this.scene.add.text(0, statsY, this._statLines(item, weapon, coreItem), {
+      fontFamily: 'monospace', fontSize: statsSize, color: UI.dim, lineSpacing: this.compact ? 1 : 2, wordWrap: { width: wrapW },
     });
     const fxG = this.scene.add.graphics();
 
     // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
     // — sits on TOP of everything when the item is locked, hiding the live preview without
     // tearing it down (still simulated underneath so unlocking it needs no rebuild of state).
-    const lockScrim = this.scene.add.rectangle(0, 0, 100, CARD_H, 0x05070a, 0.72).setOrigin(0, 0).setVisible(false);
+    const lockScrim = this.scene.add.rectangle(0, 0, 100, cardH, 0x05070a, 0.72).setOrigin(0, 0).setVisible(false);
     const lockLabel = this.scene.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: '13px', color: '#f5c542', align: 'center',
+      fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: '#f5c542', align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
     // emitter sits under fxG so projectiles/beams render over the muzzle; the lock overlay
@@ -314,26 +351,33 @@ export class WeaponCardList {
     return [parts.join(' · '), `dmg ${weapon.damage} · rng ${weapon.range.max} · ${cadence} · ammo ${ammo}`].join('\n');
   }
 
-  // Flow cards into a single column within the region; compute max scroll.
+  // Flow cards into a single column within the region; compute max scroll. Margins shrink in
+  // `compact` mode alongside cardH/labelW/emitSize (see the constructor) — the shape (label
+  // block, live-fire stage, emitter at the muzzle) is unchanged, only the numbers are smaller.
   _layout() {
     const cardW = this.region.w;
-    const stageX = LABEL_W + 8;
-    const stageW = cardW - stageX - 12;
+    const cardH = this.cardH;
+    const nameX = this.compact ? 6 : 20;
+    const stageGap = this.compact ? 4 : 8;
+    const stageMargin = this.compact ? 6 : 12;
+    const muzzleInset = this.compact ? 8 : 14;
+    const stageX = this.labelW + stageGap;
+    const stageW = cardW - stageX - stageMargin;
     this.cards.forEach((card, i) => {
-      const y = i * (CARD_H + CARD_GAP);
+      const y = i * (cardH + this.cardGap);
       card.container.setPosition(0, y);
-      card.panel.setSize(cardW, CARD_H);
-      card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), CARD_H - 16);
-      card.name.setX(20); card.cat.setX(20); card.stats.setX(20);
-      card.muzzleX = stageX + 14;
-      card.muzzleY = 8 + (CARD_H - 16) / 2;
-      card.stageW = Math.max(20, stageW - 22);
+      card.panel.setSize(cardW, cardH);
+      card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), cardH - 16);
+      card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
+      card.muzzleX = stageX + muzzleInset;
+      card.muzzleY = 8 + (cardH - 16) / 2;
+      card.stageW = Math.max(20, stageW - muzzleInset - 8);
       // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
-      card.emitter?.setDisplaySize(EMIT_SIZE, EMIT_SIZE).setPosition(card.muzzleX - EMIT_BACK, card.muzzleY);
-      card.lockScrim.setSize(cardW, CARD_H);
-      card.lockLabel.setPosition(cardW / 2, CARD_H / 2);
+      card.emitter?.setDisplaySize(this.emitSize, this.emitSize).setPosition(card.muzzleX - this.emitBack, card.muzzleY);
+      card.lockScrim.setSize(cardW, cardH);
+      card.lockLabel.setPosition(cardW / 2, cardH / 2);
     });
-    const contentH = this.cards.length * (CARD_H + CARD_GAP);
+    const contentH = this.cards.length * (cardH + this.cardGap);
     this._maxScroll = Math.max(0, contentH - this.region.h);
     this._setScroll(this._scrollY);
   }
