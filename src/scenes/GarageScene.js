@@ -223,6 +223,20 @@ export default class GarageScene extends Phaser.Scene {
     const gl = garageColumnLayout(w, h, { pad });
     col.rects = { catalog: gl.catalog, pad, innerW: gl.innerW };
 
+    // #528 fix: an invisible interactive rect over the WHOLE preview+tiles band (gl.panel — full
+    // column width, same y/h as the tile block and the preview square) so a click anywhere in
+    // that band is consumed right here rather than falling through to whatever WeaponCardList
+    // catalog card happens to occupy the same screen rect (the catalog scrolls its cards under a
+    // geometry mask, which clips rendering but NOT Phaser's input hit-test — a scrolled-off,
+    // invisible card positioned under this band was still clickable and silently re-mounted a
+    // different weapon). Added FIRST, before every other tile/preview object in this column, so
+    // those still win the hit-test over their own exact rects (this only catches the gaps/
+    // preview-art area they don't cover); `_relayoutColumns`'s `col.layer.destroy(true)` cleans
+    // it up like every other column child, no separate teardown needed.
+    col.panelBlocker = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, gl.panel.h, 0x000000, 0)
+      .setOrigin(0, 0).setInteractive();
+    col.layer.add(col.panelBlocker);
+
     // Header band: just the passive core slot (left) and the clickable READY pill (right).
     col.readyBg = this.add.rectangle(w - pad - 70, 4, 70, 20, UI.btn).setOrigin(0, 0)
       .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
@@ -287,6 +301,16 @@ export default class GarageScene extends Phaser.Scene {
       9, 9, mechColorFor(col.mech, i),
     ).setOrigin(0.5);
     col.layer.add([col.headerLabel, col.headerColor]);
+
+    // #528 fix: WeaponCardList (col.catalogList, built above) owns its own top-level container
+    // added to the scene AFTER col.layer, so by default it — and every card inside it — renders
+    // (and, per Phaser's topOnly input hit-test, wins clicks) ON TOP of col.layer's own content,
+    // including the panelBlocker/tiles/preview just built. Bringing the whole layer back to the
+    // top of the scene's display list — once, after the catalog exists — restores the intended
+    // stacking (the loadout panel visually sits in front of the catalog, matching the design) and
+    // makes panelBlocker (and every tile's own hit area) win the input hit-test against any
+    // catalog card that geometrically coincides with this column's loadout panel.
+    this.children.bringToTop(col.layer);
 
     this._refreshReady(col);
   }

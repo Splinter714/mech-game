@@ -45,6 +45,15 @@ export const TILE_N = CONSOLE_TILES.n;
 //               hand straight to drawSkillTile — always at the arena's full TILE_SIZE
 //   preview   — { cx, cy, w, h } for the mech-preview panel: SQUARE, sized to the tile block's
 //               own height, sitting immediately LEFT of it
+//   panel     — { x, y, w, h } — the FULL-WIDTH bounding box of the preview+tiles row (same y/h
+//               as the tile block and the preview, spanning the column's whole inner width). Refs
+//               #528: GarageScene paints an invisible interactive rect over exactly this box so a
+//               click anywhere in that band — including the gaps between tiles, the preview art
+//               itself, and the tile-plate corners — is consumed there rather than falling
+//               through to the WeaponCardList catalog card that may be positioned underneath it
+//               (the catalog is a separate top-level container GarageScene brings the whole
+//               column layer above; without this blocker, clicks over the loadout panel land on
+//               whatever catalog card happens to occupy that same screen rect).
 //   label     — { cx, y } — where the player-number label sits, centered horizontally on the
 //               preview and anchored INSIDE it, near its bottom edge (#505 playtest follow-up:
 //               "move the PLAYER N label to sit inside the preview box, at its bottom" — it used
@@ -98,6 +107,7 @@ export function garageColumnLayout(w, h, opts = {}) {
     catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
     preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
+    panel: { x: pad, y: blockTop, w: innerW, h: blockBottom - blockTop },
     label: { cx: previewCx, y: previewCy + previewSize / 2 - labelBottomInset },
   };
 }
