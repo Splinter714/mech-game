@@ -561,6 +561,10 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // impact/landing, unlike `ground` above which only starts once the round detonates). See
     // scenes/arena/projectiles.js `_tickTravelAoe`.
     travelAoe: d.travelAoe || null,
+    // #538: how many tendrils (individual connecting hits) this travelAoe round has drawn so
+    // far — only ticks that actually connect with something spend this budget; a tick with
+    // nothing in range is free. Unused unless `travelAoe` is set; see `_tickTravelAoe`.
+    tendrilCount: 0,
     // #491/#499: an optional continuous push/pull tick WHILE the round is in flight, same shape
     // as travelAoe above but nudging position instead of dealing damage. See
     // scenes/arena/projectiles.js `_tickTravelForce`.

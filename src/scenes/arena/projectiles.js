@@ -398,7 +398,9 @@ export const ProjectilesMixin = {
       // Swept distance (#77): closest approach of THIS step's segment to the target, not just the
       // end point — so a fast round that passes clean through the target in one frame still detonates.
       const toTarget = (targetGone || turretBlocked) ? Infinity : segmentPointDistance(prevX, prevY, p.x, p.y, tx, ty);
-      const landed = p.dist >= p.maxDist;
+      // #538: a travelAoe round that has spent its whole tendril budget expires right here, the
+      // same way a round that flew its full max range does — see `_tickTravelAoe`.
+      const landed = p.dist >= p.maxDist || p._tendrilsExhausted;
       // #488/#491: a round carrying `p.hazard` (Timed Charge's mines, Gravity Well's pull field)
       // never runs the normal impact/damage resolution below — instead of detonating, it PLANTS
       // itself where it comes down and becomes a standalone stationary hazard, ticking on its own
@@ -464,41 +466,53 @@ export const ProjectilesMixin = {
   // OTHER players in the blast (co-op's friendly-fire-on rule, #348) but never the shooter; an
   // enemy round catches every live player it passes near, matching how burning ground (#319) is
   // an indiscriminate hazard rather than scoped to one target.
+  // #538: `travelAoe.maxTendrils` (Caustic Lobber: 15, undefined/unlimited for anything else
+  // using travelAoe) caps how many times this round may CONNECT before it's forced to expire —
+  // counted per individual tendril (one target hit, drawn as one `_drawAoeTendril` call), not
+  // per tick, so a tick that hits 3 enemies at once spends 3 of the budget. A tick with nothing
+  // in range draws no tendril and costs nothing. Once the budget is spent the round expires via
+  // the exact same path as running out of range (`landed`, in `_updateProjectiles`) rather than
+  // a bespoke removal — see `p._tendrilsExhausted` there.
   _tickTravelAoe(p) {
     const now = this.time.now;
     if (p._nextAoeTick == null) p._nextAoeTick = now;
     if (now < p._nextAoeTick) return;
-    const { radius, dps, tickMs = 250 } = p.travelAoe;
+    const { radius, dps, tickMs = 250, maxTendrils } = p.travelAoe;
     p._nextAoeTick = now + tickMs;
     const amount = Math.max(1, Math.round(dps * (tickMs / 1000)));
+    const connect = (target, tx, ty) => {
+      if (maxTendrils != null && p.tendrilCount >= maxTendrils) return;
+      target();
+      this._drawAoeTendril(p, tx, ty);
+      p.tendrilCount++;
+    };
     if (p.owner === 'enemy') {
       for (const pl of livePlayersOf(this)) {
         if (Math.hypot(pl.x - p.x, pl.y - p.y) < radius) {
-          this._damagePlayerAt(amount, pl, { weaponId: p.weaponId });
-          this._drawAoeTendril(p, pl.x, pl.y);
+          connect(() => this._damagePlayerAt(amount, pl, { weaponId: p.weaponId }), pl.x, pl.y);
         }
       }
     } else {
       for (const hit of damageInRadius(p.x, p.y, radius, amount, this.enemies.filter((e) => !e.mech.isDestroyed()))) {
-        this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId });
-        this._drawAoeTendril(p, hit.target.x, hit.target.y);
+        connect(() => this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId }), hit.target.x, hit.target.y);
       }
       for (const other of otherLivePlayers(this, p.shooter)) {
         if (Math.hypot(other.x - p.x, other.y - p.y) < radius) {
-          this._damagePlayerAt(amount, other, { weaponId: p.weaponId });
-          this._drawAoeTendril(p, other.x, other.y);
+          connect(() => this._damagePlayerAt(amount, other, { weaponId: p.weaponId }), other.x, other.y);
         }
       }
     }
     // #536: the cloud also chews through destructible SOFT-COVER hexes it passes over, the same
     // way a napalm ground patch's periodic tick does (`_updateFirePatches` below) — indiscriminate,
     // no owner check, since the cloud doesn't care who it belongs to any more than fire does.
+    // This does not spend the #538 tendril budget — that's scoped to enemy/player connections.
     for (const h of hexesWithinPixelRadius(p.x, p.y, radius)) {
       const k = axialKey(h.q, h.r);
       if (!this.coverHp.has(k)) continue;
       const c = hexToPixel(h.q, h.r);
       this._damageBuildingAt(c.x, c.y, amount);
     }
+    if (maxTendrils != null && p.tendrilCount >= maxTendrils) p._tendrilsExhausted = true;
   },
 
   // #492 playtest follow-up: a brief bolt from a travelAoe round (Caustic Lobber, currently the

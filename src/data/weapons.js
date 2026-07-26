@@ -501,7 +501,10 @@ export const WEAPONS = {
     delivery: {
       hit: 'projectile', path: 'straight', velocity: 130,   // deliberately slow — the "cloud" has to linger to matter
       splash: 30, kind: 'shadow', scale: 1.6, ignoresEnemyHit: true,
-      travelAoe: { radius: 175, dps: 14 },
+      // #538: capped at 15 tendrils (individual connecting hits) so a round parked over a
+      // crowd can't tick indefinitely — only a tick that actually connects spends the budget,
+      // an empty tick is free. See `_tickTravelAoe`/`maxTendrils` in projectiles.js.
+      travelAoe: { radius: 175, dps: 14, maxTendrils: 15 },
     },
   }),
   timedCharge: w({   // #488: reworked from a timed mid-air detonation into an actual MINEFIELD
