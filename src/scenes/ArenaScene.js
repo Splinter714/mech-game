@@ -18,6 +18,7 @@ import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
 import { RepairOutpostsMixin } from './arena/repairOutposts.js';
+import { ResourceOutpostsMixin } from './arena/resourceOutposts.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { VisibilityMixin } from './arena/visibility.js';
@@ -80,6 +81,8 @@ export default class ArenaScene extends Phaser.Scene {
     this._initRun();
     // #512: repair-outpost prompt/marker state — reset per deploy, same convention as `_initRun`.
     this._initRepairOutposts();
+    // #511: resource-outpost prompt/marker/income-carry state — same reset-per-deploy convention.
+    this._initResourceOutposts();
     // Refs #281: reset the player-corpse flag fresh every deploy. Phaser reuses the SAME
     // ArenaScene instance across scene.start('ArenaScene') calls, so a `this.*` property set by
     // a previous sortie (here, combat.js `_damagePlayerAt` flipping this true on death) survives
@@ -432,6 +435,10 @@ export default class ArenaScene extends Phaser.Scene {
     // this frame's #517 capture-choice state (if a base was just cleared) is already settled
     // before deciding whether the repair-build prompt is allowed to show.
     this._updateRepairOutposts(dt);
+    // #511: resource-outpost proximity build-prompt + passive scrap income (no proximity
+    // requirement once built, unlike repair — see data/resourceOutposts.js's open-decision
+    // comment). Same post-`_updateRun` ordering as the repair update above.
+    this._updateResourceOutposts(dt);
 
     // ── THE HUD'S VIEW OF THE WORLD IS PUBLISHED HERE, AFTER EVERY KILL PATH ────────────────
     // These are the only channels that describe ANOTHER OBJECT (the locked target) rather than
@@ -530,7 +537,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, RepairOutpostsMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, RepairOutpostsMixin, ResourceOutpostsMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

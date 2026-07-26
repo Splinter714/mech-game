@@ -25,15 +25,37 @@ export function claimOutpost(outposts, { id, type, coord, biomeId, baseId = null
   if (outposts.some((o) => o.id === id)) return outposts;
   return [
     ...outposts,
-    // #512: `repairBuilt` starts false on every fresh claim — a claimed base is just held, it
-    // doesn't get repair function until the player opts in and spends scrap on it
-    // (data/repairOutposts.js `buildRepairOutpost`). Always present (never omitted) so callers
-    // can rely on the field rather than checking for `undefined`, same convention as
-    // baseCapture.js's `captured` flag.
+    // #512/#511: `repairBuilt`/`resourceBuilt` start false on every fresh claim — a claimed base
+    // is just held, it doesn't get either building's function until the player opts in and
+    // spends scrap on it (data/repairOutposts.js `buildRepairOutpost`, data/resourceOutposts.js
+    // `buildResourceOutpost`). Both flags live on the SAME record and are independent — a base can
+    // hold neither, either, or both buildings at once; there's deliberately no generic "buildings"
+    // list/framework here, just one flag per concrete building type, per the issues' own framing.
+    // Always present (never omitted) so callers can rely on the field rather than checking for
+    // `undefined`, same convention as baseCapture.js's `captured` flag.
     {
-      id, type, coord, biomeId, baseId, upgradeLevel: 0, threatState: 'safe', deploysHeld: 0, repairBuilt: false,
+      id,
+      type,
+      coord,
+      biomeId,
+      baseId,
+      upgradeLevel: 0,
+      threatState: 'safe',
+      deploysHeld: 0,
+      repairBuilt: false,
+      resourceBuilt: false,
     },
   ];
+}
+
+// #511/#512: the shared claimed-base lookup — matched by (biomeId, baseId), the stable
+// cross-deploy identity data/baseCapture.js's `capturedBaseIdsFor` already keys off, NOT the
+// outpost's own `id` field (which embeds the deploy count it was claimed on — see `claimOutpost`
+// above — so it isn't a lookup key across deploys/visits). Both repairOutposts.js and
+// resourceOutposts.js build their per-building queries on top of this ONE lookup rather than each
+// keeping their own copy, so the two building types can't drift on how a "held base" is found.
+export function outpostForBase(outposts, biomeId, baseId) {
+  return (outposts ?? []).find((o) => o.biomeId === biomeId && o.baseId === baseId) ?? null;
 }
 
 export function upgradeOutpost(outposts, id, maxLevel = MAX_UPGRADE_LEVEL) {

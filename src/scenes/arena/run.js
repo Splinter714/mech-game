@@ -136,9 +136,17 @@ export const RunMixin = {
   // `_onRepairInteractPressed`) when there's no #517 capture choice pending — the two share the
   // same key but never a base at the same time (a base is either mid-clear-and-not-yet-captured,
   // or already `captured` and eligible for a repair outpost, never both).
+  // #511: a captured base's repair and resource build prompts are INDEPENDENT (either, both, or
+  // neither can be offered at once — data/outposts.js `repairBuilt`/`resourceBuilt`), so a single
+  // base fresh out of #517's choice can offer both at the same time. One interact press still
+  // only builds ONE thing: the repair prompt wins the shared key when both are pending at the
+  // same base (checked via `_repairBuildPromptBase` directly, not a return value, since neither
+  // handler reports whether it built anything) — the resource prompt simply stays offered for the
+  // next press once repair is built or was never in range to begin with.
   _onInteractPressed() {
     if (this._captureChoiceActive) { this._resolveBaseCaptureChoice(true); return; }
-    this._onRepairInteractPressed?.();
+    if (this._repairBuildPromptBase) { this._onRepairInteractPressed?.(); return; }
+    this._onResourceInteractPressed?.();
   },
 
   // Bank the objective's currency and move on to the next base, having already decided (or
@@ -153,12 +161,15 @@ export const RunMixin = {
   },
 
   // #517/#511/#512: the "establish" half of the choice — claims the base as an outpost (the same
-  // claim-and-persist pipeline #511/#512 built; `type` still just alternates resource/repair by
-  // base index, since neither type has real mechanics yet — #297's income/range-extension
-  // formulas are still open design questions, unchanged by this issue) AND, if this biome has no
-  // regional base yet, makes THIS the biome's regional base (data/regionalBases.js
-  // `establishRegionalBase` — a no-op if one already exists, so a base established later in the
-  // same biome really is just an ordinary outpost, per the issue's own framing).
+  // claim-and-persist pipeline #511/#512 built) AND, if this biome has no regional base yet, makes
+  // THIS the biome's regional base (data/regionalBases.js `establishRegionalBase` — a no-op if one
+  // already exists, so a base established later in the same biome really is just an ordinary
+  // outpost, per the issue's own framing).
+  // `type` still just alternates resource/repair by base index — it's ONLY the readout label
+  // BaseScene's `_buildOutpostReadout` counts by, not a gate on which building can be built there.
+  // Since #511/#512 rescoped both buildings to "an option at ANY captured base you hold" rather
+  // than a type-locked slot, `type` never feeds `canBuildRepairOutpost`/`canBuildResourceOutpost` —
+  // every captured base, regardless of its `type`, can build either or both.
   _establishBase(base) {
     const deployCount = this.registry.get('deployCount') || 0;
     const id = `outpost-${deployCount}-${base.id}`;

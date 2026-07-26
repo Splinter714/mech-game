@@ -326,6 +326,14 @@ export default class HudScene extends Phaser.Scene {
     this.repairPromptBanner = this.add.text(this.W / 2, this.H * 0.32, '', {
       fontFamily: 'monospace', fontSize: '22px', color: C.good, fontStyle: 'bold', align: 'center',
     }).setOrigin(0.5).setVisible(false);
+    // #511: the "build a resource outpost here?" prompt — same pattern as the repair prompt above,
+    // reading `resourceOutpostPrompt` (scenes/arena/resourceOutposts.js `_updateResourceOutposts`).
+    // Offset a line BELOW the repair banner (not the same Y) because the two prompts are
+    // independent and CAN both be up for the same base at once (a fresh capture starts with
+    // neither building built) — stacking rather than overlapping keeps both readable together.
+    this.resourcePromptBanner = this.add.text(this.W / 2, this.H * 0.32 + 32, '', {
+      fontFamily: 'monospace', fontSize: '22px', color: '#d9a441', fontStyle: 'bold', align: 'center',
+    }).setOrigin(0.5).setVisible(false);
 
     // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
     // readout are dev-only overlays — created only under `import.meta.env.DEV` and updated behind
@@ -1329,6 +1337,14 @@ export default class HudScene extends Phaser.Scene {
     this.repairPromptBanner.setText(
       repairPrompt ? `PRESS [${INTERACT_BIND.key}] TO BUILD REPAIR OUTPOST — ${repairPrompt.cost} SCRAP` : '',
     ).setVisible(!!repairPrompt && !over && !capture);
+
+    // #511: the resource-outpost build prompt. Same suppression as repair's above; can be visible
+    // AT THE SAME TIME as the repair prompt (both independently offered at a fresh capture — see
+    // create()'s banner-placement comment), never at the same time as the capture/run-over banners.
+    const resourcePrompt = this.registry.get('resourceOutpostPrompt');
+    this.resourcePromptBanner.setText(
+      resourcePrompt ? `PRESS [${INTERACT_BIND.key}] TO BUILD RESOURCE OUTPOST — ${resourcePrompt.cost} SCRAP` : '',
+    ).setVisible(!!resourcePrompt && !over && !capture);
 
     this._updateBuffHud(snapshots);
     // #383: the main-game-window objective edge arrow (#80) is now REDUNDANT — the follow-window

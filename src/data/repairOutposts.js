@@ -8,8 +8,10 @@
 //
 // Deliberately thin, per the issue's own framing ("don't build a generic building-types
 // framework") — one flag on the existing outpost record, one flat cost, one regen rule. Not a
-// generalised "buildings you can construct at a base" system; #511's future resource-building
-// income question is untouched and can hang its own flag off the same record later if it wants to.
+// generalised "buildings you can construct at a base" system; #511's resource-building building
+// (data/resourceOutposts.js) is a SIBLING module of the exact same shape, hanging its own
+// `resourceBuilt` flag off the same outpost record rather than sharing a generic frame.
+import { outpostForBase } from './outposts.js';
 
 // #512 OPEN DESIGN DECISION (not settled by the issue — Jackson's call during playtest, ties into
 // #503's still-open repair-mechanic scope): the actual repair mechanic here is a simple flat-rate
@@ -28,14 +30,11 @@
 // scenes/arena/salvage.js), not the banked meta-progression pool the Garage shop spends.
 export const REPAIR_OUTPOST_COST = 150;
 
-// The outpost record for base `baseId` in `biomeId`, or null if that base was never claimed.
-// Matched by (biomeId, baseId) — the stable cross-deploy identity data/baseCapture.js's
-// `capturedBaseIdsFor` already keys off — NOT the outpost's own `id` field, which embeds the
-// deploy count it was claimed on (see outposts.js `claimOutpost`'s header) and so isn't a lookup
-// key across deploys/visits.
-export function outpostForBase(outposts, biomeId, baseId) {
-  return (outposts ?? []).find((o) => o.biomeId === biomeId && o.baseId === baseId) ?? null;
-}
+// #511 follow-up: the (biomeId, baseId) lookup moved to outposts.js (`outpostForBase`) so
+// resourceOutposts.js's sibling module can share the exact same lookup instead of keeping its own
+// copy that could drift. Re-exported here unchanged so existing callers/imports of this module
+// keep working.
+export { outpostForBase };
 
 // Has this held base already got a repair outpost built?
 export function hasRepairOutpost(outposts, biomeId, baseId) {
