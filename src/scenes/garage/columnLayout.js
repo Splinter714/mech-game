@@ -23,10 +23,10 @@ import { CONSOLE_TILES, tileRowWidth } from '../../data/hudLayout.js';
 
 export const COLUMN_PAD = 8;
 // #505 (fifth rework, playtest): the per-column header row that used to live here (the passive-
-// slot "avatar" icon top-left, the "READY?" pill top-right) is gone — see the `passive` rect and
-// GarageScene's compact ready indicator (next to the PLAYER # label) for where those two pieces
-// moved. Nothing draws in the column's own top strip any more, so there's nothing left to reserve
-// space for.
+// slot "avatar" icon top-left, the "READY?" pill top-right) is gone — the passive slot now rides
+// inside the shared ability row (`gl.tiles.abilities`, via weaponAbilityRows) and the "READY?"
+// pill became GarageScene's compact ready indicator next to the PLAYER # label. Nothing draws in
+// the column's own top strip any more, so there's nothing left to reserve space for.
 export const HEADER_H = 0;
 // #505 (sixth rework, playtest): FOOTER_H used to reserve extra dead space below the tile block
 // for a footer label that no longer exists (the PLAYER # label lives INSIDE the preview box now,
@@ -52,35 +52,42 @@ export const TILE_N = CONSOLE_TILES.n;
 //   innerW    — usable width inside the column's own padding
 //   catalog   — { x, y, w, h } for the WeaponCardList catalog
 //   tiles     — { weapons, abilities } — the exact rects weaponAbilityRows returned, ready to
-//               hand straight to drawSkillTile — always at the arena's full TILE_SIZE
-//   preview   — { cx, cy, w, h } for the mech-preview panel: SQUARE, sized to the WEAPON ROW's
-//               own height (#505 fifth rework — see below), sitting immediately LEFT of the tile
-//               block, aligned with the weapon row specifically (not the combined block)
-//   passive   — { loc: 'core', x, y, w, h } for the passive/core slot's own tile, stacked directly
-//               ABOVE the preview at the SAME width, sized to the ability tiles' own height —
-//               mirrors the ability row's position on the tile-block side, so the two columns
-//               (passive+preview / ability+weapon) read as one matched pair (#505 fifth rework)
-//   panel     — { x, y, w, h } the FULL bounding box of the passive+preview+ability+weapon block,
-//               flush with the column's own bottom padding (no leftover footer gap below it, #505
-//               sixth rework) — this is what GarageScene's click-blocker/top-border are sized to,
-//               so a scrolled-out (masked but still input-live) catalog card underneath can never
-//               catch a click meant for the panel or the dead space around it (Refs #528)
+//               hand straight to drawSkillTile — always at the arena's full TILE_SIZE. The
+//               passive/core slot is now ONE of the three `abilities` rects (folded into the
+//               shared ability row alongside X/Y — see skillTiles.js's `weaponAbilityRows`
+//               #526-followup redesign), not a separate Garage-only tile any more.
+//   preview   — { cx, cy, w, h } for the mech-preview panel: SQUARE, sized to and centered on the
+//               FULL combined ability-row+weapon-row block height (both rows together) — its
+//               original sizing, restored now that the passive slot lives inside the shared
+//               ability row instead of its own tile stacked above the preview (see the removed
+//               `passive` rect below)
+//   panel     — { x, y, w, h } the FULL bounding box of the ability+weapon block PLUS a small
+//               top buffer (see below), flush with the column's own bottom padding (no leftover
+//               footer gap below it, #505 sixth rework) — this is what GarageScene's click-
+//               blocker/top-border are sized to, so a scrolled-out (masked but still input-live)
+//               catalog card underneath can never catch a click meant for the panel or the dead
+//               space around it (Refs #528)
 //   label     — { cx, y } — where the player-number label sits, centered horizontally on the
 //               preview and anchored INSIDE it, near its bottom edge (#505 playtest follow-up:
 //               "move the PLAYER N label to sit inside the preview box, at its bottom" — it used
 //               to sit just below the preview box entirely)
 //
-// #505 FIFTH rework (fresh playtest correction on top of the fourth): the mech preview used to
-// span the FULL combined ability+weapon block height. Jackson's screenshot feedback moved the
-// passive/core slot out of the old per-column header row and into a brand-new tile sitting above
-// the preview, "same height as the X/Y ability tiles... same width as the mech preview box" —
-// which only reads cleanly if the preview shrinks to match just the WEAPON row (its counterpart on
-// the tile-block side), leaving the ability row's counterpart on the preview's side to be the new
-// passive tile, not extra preview height. Because both the ability row and the passive tile are
-// pinned to `blockTop` (the topmost row) and both the weapon row and the preview share their own Y
-// span, the two side-by-side columns stay in lockstep automatically — no separate gap constant to
-// keep in sync, it falls out of both sides reading their geometry off the SAME weaponAbilityRows
-// call.
+// #505 EIGHTH rework (follow-up, Refs #505): the passive/core slot no longer gets its own
+// Garage-only tile stacked above the preview — the shared `weaponAbilityRows` redesign folded it
+// into the SAME row as X/Y (1.5x/1x/1.5x widths), so there is nothing left here for the preview's
+// height to "leave room for" on the tile-block side. The preview re-expands back to matching the
+// FULL combined ability-row+weapon-row block height (its size before the fifth rework's shrink),
+// and the old `passive` rect computation (and its lockstep-with-the-preview math) is gone —
+// dead code once the passive tile moved into `weaponAbilityRows`'s own output.
+//
+// Gap fix (same follow-up): the block already sits flush with the column's own bottom padding —
+// tiles touch `blockBottom` exactly, then `pad` of clear space separates that from the column's
+// true bottom edge. There was no matching clear space between the ABILITY row's own top edge and
+// the panel's top border (the two touched directly, zero gap) even though a `gap`-sized buffer
+// already existed between the catalog above and the block below. `panel.y` now sits one `gap`
+// higher than the ability row's own top (flush with the catalog's own bottom edge instead of the
+// tiles), so the panel/border/blocker owns that buffer directly — the ability row reads with the
+// same small breathing room above it that the weapon row already has below it.
 //
 // The preview+tiles pair is centered as ONE unit within the column's inner width. At a narrow
 // column width (more players, smaller colW — see GarageScene's `colW = W / session.count`) the
@@ -103,15 +110,17 @@ export function garageColumnLayout(w, h, opts = {}) {
   // puts on top.
   const blockBottom = Math.max(headerH + gap, h - pad);
 
-  // First pass at x=0 purely to measure the WEAPON row's own square size (its `y`/`h` don't depend
-  // on x, only on width/bottom/maxSize) — the preview and the passive tile both derive their
-  // sizing/position from this pass before the pair's real x offset is known.
+  // First pass at x=0 purely to measure the combined block's own square size (its `y`/`h`s don't
+  // depend on x, only on width/bottom/maxSize) — the preview derives its sizing/position from this
+  // pass before the pair's real x offset is known. #505 eighth rework: the preview is SQUARE,
+  // sized to the FULL combined ability-row+weapon-row height again (its pre-fifth-rework size),
+  // now that the passive slot lives inside the shared ability row instead of its own tile.
   const probe = weaponAbilityRows(0, tileBlockW, { bottom: blockBottom, maxSize: tileSize });
-  const previewSize = probe.weapons.length ? probe.weapons[0].h : 0;
+  const probeTop = probe.weapons.length ? probe.top : blockBottom;
+  const previewSize = blockBottom - probeTop;
 
-  // The pair — square preview (matching the weapon row's own height), then the fixed-width tile
-  // block — centered as ONE unit. The passive tile (below) stacks above the preview at this same
-  // width, so the preview column's total footprint mirrors the tile column's exactly.
+  // The pair — square preview (matching the combined block's own height), then the fixed-width
+  // tile block — centered as ONE unit.
   const pairW = previewSize + previewTileGap + tileBlockW;
   const pairX = pad + (innerW - pairW) / 2;
   const tileAreaX = pairX + previewSize + previewTileGap;
@@ -125,25 +134,24 @@ export function garageColumnLayout(w, h, opts = {}) {
   const catalogH = Math.max(70, blockTop - gap - catalogY);
 
   const previewCx = pairX + previewSize / 2;
-  const previewCy = weapons.length ? weapons[0].y + weapons[0].h / 2 : blockBottom - previewSize / 2;
+  const previewCy = weapons.length ? (blockTop + blockBottom) / 2 : blockBottom - previewSize / 2;
 
-  // The passive/core tile: same x/width as the preview, same y/height as the ability row — so it
-  // sits directly above the preview, flush with the ability row's own top and bottom.
-  const passive = abilities.length
-    ? { loc: 'core', x: pairX, y: abilities[0].y, w: previewSize, h: abilities[0].h }
-    : { loc: 'core', x: pairX, y: blockTop, w: previewSize, h: 0 };
+  // The panel's own top sits one `gap` above the ability row's top edge — flush with the
+  // catalog's own bottom edge instead of the tiles themselves — so the panel/border/blocker owns
+  // a small buffer above the ability row, matching the `pad`-sized buffer the weapon row already
+  // has below it (down to the column's own bottom padding). See the gap-fix note above.
+  const panelTop = blockTop - gap;
 
-  // The full panel bounding box — passive tile through the weapon row, spanning the column's own
-  // inner width (same x/w as the catalog above it) so the click-blocker/top-border cover it edge
-  // to edge, with no leftover strip of dead space either side or below.
-  const panel = { x: pad, y: blockTop, w: innerW, h: blockBottom - blockTop };
+  // The full panel bounding box, spanning the column's own inner width (same x/w as the catalog
+  // above it) so the click-blocker/top-border cover it edge to edge, with no leftover strip of
+  // dead space either side or below.
+  const panel = { x: pad, y: panelTop, w: innerW, h: blockBottom - panelTop };
 
   return {
     innerW,
     catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
     preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
-    passive,
     panel,
     label: { cx: previewCx, y: previewCy + previewSize / 2 - labelBottomInset },
   };
