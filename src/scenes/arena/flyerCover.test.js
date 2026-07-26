@@ -251,9 +251,11 @@ describe('#316 _fireVehicleWeapon dispatches a flying and a ground shooter ident
         // shot any more. #423 appended two telemetry args — the shooter (null for an enemy) and a
         // stats-meta object `{ statKind, statShotId }` (NOT a cover flag) — so the tail is now shooter, meta.
         // #440 added `spawnerKind` to that same meta object (run-stats cross-attribution), still not a cover flag.
+        // #491 added `caster` (the firing enemy's own handle, for Gravity Well's caster-exclusion
+        // in projectiles.js `_updateHazards`) — also telemetry, not a cover flag.
         expect(args).toHaveLength(10);
         expect(args[8]).toBe(null);        // shooter (enemy rounds carry none)
-        expect(args[9]).toEqual({ statKind: expect.anything(), statShotId: null, spawnerKind: null });
+        expect(args[9]).toEqual({ statKind: expect.anything(), statShotId: null, spawnerKind: null, caster: expect.anything() });
       }
     });
   }

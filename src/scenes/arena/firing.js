@@ -977,6 +977,10 @@ export const FiringMixin = {
       // #440: the SPAWNER kind of the shooter (a carrier, if this round came from its drone), so a
       // connecting round can cross-attribute its damage to the spawner's "Spawned Dmg". null otherwise.
       _spawnerKind: meta.spawnerKind ?? null,
+      // #491: the actual enemy handle that fired this round (enemy-owned shots only — a player
+      // round's `shooter` above already serves this role for the player side). Carried onto a
+      // planted hazard so its pull loop can exclude its own caster.
+      caster: meta.caster ?? null,
     };
     this.projectiles.push(pushed);
     return pushed;
