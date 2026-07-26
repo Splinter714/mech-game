@@ -14,14 +14,14 @@ import {
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, drawSkillTile, updateSkillTile, coreTileRect, paintTilePlate } from '../ui/skillTiles.js';
+import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
 import { stepIndex, cycleListId } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
-import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
+import { buildTabBar, TAB_BAR_H, DEPLOY_W, DEPLOY_MARGIN } from '../ui/tabBar.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
-import { garageColumnLayout, HEADER_H as COL_HEADER_H } from './garage/columnLayout.js';
+import { garageColumnLayout } from './garage/columnLayout.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 
@@ -34,9 +34,10 @@ import { WeaponCardList } from '../ui/weaponCardList.js';
 // same time, no handoff, no separate scene to navigate to. A solo player's column simply spans
 // the full width; a join reflows every column to the new, narrower width. There is deliberately
 // no reserved placeholder column for an unjoined player — that was the exact "squished next to
-// 3 empty columns" complaint — the join affordance is just a hint line in the header band, and
-// pressing START on an unclaimed pad grows the column count (mirrors the arena's mid-sortie join,
-// scenes/arena/coop.js).
+// 3 empty columns" complaint — pressing START on an unclaimed pad grows the column count (mirrors
+// the arena's mid-sortie join, scenes/arena/coop.js). #505 fifth rework dropped the on-screen
+// "another controller can join" hint text entirely — the join mechanic itself is unchanged, it's
+// just no longer advertised on screen (Jackson's playtest note).
 //
 // Readiness replaces the old sequential "P1 READY" handoff: each column has its own READY pill
 // (mouse-clickable, or its pad's START). The scene deploys the instant every joined column is
@@ -64,9 +65,10 @@ const UI = {
 // Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
 const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
 
-// The header band under the shared tab bar: SCRAP/last-run readout + the "another controller can
-// join" hint. Columns start below this.
-const HEADER_BAND_H = 34;
+// #505 (fifth rework, playtest): the standalone header band that used to sit under the shared tab
+// bar (SCRAP/last-run readout + the "another controller can join" hint) is gone as its own block.
+// The join hint is removed entirely (no replacement); SCRAP now rides in the tab bar's own top row
+// (see create(), just left of its Deploy/Ready button); columns start right below the tab bar.
 
 export default class GarageScene extends Phaser.Scene {
   constructor() {
@@ -103,24 +105,23 @@ export default class GarageScene extends Phaser.Scene {
     // always resets — a fresh garage visit re-declares readiness rather than remembering it.
     this.session = makeSimulSession({ count: this.registry.get('coopPlayerCount') || 1 });
 
-    this.colTop = TAB_BAR_H + HEADER_BAND_H;
+    this.colTop = TAB_BAR_H;
     this.cols = [];
 
     // #445: the dev-only run-stats overlay, opened from the tab bar's STATS action.
     if (import.meta.env.DEV) this._statsOverlay = new StatsOverlay(this);
 
     this._refreshHeader();
-    this.currencyText = this.add.text(this.W - 16, TAB_BAR_H + 6, '', {
+    // SCRAP (+ last-run readout) rides in the tab bar's own top row now, just left of its pinned
+    // Deploy/Ready button, rather than in a separate header band below it.
+    const scrapX = this.W - DEPLOY_MARGIN - DEPLOY_W - 16;
+    this.currencyText = this.add.text(scrapX, TAB_BAR_H / 2, '', {
       fontFamily: 'monospace', fontSize: '13px', color: UI.accent,
-    }).setOrigin(1, 0);
-    this.lastRunText = this.add.text(this.W - 16, TAB_BAR_H + 21, '', {
+    }).setOrigin(1, 0.5);
+    this.lastRunText = this.add.text(scrapX, TAB_BAR_H + 4, '', {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
     }).setOrigin(1, 0);
-    this.joinHint = this.add.text(16, TAB_BAR_H + 12, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: '#efc14a',
-    }).setOrigin(0, 0.5);
     this._refreshCurrency();
-    this._refreshJoinHint();
 
     this._relayoutColumns();
 
@@ -181,10 +182,6 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  _refreshJoinHint() {
-    this.joinHint.setText(canJoin(this.session) ? 'START ON ANOTHER CONTROLLER ADDS A PLAYER' : '');
-  }
-
   // ── Column layout ─────────────────────────────────────────────────────────────────────────────
   // Rebuild every joined column at the CURRENT column width (W / count) — called at create() and
   // again on every join, so an existing column reflows wider→narrower as the squad grows, and a
@@ -223,37 +220,33 @@ export default class GarageScene extends Phaser.Scene {
     const gl = garageColumnLayout(w, h, { pad });
     col.rects = { catalog: gl.catalog, pad, innerW: gl.innerW };
 
-    // #528 fix: an invisible interactive rect over the WHOLE preview+tiles band (gl.panel — full
-    // column width, same y/h as the tile block and the preview square) so a click anywhere in
-    // that band is consumed right here rather than falling through to whatever WeaponCardList
-    // catalog card happens to occupy the same screen rect (the catalog scrolls its cards under a
-    // geometry mask, which clips rendering but NOT Phaser's input hit-test — a scrolled-off,
-    // invisible card positioned under this band was still clickable and silently re-mounted a
-    // different weapon). Added FIRST, before every other tile/preview object in this column, so
-    // those still win the hit-test over their own exact rects (this only catches the gaps/
-    // preview-art area they don't cover); `_relayoutColumns`'s `col.layer.destroy(true)` cleans
-    // it up like every other column child, no separate teardown needed.
+    // #505 sixth rework (playtest, folds in #528): a thin top-edge border on the panel — a visible
+    // dividing line between it and the scrollable weapon catalog above — plus an invisible click-
+    // blocker sized to the panel's FULL extent (`gl.panel`, flush with the column's own bottom
+    // padding now that the old footer dead-space is gone). WeaponCardList masks its scrolled-out
+    // cards visually (see weaponCardList.js's geometry mask) but a mask doesn't stop them from
+    // still being INPUT-live wherever they're positioned in world space — without this blocker, a
+    // card scrolled far enough down sits invisibly underneath the panel and still catches the
+    // click. Added FIRST (before any tile), so within `col.layer` every tile still renders — and
+    // hit-tests — on TOP of it; only the gaps between tiles (and the halo/dead space around them)
+    // fall through to the blocker instead of whatever's behind it. The old header band (the
+    // passive-slot avatar + "READY?" pill) is gone entirely — see `gl.passive`'s tile and the
+    // compact ready indicator next to the PLAYER # label for where those two moved.
+    col.panelTopBorder = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, 2, UI.panelEdge)
+      .setOrigin(0, 0).setAlpha(0.9);
     col.panelBlocker = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, gl.panel.h, 0x000000, 0)
       .setOrigin(0, 0).setInteractive();
-    col.layer.add(col.panelBlocker);
-
-    // Header band: just the passive core slot (left) and the clickable READY pill (right).
-    col.readyBg = this.add.rectangle(w - pad - 70, 4, 70, 20, UI.btn).setOrigin(0, 0)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this._toggleReady(i));
-    col.readyText = this.add.text(w - pad - 35, 14, 'READY?', {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    }).setOrigin(0.5);
-    col.layer.add([col.readyBg, col.readyText]);
+    col.layer.add([col.panelTopBorder, col.panelBlocker]);
 
     // The loadout tiles — weapon row + ability row, drawn with the SAME shared tile-drawing code
     // (drawSkillTile) the arena HUD uses, just with no HP/shield/armor panel chrome around them
     // (HudScene.js draws those separately, alongside its own call into the same tile rects). The
     // passive core slot isn't part of that shared HUD layout at all (HudScene deliberately omits
-    // it — it's Garage-only chrome), so it keeps its own small tile up in the header band.
+    // it — it's Garage-only chrome) — #505 fifth rework moved it out of the old per-column header
+    // row and into its own tile above the mech preview (`gl.passive`), drawn here alongside every
+    // other tile.
     col.tileRefs = {};
-    for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
-    this._drawColTile(col, coreTileRect(pad + 12, COL_HEADER_H / 2, 24));
+    for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities, gl.passive]) this._drawColTile(col, rect);
 
     // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
     // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
@@ -272,6 +265,12 @@ export default class GarageScene extends Phaser.Scene {
       isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
+    // #505 sixth rework: catalogList owns its own top-level container (see the comment above), a
+    // SIBLING of col.layer at the scene root rather than a child of it — so col.layer's default
+    // depth (0) doesn't automatically out-rank it. Nudge the catalog just below that default so
+    // col.layer's panel/blocker/tiles reliably win input priority wherever they overlap a
+    // scrolled-out (masked but still input-live) card, regardless of which was constructed first.
+    col.catalogList.root.setDepth(-1);
 
     // The live mech preview — SQUARE, sized to the tile block's own height (both rows together),
     // sitting immediately LEFT of it as one centered pair (see garageColumnLayout). Built ONCE;
@@ -290,9 +289,11 @@ export default class GarageScene extends Phaser.Scene {
     col.layer.add([col.previewPanel, ...col.preview.children]);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
 
-    // The player-number label — now sits INSIDE the preview box, at its bottom (#505 playtest
+    // The player-number label — sits INSIDE the preview box, at its bottom (#505 playtest
     // follow-up on top of the earlier "just below the mech preview art" placement), with the
-    // identity-colour dot right beside it.
+    // identity-colour dot to its left. #505 fifth rework adds a compact checkmark-style READY
+    // indicator to its right — the old top-of-column "READY?" pill is gone; this is where it
+    // moved to.
     col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
       fontFamily: 'monospace', fontSize: '12px', color: UI.text,
     }).setOrigin(0.5, 0);
@@ -300,7 +301,15 @@ export default class GarageScene extends Phaser.Scene {
       col.headerLabel.x - col.headerLabel.width / 2 - 10, gl.label.y + col.headerLabel.height / 2,
       9, 9, mechColorFor(col.mech, i),
     ).setOrigin(0.5);
-    col.layer.add([col.headerLabel, col.headerColor]);
+    const readyCx = col.headerLabel.x + col.headerLabel.width / 2 + 12;
+    const readyCy = gl.label.y + col.headerLabel.height / 2;
+    col.readyBg = this.add.rectangle(readyCx, readyCy, 16, 16, UI.btn).setOrigin(0.5)
+      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this._toggleReady(i));
+    col.readyGlyph = this.add.text(readyCx, readyCy, '✓', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(0.5);
+    col.layer.add([col.headerLabel, col.headerColor, col.readyBg, col.readyGlyph]);
 
     // #528 fix: WeaponCardList (col.catalogList, built above) owns its own top-level container
     // added to the scene AFTER col.layer, so by default it — and every card inside it — renders
@@ -494,10 +503,13 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
+  // #505 fifth rework: a compact checkmark-style indicator next to the PLAYER # label, replacing
+  // the old prominent "READY?" pill — the glyph itself never changes, only its colour (dim = not
+  // ready, good/green = ready), so it reads as a status light rather than a call-to-action button.
   _refreshReady(col) {
     const ready = this.session.ready[col.index];
     col.readyBg.setFillStyle(ready ? 0x1c3a24 : UI.btn).setStrokeStyle(1, ready ? 0x7bd17b : UI.panelEdge);
-    col.readyText.setText(ready ? '✓ READY' : 'READY?').setColor(ready ? UI.good : UI.dim);
+    col.readyGlyph.setColor(ready ? UI.good : UI.dim);
   }
 
   // Toggling a player TO ready is gated on their build being complete (every weapon slot filled —
@@ -538,7 +550,6 @@ export default class GarageScene extends Phaser.Scene {
     this.session = joinSimulPlayer(this.session);
     this.registry.set('coopPlayerCount', this.session.count);
     this._relayoutColumns();
-    this._refreshJoinHint();
     this._refreshHeader();
     this.toast(`PLAYER ${this.session.count} JOINED`, UI.accent);
   }

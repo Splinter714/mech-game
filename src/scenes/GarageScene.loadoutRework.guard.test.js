@@ -26,7 +26,7 @@ function bodyOf(methodPattern) {
 
 describe('#505 THIRD rework — loadout tiles reuse the real shared HUD layout code', () => {
   it('_buildColumn gets its geometry from garageColumnLayout, imported from garage/columnLayout.js', () => {
-    expect(src).toMatch(/import \{ garageColumnLayout, HEADER_H as COL_HEADER_H \} from '\.\/garage\/columnLayout\.js';/);
+    expect(src).toMatch(/import \{ garageColumnLayout \} from '\.\/garage\/columnLayout\.js';/);
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
     expect(body).toMatch(/const gl = garageColumnLayout\(w, h, \{ pad \}\);/);
   });
@@ -44,14 +44,17 @@ describe('#505 THIRD rework — loadout tiles reuse the real shared HUD layout c
     expect(src).not.toMatch(/diamondLayout/);
   });
 
-  it('drawSkillTile draws every weapon AND ability tile from gl.tiles, the shared layout\'s own rects', () => {
+  it('drawSkillTile draws every weapon, ability, AND the passive tile from gl.tiles/gl.passive, the shared layout\'s own rects', () => {
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
-    expect(body).toMatch(/for \(const rect of \[\.\.\.gl\.tiles\.weapons, \.\.\.gl\.tiles\.abilities\]\) this\._drawColTile\(col, rect\);/);
+    expect(body).toMatch(/for \(const rect of \[\.\.\.gl\.tiles\.weapons, \.\.\.gl\.tiles\.abilities, gl\.passive\]\) this\._drawColTile\(col, rect\);/);
   });
 
-  it('the core (passive) tile still mounts via the shared drawSkillTile/coreTileRect path, just repositioned into the header band', () => {
-    const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
-    expect(body).toMatch(/this\._drawColTile\(col, coreTileRect\(pad \+ 12, COL_HEADER_H \/ 2, 24\)\);/);
+  // #505 FIFTH rework (fresh playtest correction): the passive/core slot moved out of the old
+  // per-column header band entirely, into its own tile ABOVE the mech preview — see
+  // garage/columnLayout.js's `passive` rect. It's drawn in the same loop as every other tile now
+  // (above), not via a separate coreTileRect(...) call.
+  it('the core (passive) tile is no longer drawn via a standalone coreTileRect(...) call in a header band', () => {
+    expect(src).not.toContain('coreTileRect');
   });
 });
 

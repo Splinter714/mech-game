@@ -6,7 +6,7 @@
 // and derives its size from that block's height, and the pair is centered as ONE unit.
 import { describe, it, expect } from 'vitest';
 import {
-  garageColumnLayout, COLUMN_PAD, HEADER_H, FOOTER_H, GAP, TILE_SIZE, TILE_GAP, TILE_N,
+  garageColumnLayout, COLUMN_PAD, HEADER_H, TILE_SIZE, TILE_GAP, TILE_N,
   LABEL_BOTTOM_INSET,
 } from './columnLayout.js';
 import { weaponAbilityRows, TILE_ORDER, HUD_ABILITY_ORDER } from '../../ui/skillTiles.js';
@@ -27,7 +27,7 @@ describe('garageColumnLayout (#505)', () => {
     const w = 630, h = 700;
     const gl = garageColumnLayout(w, h);
     const tileBlockW = tileRowWidth(TILE_SIZE, TILE_N, TILE_GAP);
-    const blockBottom = h - COLUMN_PAD - FOOTER_H - GAP;
+    const blockBottom = h - COLUMN_PAD;
     // Same block width/bottom/maxSize regardless of x — cross-check the actual rects at the
     // layout's own tileAreaX by re-deriving it the same way the module does.
     const previewSize = gl.preview.h;
@@ -55,13 +55,42 @@ describe('garageColumnLayout (#505)', () => {
         expect(gl.tiles.abilities[0].h).toBe(Math.round(TILE_SIZE / 2));
       });
 
-      it(`preview is SQUARE and matches the tile block's height exactly (w=${w}, h=${h})`, () => {
+      // #505 fifth rework: the preview shrank to match just the WEAPON row's own height — the
+      // ability row's counterpart on the preview's side is now the passive tile (below), not
+      // extra preview height.
+      it(`preview is SQUARE and matches the WEAPON ROW's height exactly, not the combined block (w=${w}, h=${h})`, () => {
         const gl = garageColumnLayout(w, h);
         expect(gl.preview.w).toBe(gl.preview.h);
+        expect(gl.preview.h).toBe(gl.tiles.weapons[0].h);
         const rows = [...gl.tiles.weapons, ...gl.tiles.abilities];
         const blockTop = Math.min(...rows.map((r) => r.y));
         const blockBottom = Math.max(...rows.map((r) => r.y + r.h));
-        expect(gl.preview.h).toBeCloseTo(blockBottom - blockTop, 0);
+        // Regression guard: the preview must be SHORTER than the full combined block now.
+        expect(gl.preview.h).toBeLessThan(blockBottom - blockTop);
+      });
+
+      // #505 fifth rework: the new passive/core tile, stacked above the preview.
+      it(`passive tile sits directly above the preview, matching its width and the ability row's height (w=${w}, h=${h})`, () => {
+        const gl = garageColumnLayout(w, h);
+        expect(gl.passive.loc).toBe('core');
+        expect(gl.passive.w).toBe(gl.preview.w);
+        expect(gl.passive.h).toBe(gl.tiles.abilities[0].h);
+        expect(gl.passive.x).toBe(gl.preview.cx - gl.preview.w / 2);
+        expect(gl.passive.y).toBe(gl.tiles.abilities[0].y);
+      });
+
+      // The two side-by-side columns (passive+preview / ability+weapon) must stay in lockstep:
+      // the passive tile's bottom sits exactly where the preview's top is anchored, mirroring the
+      // ability row's own gap above the weapon row on the other side.
+      it(`the passive/preview pair mirrors the ability/weapon row gap exactly (w=${w}, h=${h})`, () => {
+        const gl = garageColumnLayout(w, h);
+        const abilityBottom = gl.tiles.abilities[0].y + gl.tiles.abilities[0].h;
+        const weaponTop = gl.tiles.weapons[0].y;
+        const passiveBottom = gl.passive.y + gl.passive.h;
+        const previewTop = gl.preview.cy - gl.preview.h / 2;
+        expect(passiveBottom).toBe(abilityBottom);
+        expect(previewTop).toBe(weaponTop);
+        expect(previewTop - passiveBottom).toBe(weaponTop - abilityBottom);
       });
 
       it(`preview sits fully to the LEFT of the tile block, no overlap (w=${w}, h=${h})`, () => {
@@ -96,27 +125,47 @@ describe('garageColumnLayout (#505)', () => {
         expect(gl.label.y).toBe(previewBottom - LABEL_BOTTOM_INSET);
       });
 
-      it(`the catalog sits above the tile block/preview row with a sane minimum height (w=${w}, h=${h})`, () => {
+      it(`the catalog sits above the tile block/passive-tile row with a sane minimum height (w=${w}, h=${h})`, () => {
         const gl = garageColumnLayout(w, h);
         expect(gl.catalog.h).toBeGreaterThanOrEqual(70);
         expect(gl.catalog.y).toBeGreaterThanOrEqual(HEADER_H);
-        expect(gl.catalog.y + gl.catalog.h).toBeLessThanOrEqual(gl.preview.cy - gl.preview.h / 2 + 1);
+        // The passive tile (not the now-lower preview) is the true topmost element on the
+        // preview's side of the pair — it shares its y with the ability row, the topmost element
+        // overall — so the catalog must clear IT, not the preview.
+        expect(gl.catalog.y + gl.catalog.h).toBeLessThanOrEqual(gl.passive.y + 1);
+      });
+
+      // #505 sixth rework (playtest): the old footer reserve left dead space below the panel that
+      // a scrolled-out (masked but still input-live) catalog card could still catch a click in —
+      // `panel` is the bounding box GarageScene's click-blocker/top-border are sized to, and it
+      // must be flush with the column's own bottom padding, no leftover gap beneath it.
+      it(`panel spans the full inner width (same x/w as the catalog) and sits flush with the column's bottom padding (w=${w}, h=${h})`, () => {
+        const gl = garageColumnLayout(w, h);
+        expect(gl.panel.x).toBe(gl.catalog.x);
+        expect(gl.panel.w).toBe(gl.catalog.w);
+        expect(gl.panel.y).toBe(gl.passive.y);
+        expect(gl.panel.y + gl.panel.h).toBe(h - COLUMN_PAD);
+        // The weapon row (and so the preview, which matches its height) sits flush with the
+        // panel's own bottom edge — nothing is reserved below either of them.
+        expect(gl.tiles.weapons[0].y + gl.tiles.weapons[0].h).toBe(gl.panel.y + gl.panel.h);
       });
 
       // #528: GarageScene paints an invisible interactive rect over gl.panel to stop clicks on
       // the loadout row (preview + tiles, including the gaps between them) from falling through
       // to a WeaponCardList catalog card positioned underneath. That rect is only a real fix if
       // this box actually spans the FULL band the preview/tiles occupy — no gaps at the edges.
-      it(`panel spans the full width and exactly the tile block/preview's own y-range, no gaps (w=${w}, h=${h})`, () => {
+      it(`panel spans the full width and exactly the tile block/passive+preview's own y-range, no gaps (w=${w}, h=${h})`, () => {
         const gl = garageColumnLayout(w, h);
-        const previewTop = gl.preview.cy - gl.preview.h / 2;
         const previewBottom = gl.preview.cy + gl.preview.h / 2;
         const rows = [...gl.tiles.weapons, ...gl.tiles.abilities];
         const blockTop = Math.min(...rows.map((r) => r.y));
         const blockBottom = Math.max(...rows.map((r) => r.y + r.h));
-        // Same y-span as both the tile block and the (equal-height) preview square.
+        // The passive tile (above the preview) shares the topmost row's own y — NOT the preview's
+        // own top, since the preview only matches the weapon row's height/position (#505 fifth
+        // rework). Panel top is that shared topmost edge; panel bottom matches both the tile
+        // block's own bottom and the (equal-height) preview's own bottom.
         expect(gl.panel.y).toBeCloseTo(blockTop, 0);
-        expect(gl.panel.y).toBeCloseTo(previewTop, 0);
+        expect(gl.panel.y).toBeCloseTo(gl.passive.y, 0);
         expect(gl.panel.y + gl.panel.h).toBeCloseTo(blockBottom, 0);
         expect(gl.panel.y + gl.panel.h).toBeCloseTo(previewBottom, 0);
         // Full inner width, at the column's own pad — matching (a superset of) the catalog's own

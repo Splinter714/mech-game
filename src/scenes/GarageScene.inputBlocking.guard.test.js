@@ -39,7 +39,7 @@ describe('#528 — the loadout panel (mech preview + tiles) blocks clicks from r
   it('_buildColumn creates an interactive panelBlocker over gl.panel, added to col.layer BEFORE the readyBg/tiles/preview it must lose to', () => {
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
     expect(body).toMatch(/col\.panelBlocker = this\.add\.rectangle\(gl\.panel\.x, gl\.panel\.y, gl\.panel\.w, gl\.panel\.h, 0x000000, 0\)\s*\n\s*\.setOrigin\(0, 0\)\.setInteractive\(\);/);
-    expect(body).toContain('col.layer.add(col.panelBlocker);');
+    expect(body).toContain('col.layer.add([col.panelTopBorder, col.panelBlocker]);');
 
     // Ordering matters: panelBlocker must be added to col.layer's own child list BEFORE the
     // readyBg tile-row/preview objects, so those still win Phaser's topOnly hit-test over their
