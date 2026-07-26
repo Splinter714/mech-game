@@ -42,13 +42,11 @@ describe('#528 — the loadout panel (mech preview + tiles) blocks clicks from r
     expect(body).toContain('col.layer.add([col.panelTopBorder, col.panelBlocker]);');
 
     // Ordering matters: panelBlocker must be added to col.layer's own child list BEFORE the
-    // readyBg tile-row/preview objects, so those still win Phaser's topOnly hit-test over their
-    // own exact rects — panelBlocker should only catch the gaps/preview-art area they don't cover.
+    // tile-row/preview objects, so those still win Phaser's topOnly hit-test over their own exact
+    // rects — panelBlocker should only catch the gaps/preview-art area they don't cover.
     const blockerIdx = body.indexOf('col.panelBlocker = this.add.rectangle');
-    const readyIdx = body.indexOf('col.readyBg = this.add.rectangle');
     const previewIdx = body.indexOf('col.previewPanel = this.add.graphics();');
     expect(blockerIdx).toBeGreaterThan(-1);
-    expect(blockerIdx).toBeLessThan(readyIdx);
     expect(blockerIdx).toBeLessThan(previewIdx);
   });
 

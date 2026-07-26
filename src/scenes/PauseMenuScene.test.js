@@ -170,6 +170,94 @@ describe('PauseMenuScene — row wiring', () => {
   });
 });
 
+// #529: AUDIO/ART/STATS moved here from the scene-level tab bar (ui/tabBar.js).
+describe('PauseMenuScene — dev-only AUDIO/ART/STATS navigation rows (#529)', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('outside a dev build (no data.dev), only the five base rows exist — no behaviour change for existing callers', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene' });
+    scene.create();
+    expect(scene._rows.map((r) => r.id)).toEqual(['version', 'movement', 'perf', 'controlMethod', 'aiDebug']);
+  });
+
+  it('a dev build with no openStats callback adds AUDIO/ART but not STATS', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'ArenaScene', dev: true });
+    scene.create();
+    expect(scene._rows.map((r) => r.id)).toEqual(['version', 'movement', 'perf', 'controlMethod', 'aiDebug', 'audio', 'art']);
+  });
+
+  it('a dev build with an openStats callback (the Garage) adds STATS too', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene', dev: true, openStats: () => {} });
+    scene.create();
+    expect(scene._rows.map((r) => r.id)).toEqual(['version', 'movement', 'perf', 'controlMethod', 'aiDebug', 'audio', 'art', 'stats']);
+  });
+
+  it('AUDIO/ART rows show a static label with no ON/OFF suffix', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'ArenaScene', dev: true });
+    scene.create();
+    const audioRow = scene._rows.find((r) => r.id === 'audio');
+    expect(audioRow.label.text).toBe('AUDIO TAB (DEV)');
+    expect(audioRow.enabled).toBe(true);
+  });
+
+  it('activating AUDIO stops the return scene + itself and starts AudioScene', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene', pauseAlso: [], dev: true });
+    scene.create();
+    const stop = vi.fn();
+    const start = vi.fn();
+    scene.scene = { stop, start, resume: vi.fn() };
+
+    scene._activate('audio');
+
+    expect(stop).toHaveBeenCalledWith('GarageScene');
+    expect(stop).toHaveBeenCalledWith();   // stops itself too
+    expect(start).toHaveBeenCalledWith('AudioScene');
+  });
+
+  it('activating ART starts ArtPreviewScene', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene', dev: true });
+    scene.create();
+    const start = vi.fn();
+    scene.scene = { stop: vi.fn(), start, resume: vi.fn() };
+
+    scene._activate('art');
+
+    expect(start).toHaveBeenCalledWith('ArtPreviewScene');
+  });
+
+  it('activating STATS RESUMES the return scene (not stop) and then calls openStats', () => {
+    const openStats = vi.fn();
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene', dev: true, openStats });
+    scene.create();
+    const resume = vi.fn();
+    const stop = vi.fn();
+    scene.scene = { resume, stop, start: vi.fn() };
+
+    scene._activate('stats');
+
+    expect(resume).toHaveBeenCalledWith('GarageScene');
+    expect(stop).toHaveBeenCalled();
+    expect(openStats).toHaveBeenCalled();
+  });
+
+  it('_moveCursor wraps around the full row set, including the dev nav rows', () => {
+    const { scene } = fakeScene();
+    scene.init({ returnKey: 'GarageScene', dev: true, openStats: () => {} });
+    scene.create();
+    scene._cursor = 0;
+    scene._moveCursor(-1);
+    expect(scene._cursor).toBe(scene._rowIds.length - 1);
+    expect(scene._rowIds[scene._cursor]).toBe('stats');
+  });
+});
+
 describe('wirePauseMenu — opening the menu from another scene', () => {
   function fakeCallerScene(key = 'GarageScene') {
     const kb = {};
@@ -239,5 +327,20 @@ describe('wirePauseMenu — opening the menu from another scene', () => {
     scene._kb['keydown-ESC']();
 
     expect(scene.scene.launch).toHaveBeenCalledWith('PauseMenuScene', expect.objectContaining({ getPlayers }));
+  });
+
+  // #529: dev is computed automatically (import.meta.env.DEV) rather than each caller wiring it —
+  // vitest runs under Vite's 'test' mode, so DEV reads true here, same as every other DEV-gated
+  // surface's tests in this repo (see devGating.guard.test.js).
+  it('#529: passes dev (import.meta.env.DEV) and any openStats callback through untouched', () => {
+    const scene = fakeCallerScene('GarageScene');
+    const openStats = () => {};
+    wirePauseMenu(scene, { openStats });
+
+    scene._kb['keydown-ESC']();
+
+    expect(scene.scene.launch).toHaveBeenCalledWith('PauseMenuScene', expect.objectContaining({
+      dev: true, openStats,
+    }));
   });
 });

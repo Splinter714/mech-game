@@ -26,8 +26,10 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 import { applyMovementToggle } from './arena/shared.js';
 import {
-  PAUSE_ROWS, toggleRowLabel, movementRowLabel, movementRowEnabled,
+  DEV_NAV_ROWS, pauseRowIds, toggleRowLabel, navRowLabel, movementRowLabel, movementRowEnabled,
 } from '../data/pauseMenu.js';
+
+const NAV_ROW_ID_SET = new Set(DEV_NAV_ROWS);
 import {
   loadShowVersion, saveShowVersion, loadShowPerf, saveShowPerf,
   loadShowControlMethod, saveShowControlMethod, loadShowAiDebug, saveShowAiDebug,
@@ -61,6 +63,13 @@ export default class PauseMenuScene extends Phaser.Scene {
     this._returnKey = data.returnKey ?? null;
     this._pauseAlso = data.pauseAlso ?? [];
     this._getPlayers = typeof data.getPlayers === 'function' ? data.getPlayers : null;
+    // #529: AUDIO/ART/STATS access, moved here from the scene-level tab bar. `dev` is set by
+    // wirePauseMenu automatically (import.meta.env.DEV) — every caller gets it for free. `openStats`
+    // is GarageScene-only (its own StatsOverlay instance); its mere presence is what makes the
+    // STATS row exist at all (see pauseRowIds's `hasStats`).
+    this._dev = !!data.dev;
+    this._openStats = typeof data.openStats === 'function' ? data.openStats : null;
+    this._rowIds = pauseRowIds({ dev: this._dev, hasStats: !!this._openStats });
     this._cursor = 0;
   }
 
@@ -73,7 +82,7 @@ export default class PauseMenuScene extends Phaser.Scene {
 
     this.add.rectangle(0, 0, this.W, this.H, UI.backdrop, 0.72).setOrigin(0, 0);
 
-    const panelH = PAUSE_ROWS.length * (ROW_H + ROW_GAP) - ROW_GAP + 96;
+    const panelH = this._rowIds.length * (ROW_H + ROW_GAP) - ROW_GAP + 96;
     const panelX = (this.W - ROW_W - 48) / 2;
     const panelY = (this.H - panelH) / 2;
     this.add.rectangle(panelX, panelY, ROW_W + 48, panelH, UI.panel).setOrigin(0, 0)
@@ -85,7 +94,7 @@ export default class PauseMenuScene extends Phaser.Scene {
     this._rows = [];
     const rowX = panelX + 24;
     let y = panelY + 64;
-    for (const id of PAUSE_ROWS) {
+    for (const id of this._rowIds) {
       this._rows.push(this._buildRow(id, rowX, y));
       y += ROW_H + ROW_GAP;
     }
@@ -110,7 +119,7 @@ export default class PauseMenuScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '14px', color: UI.text,
     }).setOrigin(0, 0.5);
     const row = { id, rect, label };
-    rect.on('pointerover', () => { this._cursor = PAUSE_ROWS.indexOf(id); this._highlight(); });
+    rect.on('pointerover', () => { this._cursor = this._rowIds.indexOf(id); this._highlight(); });
     rect.on('pointerdown', () => this._activate(id));
     return row;
   }
@@ -124,6 +133,11 @@ export default class PauseMenuScene extends Phaser.Scene {
         const enabled = movementRowEnabled(players);
         row.label.setText(movementRowLabel(players[0]?.legacyMovement)).setColor(enabled ? UI.text : UI.off);
         row.enabled = enabled;
+      } else if (NAV_ROW_ID_SET.has(row.id)) {
+        // #529: AUDIO/ART/STATS — static labels, no ON/OFF state; always enabled (their mere
+        // presence in this._rowIds already means they're relevant, see pauseRowIds).
+        row.label.setText(navRowLabel(row.id)).setColor(UI.text);
+        row.enabled = true;
       } else {
         const t = TOGGLE_ROWS[row.id];
         const on = this.registry.get(t.channel) === true;
@@ -149,9 +163,14 @@ export default class PauseMenuScene extends Phaser.Scene {
   }
 
   // Flip whichever row was activated (click, Enter/Space, or pad A on the highlighted row).
+  // #529: AUDIO/ART/STATS are NAVIGATION, not toggles — they leave the pause menu entirely
+  // rather than flipping a registry flag and staying open, so they're handled before (and
+  // return before reaching) the toggle/movement path + the `_refreshRows()` that follows it.
   _activate(id) {
     const row = this._rows.find((r) => r.id === id);
     if (!row?.enabled) return;
+    if (id === 'audio' || id === 'art') { this._navigateTo(id === 'audio' ? 'AudioScene' : 'ArtPreviewScene'); return; }
+    if (id === 'stats') { this._openStatsAndClose(); return; }
     Audio.ui('menuNav');
     if (id === 'movement') {
       for (const p of this._getPlayers?.() ?? []) applyMovementToggle(p, { movementTogglePressed: true });
@@ -162,6 +181,26 @@ export default class PauseMenuScene extends Phaser.Scene {
       t.save(next);
     }
     this._refreshRows();
+  }
+
+  // #529: leave the paused scene behind entirely (STOP it, not resume — mirrors the old tab
+  // bar's `scene.scene.start(tab.scene)`, which only one lab scene is ever active at a time for)
+  // and start the dev scene fresh.
+  _navigateTo(sceneKey) {
+    Audio.ui('menuNav');
+    if (this._returnKey) this.scene.stop(this._returnKey);
+    for (const key of this._pauseAlso) this.scene.stop(key);
+    this.scene.stop();
+    this.scene.start(sceneKey);
+  }
+
+  // #529: STATS opens an overlay OWNED by the returning scene (GarageScene's StatsOverlay) — that
+  // scene must be RESUMED (its input plugin re-enabled), not stopped, so the overlay's own buttons
+  // are actually clickable. Simplest correct sequence: close exactly like ESC/SELECT would, then
+  // fire the callback.
+  _openStatsAndClose() {
+    this._close();
+    this._openStats?.();
   }
 
   _close() {
@@ -175,13 +214,16 @@ export default class PauseMenuScene extends Phaser.Scene {
     if (this._padEdges.pressed(PAD.SELECT) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
     if (this._padEdges.pressed(PAD.DPAD_DOWN)) this._moveCursor(1);
     if (this._padEdges.pressed(PAD.DPAD_UP)) this._moveCursor(-1);
-    if (this._padEdges.pressed(PAD.A)) this._activate(PAUSE_ROWS[this._cursor]);
+    if (this._padEdges.pressed(PAD.A)) this._activate(this._rowIds[this._cursor]);
   }
 }
 
 // #523: called once from each pause-able scene's own create(). Wires ESC (event-based) and a
 // dedicated PadEdges polling SELECT on the scene's `update` event, so the menu opens the same
 // way from every scene regardless of whether that scene has its own per-frame update().
+// #529: `dev` (import.meta.env.DEV) is passed through automatically — every caller gets the
+// AUDIO/ART pause-menu rows for free in a dev build, with no per-scene wiring needed. `opts.
+// openStats` (GarageScene-only) additionally surfaces the STATS row — see pauseRowIds.
 export function wirePauseMenu(scene, opts = {}) {
   const open = () => {
     if (scene.scene.isActive('PauseMenuScene')) return;   // already open — ignore a repeat edge
@@ -189,6 +231,7 @@ export function wirePauseMenu(scene, opts = {}) {
     const pauseAlso = opts.pauseAlso ?? [];
     scene.scene.launch('PauseMenuScene', {
       returnKey: scene.scene.key, pauseAlso, getPlayers: opts.getPlayers,
+      dev: import.meta.env.DEV, openStats: opts.openStats,
     });
     scene.scene.pause();
     for (const key of pauseAlso) scene.scene.pause(key);

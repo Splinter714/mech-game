@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
-import { mechColorFor, cycleSwatch } from '../data/mechColors.js';
+import { mechColorFor, cycleSwatch, MECH_SWATCHES, MECH_SWATCH_NAMES, isSwatch } from '../data/mechColors.js';
+import { PLAYER_CHASSIS_IDS, CHASSIS } from '../data/chassis/index.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
@@ -16,6 +17,7 @@ import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
 import { stepIndex, cycleListId } from '../ui/padNav.js';
+import { LAB_TABS, nextLabTab, labTabForSlotKind, TAB_DEFAULT_SLOT } from '../ui/labTabs.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { buildTabBar, TAB_BAR_H, DEPLOY_W, DEPLOY_MARGIN } from '../ui/tabBar.js';
@@ -70,6 +72,14 @@ function hexColor(n) {
 
 // Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
 const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
+
+// #529: the per-column 5-tab strip (chassis/weapon/ability/passive/color) that replaced the old
+// scene-level "MECH LAB" tab-bar button — sits above the catalog area, carved out of the same
+// rect (see _buildColumn).
+const TAB_ROW_H = 22;
+const TAB_ROW_GAP = 6;
+const SWATCH_SIZE = 22;
+const SWATCH_GAP = 6;
 
 // #505 (fifth rework, playtest): the standalone header band that used to sit under the shared tab
 // bar (SCRAP/last-run readout + the "another controller can join" hint) is gone as its own block.
@@ -151,9 +161,15 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-RIGHT', () => this._cycleColor(this.cols[0], 1));
     this.input.keyboard.on('keydown-UP', () => this._stepSlot(this.cols[0], -1));
     this.input.keyboard.on('keydown-DOWN', () => this._stepSlot(this.cols[0], 1));
+    // #529: '['/']' cycle column 0's own Mech Lab tab (chassis/weapon/ability/passive/color) —
+    // the keyboard mirror of the pad's LB/RB (see update(), below), same mapping either device.
+    this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._cycleLabTab(this.cols[0], -1));
+    this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._cycleLabTab(this.cols[0], 1));
 
-    // #523: ESC always opens the shared pause menu.
-    wirePauseMenu(this);
+    // #523: ESC always opens the shared pause menu. #529: openStats lets the pause menu's
+    // dev-only STATS row reach back into THIS scene's StatsOverlay instance (outside dev,
+    // this._statsOverlay is undefined and the optional chain just no-ops).
+    wirePauseMenu(this, { openStats: () => this._statsOverlay?.open() });
 
     // Every column's catalogList registers its own wheel/pointer listeners on the scene's input
     // plugin (WeaponCardList's constructor) — clean them up on the way out, mirroring the old
@@ -162,6 +178,10 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── Header chrome (tab bar + SCRAP/last-run + join hint) ─────────────────────────────────────
+  // #529: AUDIO/ART/STATS access moved to the shared pause menu (see wirePauseMenu's openStats
+  // opt in create(), below) — the tab bar itself is now just the pinned Deploy/Ready button.
+  // That button's own visual now reflects READY state (see ui/tabBar.js's `deployReady`), not
+  // just its label text — it doubles as the per-column ready checkmark icon this rework removed.
   _refreshHeader() {
     this.tabBar?.layer.destroy();
     const ready0 = !!this.session.ready[0];
@@ -170,9 +190,7 @@ export default class GarageScene extends Phaser.Scene {
       canDeploy: true,
       onDeploy: () => this._toggleReady(0),
       deployLabel: ready0 ? '✓ READY' : '▶ READY',
-      actions: [
-        ...(import.meta.env.DEV ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }] : []),
-      ],
+      deployReady: ready0,
     });
   }
 
@@ -207,7 +225,13 @@ export default class GarageScene extends Phaser.Scene {
   // LOCAL to `col.layer` (whose position IS the column's screen offset).
   _buildColumn(i) {
     const layer = this.add.container(i * this.colW, this.colTop);
-    const col = { index: i, layer, selectedSlot: TILE_ORDER[0] };
+    // #529: `labTab` is this column's OWN active Mech Lab tab (chassis/weapon/ability/passive/
+    // color) — per-column, not scene-global, consistent with everything else in the
+    // simultaneous multi-cursor Garage being per-player. Starts on the weapon tab, matching the
+    // pre-#529 default (a weapon slot selected, its catalog showing).
+    const col = {
+      index: i, layer, selectedSlot: TILE_ORDER[0], labTab: LAB_TABS.findIndex((t) => t.id === 'weapon'),
+    };
     this.cols[i] = col;
     col.mech = this.allMechs[PLAYER_MECH_KEYS[i]];
     col.textureKey = `garageMech${i}`;
@@ -254,15 +278,29 @@ export default class GarageScene extends Phaser.Scene {
     col.tileRefs = {};
     for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities, gl.passive]) this._drawColTile(col, rect);
 
+    // #529: a small 5-tab strip (chassis/weapon/ability/passive/color) sits ABOVE the catalog
+    // region, inside `gl.catalog`'s own rect — it doesn't get a dedicated slice from
+    // columnLayout.js, just the top TAB_ROW_H of the existing catalog area, so this stays a
+    // GarageScene-local concern rather than a columnLayout.js geometry change. The always-visible
+    // loadout tile row above (built already, see the loop above) is untouched either way — only
+    // the catalog/selection surface beneath it switches per tab.
+    const cat = gl.catalog;
+    const tabRowRect = { x: cat.x, y: cat.y, w: cat.w, h: TAB_ROW_H };
+    const catalogRect = {
+      x: cat.x, y: cat.y + TAB_ROW_H + TAB_ROW_GAP, w: cat.w, h: Math.max(40, cat.h - TAB_ROW_H - TAB_ROW_GAP),
+    };
+    this._buildLabTabRow(col, tabRowRect);
+
     // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
     // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
     // stats + a live-firing shot/beam preview per card) fits this column's width. It owns its
     // own top-level container rather than living inside col.layer, so it's positioned in WORLD
     // coordinates (this column's own screen offset + the local catalog rect below). Refiltered/
-    // reselected whenever the selected slot or a mount changes, via _refreshCatalogList.
-    const cat = gl.catalog;
+    // reselected whenever the selected slot or a mount changes, via _refreshCatalogList. Backs the
+    // WEAPON/ABILITY/PASSIVE tabs (#529) — the same slot-filtered catalog mechanism as before,
+    // just now only shown while one of those three tabs is active (see _refreshLabTabUI).
     col.catalogList = new WeaponCardList(this, {
-      x: col.layer.x + cat.x, y: col.layer.y + cat.y, w: cat.w, h: cat.h, compact: true,
+      x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: true,
       ids: this._eligibleIds(col.selectedSlot),
       onSelect: (id) => this._clickCatalogItem(col, id),
       selectedId: this._mountedIn(col, col.selectedSlot),
@@ -277,6 +315,16 @@ export default class GarageScene extends Phaser.Scene {
     // col.layer's panel/blocker/tiles reliably win input priority wherever they overlap a
     // scrolled-out (masked but still input-live) card, regardless of which was constructed first.
     col.catalogList.root.setDepth(-1);
+
+    // #529: the CHASSIS tab's own selection list — a plain clickable row per PLAYER_CHASSIS_IDS
+    // entry — and the COLOR tab's own swatch row, both built into `catalogRect` (same rect the
+    // WeaponCardList catalog occupies) so switching tabs simply swaps which of the three
+    // catalog-area surfaces is visible. Both live INSIDE col.layer (unlike catalogList, which
+    // needs its own container for WeaponCardList's scroll/mask machinery) since they're simple,
+    // non-scrolling, fully custom-drawn lists.
+    this._buildChassisList(col, catalogRect);
+    this._buildColorList(col, catalogRect);
+    this._refreshLabTabUI(col);
 
     // The live mech preview — SQUARE, sized to the tile block's own height (both rows together),
     // sitting immediately LEFT of it as one centered pair (see garageColumnLayout). Built ONCE;
@@ -299,23 +347,16 @@ export default class GarageScene extends Phaser.Scene {
     // follow-up on top of the earlier "just below the mech preview art" placement). #505 seventh
     // rework (playtest follow-up): the separate identity-colour dot that used to sit to its left
     // is gone — the label text itself is now painted in the player's identity colour, so there's
-    // one element carrying that information instead of two. #505 fifth rework adds a compact
-    // checkmark-style READY indicator to its right — the old top-of-column "READY?" pill is gone;
-    // this is where it moved to.
+    // one element carrying that information instead of two.
+    // #529: the compact checkmark-style READY indicator that used to sit to this label's right is
+    // GONE — the single pinned top-right Deploy/Ready button (tab bar, column 0 only) now carries
+    // that visual for the keyboard/mouse player (see ui/tabBar.js's `deployReady`). For every
+    // OTHER joined column (no pinned button of their own), ready state instead folds into THIS
+    // label's own text (a trailing "✓", see _refreshReady) rather than a separate icon element.
     col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
       fontFamily: 'monospace', fontSize: '12px', color: hexColor(mechColorFor(col.mech, i)),
     }).setOrigin(0.5, 0);
-    const readyCx = col.headerLabel.x + col.headerLabel.width / 2 + 12;
-    const readyCy = gl.label.y + col.headerLabel.height / 2;
-    // #505 playtest follow-up: this is a pure status light, not a button — ready is toggled via
-    // the D key / gamepad START (see keydown-D and the pad-edge handling below), never a click
-    // here. No setInteractive/pointerdown on purpose.
-    col.readyBg = this.add.rectangle(readyCx, readyCy, 16, 16, UI.btn).setOrigin(0.5)
-      .setStrokeStyle(1, UI.panelEdge);
-    col.readyGlyph = this.add.text(readyCx, readyCy, '✓', {
-      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
-    }).setOrigin(0.5);
-    col.layer.add([col.headerLabel, col.readyBg, col.readyGlyph]);
+    col.layer.add([col.headerLabel]);
 
     // #528 fix: WeaponCardList (col.catalogList, built above) owns its own top-level container
     // added to the scene AFTER col.layer, so by default it — and every card inside it — renders
@@ -328,6 +369,170 @@ export default class GarageScene extends Phaser.Scene {
     this.children.bringToTop(col.layer);
 
     this._refreshReady(col);
+  }
+
+  // ── Mech Lab 5-tab system (#529) — chassis/weapon/ability/passive/color, per column ────────────
+  // The small tab strip sitting above the catalog area. Mouse click + LB/RB (gamepad) + '['/']'
+  // (column 0 keyboard) all drive the same _setLabTab.
+  _buildLabTabRow(col, rect) {
+    col.labTabRefs = [];
+    const n = LAB_TABS.length;
+    const tabW = rect.w / n;
+    LAB_TABS.forEach((tab, idx) => {
+      const x = rect.x + idx * tabW;
+      const r = this.add.rectangle(x, rect.y, tabW - 2, rect.h, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+      const t = this.add.text(x + (tabW - 2) / 2, rect.y + rect.h / 2, tab.label, {
+        fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
+      }).setOrigin(0.5);
+      r.on('pointerover', () => { if (col.labTab !== idx) r.setFillStyle(UI.btnHover); });
+      r.on('pointerout', () => this._refreshLabTabUI(col));
+      r.on('pointerdown', () => this._setLabTab(col, idx));
+      col.layer.add([r, t]);
+      col.labTabRefs.push({ rect: r, text: t });
+    });
+  }
+
+  // Repaint the tab row's highlight and swap which catalog-area surface (WeaponCardList /
+  // chassis list / color list) is visible for the column's current labTab. Called after every
+  // tab switch, and once at column build time.
+  _refreshLabTabUI(col) {
+    const tabId = LAB_TABS[col.labTab].id;
+    col.labTabRefs.forEach((ref, idx) => {
+      const on = idx === col.labTab;
+      ref.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
+      ref.text.setColor(on ? UI.accent : UI.dim);
+    });
+    col.catalogList.root.setVisible(tabId === 'weapon' || tabId === 'ability' || tabId === 'passive');
+    col.chassisListLayer.setVisible(tabId === 'chassis');
+    col.colorListLayer.setVisible(tabId === 'color');
+    if (tabId === 'chassis') this._refreshChassisList(col);
+    if (tabId === 'color') this._refreshColorList(col);
+  }
+
+  // Switch column `col`'s active tab. Landing on a slot-kind tab (weapon/ability/passive) whose
+  // kind doesn't match the currently-selected slot re-focuses a real slot of that kind (e.g.
+  // switching from ability→weapon lands on the first weapon slot, not an ability catalog under a
+  // weapon-slot highlight) — see ui/labTabs.js's TAB_DEFAULT_SLOT.
+  _setLabTab(col, tabIndex) {
+    const n = LAB_TABS.length;
+    col.labTab = ((tabIndex % n) + n) % n;
+    const tabId = LAB_TABS[col.labTab].id;
+    const defaultSlot = TAB_DEFAULT_SLOT[tabId];
+    if (defaultSlot && slotKind(col.selectedSlot) !== slotKind(defaultSlot)) col.selectedSlot = defaultSlot;
+    this._refreshAllTiles(col);
+    this._refreshCatalogList(col);
+    this._refreshLabTabUI(col);
+  }
+
+  // LB/RB (gamepad) and '['/']' (column 0 keyboard) — cycle the column's own active tab.
+  _cycleLabTab(col, dir) {
+    if (!col) return;
+    Audio.ui('menuNav');
+    this._setLabTab(col, nextLabTab(col.labTab, dir));
+  }
+
+  // ── Tab 0: chassis select ─────────────────────────────────────────────────────────────────────
+  // A plain clickable row per PLAYER_CHASSIS_IDS entry (mediumPlayer/strikerPlayer/colossusPlayer
+  // — cosmetic-only variants, identical stats, see data/chassis/*Player.js). Re-enables the
+  // chassis switcher that #248 (commit 7a3893a) disabled, scoped to just these three cosmetic
+  // picks rather than the old light/medium/heavy weight-class switch.
+  _buildChassisList(col, rect) {
+    const rowH = 30, gap = 6;
+    col.chassisListLayer = this.add.container(0, 0);
+    col.chassisRows = PLAYER_CHASSIS_IDS.map((id, idx) => {
+      const y = rect.y + idx * (rowH + gap);
+      const r = this.add.rectangle(rect.x, y, rect.w, rowH, UI.btn).setOrigin(0, 0)
+        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+      const t = this.add.text(rect.x + 12, y + rowH / 2, CHASSIS[id].name, {
+        fontFamily: 'monospace', fontSize: '13px', color: UI.text,
+      }).setOrigin(0, 0.5);
+      r.on('pointerover', () => { if (col.mech.chassisId !== id) r.setFillStyle(UI.btnHover); });
+      r.on('pointerout', () => this._refreshChassisList(col));
+      r.on('pointerdown', () => this._selectChassis(col, id));
+      col.chassisListLayer.add([r, t]);
+      return { id, rect: r, text: t };
+    });
+    col.layer.add(col.chassisListLayer);
+  }
+
+  _refreshChassisList(col) {
+    for (const row of col.chassisRows) {
+      const on = col.mech.chassisId === row.id;
+      row.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
+      row.text.setColor(on ? UI.accent : UI.text);
+    }
+  }
+
+  // Directly pick chassis `id` (chassis-list row click).
+  _selectChassis(col, id) {
+    if (col.mech.chassisId === id) return;
+    col.mech.setChassis(id);
+    Audio.ui('equip');
+    saveAllMechs(this.allMechs);
+    buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
+    poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    this._refreshChassisList(col);
+  }
+
+  // Step through PLAYER_CHASSIS_IDS forward/back (pad A/X while the chassis tab is active reuses
+  // this — see update(), below).
+  cycleChassis(col, dir = 1) {
+    const ids = PLAYER_CHASSIS_IDS;
+    const next = cycleListId(ids, col.mech.chassisId, dir) ?? ids[0];
+    this._selectChassis(col, next);
+  }
+
+  // ── Tab 4: color select ───────────────────────────────────────────────────────────────────────
+  // A row of clickable swatches (data/mechColors.js MECH_SWATCHES) — the same cycleSwatch model
+  // the D-pad/arrow-key path already drives (_cycleColor, unchanged below), just also reachable
+  // by clicking a swatch directly instead of only stepping through them.
+  _buildColorList(col, rect) {
+    col.colorListLayer = this.add.container(0, 0);
+    const perRow = Math.max(1, Math.floor((rect.w + SWATCH_GAP) / (SWATCH_SIZE + SWATCH_GAP)));
+    col.colorSwatchRefs = MECH_SWATCHES.map((hex, idx) => {
+      const row = Math.floor(idx / perRow), colI = idx % perRow;
+      const x = rect.x + colI * (SWATCH_SIZE + SWATCH_GAP);
+      const y = rect.y + row * (SWATCH_SIZE + SWATCH_GAP);
+      const r = this.add.rectangle(x, y, SWATCH_SIZE, SWATCH_SIZE, hex).setOrigin(0, 0)
+        .setStrokeStyle(2, UI.panelEdge).setInteractive({ useHandCursor: true });
+      r.on('pointerdown', () => this._selectColor(col, hex));
+      col.colorListLayer.add(r);
+      return { hex, rect: r };
+    });
+    const rows = Math.ceil(MECH_SWATCHES.length / perRow);
+    col.colorNameText = this.add.text(rect.x, rect.y + rows * (SWATCH_SIZE + SWATCH_GAP) + 4, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(0, 0);
+    col.colorListLayer.add(col.colorNameText);
+    col.layer.add(col.colorListLayer);
+  }
+
+  _refreshColorList(col) {
+    const current = mechColorFor(col.mech, col.index);
+    for (const swatch of col.colorSwatchRefs) {
+      swatch.rect.setStrokeStyle(swatch.hex === current ? 3 : 2, swatch.hex === current ? UI.accent : UI.panelEdge);
+    }
+    const idx = MECH_SWATCHES.indexOf(current);
+    col.colorNameText?.setText(idx >= 0 ? MECH_SWATCH_NAMES[idx] : '');
+  }
+
+  // Directly pick a swatch (color-list click) — same distinctness rules as _cycleColor (no two
+  // live co-op players may hold the same colour) via cycleSwatch's own canPickSwatch gate; a
+  // colour already held by another joined player is simply not offered a real switch to (the
+  // click no-ops, mirroring cycleSwatch landing back on `current` when nothing else is free).
+  _selectColor(col, hex) {
+    if (!isSwatch(hex) || col.mech.color === hex) return;
+    const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
+    const taken = builds.some((m, bi) => bi !== col.index && mechColorFor(m, bi) === hex);
+    if (taken) return;
+    col.mech.color = hex;
+    Audio.ui('menuNav');
+    buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
+    saveAllMechs(this.allMechs);
+    poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    col.headerLabel?.setColor(hexColor(hex));
+    this._refreshColorList(col);
   }
 
   _artFor(col) {
@@ -385,11 +590,18 @@ export default class GarageScene extends Phaser.Scene {
     col.catalogList.setSelected(this._mountedIn(col, col.selectedSlot));
   }
 
+  // #529: a tile click also flips the column's active tab to whichever tab that slot's kind
+  // belongs to (weapon/ability/passive) — so clicking, say, an ability tile while the weapon
+  // catalog is showing switches straight to the ability tab/catalog, keeping the always-visible
+  // tile row and the catalog beneath it in sync no matter which one you interact with first.
   _selectSlot(col, loc) {
     Audio.ui('menuNav');
     col.selectedSlot = loc;
+    const tab = labTabForSlotKind(slotKind(loc));
+    if (tab != null) col.labTab = tab;
     this._refreshAllTiles(col);
     this._refreshCatalogList(col);
+    this._refreshLabTabUI(col);
   }
 
   // Step the focused slot forward/back through the seven-slot cycle (ALL_SLOTS) — shared by the
@@ -507,16 +719,19 @@ export default class GarageScene extends Phaser.Scene {
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     // The PLAYER # label is painted in the identity colour — repaint it in place.
     col.headerLabel?.setColor(hexColor(next));
+    // #529: keep the color tab's own swatch-grid highlight in sync, in case it's the active tab.
+    this._refreshColorList(col);
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
-  // #505 fifth rework: a compact checkmark-style indicator next to the PLAYER # label, replacing
-  // the old prominent "READY?" pill — the glyph itself never changes, only its colour (dim = not
-  // ready, good/green = ready), so it reads as a status light rather than a call-to-action button.
+  // #529: the old compact checkmark-style indicator next to the PLAYER # label is gone (replaced,
+  // for column 0/the keyboard-mouse player, by the pinned top-right Deploy/Ready button's own
+  // visual — see ui/tabBar.js's `deployReady` + _refreshHeader). Every column's own ready state
+  // still needs SOME visible signal for co-op (columns 1-3 have no pinned button of their own), so
+  // it folds into the PLAYER # label's own text — a trailing "✓" — rather than a separate element.
   _refreshReady(col) {
     const ready = this.session.ready[col.index];
-    col.readyBg.setFillStyle(ready ? 0x1c3a24 : UI.btn).setStrokeStyle(1, ready ? 0x7bd17b : UI.panelEdge);
-    col.readyGlyph.setColor(ready ? UI.good : UI.dim);
+    col.headerLabel?.setText(`PLAYER ${col.index + 1}${ready ? ' ✓' : ''}`);
   }
 
   // Toggling a player TO ready is gated on their build being complete (every weapon slot filled —
@@ -579,8 +794,10 @@ export default class GarageScene extends Phaser.Scene {
   // ── Per-player pad controls ──────────────────────────────────────────────────────────────────
   // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
   // every other player's: d-pad left/right cycles colour, up/down moves which of the seven slots
-  // is focused, A/X cycle that slot's mount forward/back, B clears an ability/core slot (weapon
-  // slots can't be cleared), START toggles ready.
+  // is focused, A/X cycle that slot's mount forward/back (or the chassis pick / colour, on those
+  // tabs — see below), B clears an ability/core slot (weapon slots can't be cleared), START
+  // toggles ready. #529: LB/RB cycle the column's own Mech Lab tab (chassis/weapon/ability/
+  // passive/color) — the pad mirror of column 0's keyboard '['/']'.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -592,13 +809,25 @@ export default class GarageScene extends Phaser.Scene {
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
       if (e.pressed(PAD.START)) { this._toggleReady(i); continue; }
+      if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
+      if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
       if (e.pressed(PAD.DPAD_LEFT)) { this._cycleColor(col, -1); continue; }
       if (e.pressed(PAD.DPAD_RIGHT)) { this._cycleColor(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._stepSlot(col, -1); continue; }
       if (e.pressed(PAD.DPAD_DOWN)) { this._stepSlot(col, 1); continue; }
-      if (e.pressed(PAD.A)) { this._cycleMount(col, 1); continue; }
-      if (e.pressed(PAD.X)) { this._cycleMount(col, -1); continue; }
+      if (e.pressed(PAD.A)) { this._activateSlotOrTab(col, 1); continue; }
+      if (e.pressed(PAD.X)) { this._activateSlotOrTab(col, -1); continue; }
       if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
     }
+  }
+
+  // A/X's meaning depends on the active tab: cycle the chassis pick on the CHASSIS tab, cycle
+  // colour on the COLOR tab (an alternate to DPAD_LEFT/RIGHT, which still works too — see
+  // _cycleColor's own callers), or cycle the focused slot's mount everywhere else (unchanged).
+  _activateSlotOrTab(col, dir) {
+    const tabId = LAB_TABS[col.labTab].id;
+    if (tabId === 'chassis') this.cycleChassis(col, dir);
+    else if (tabId === 'color') this._cycleColor(col, dir);
+    else this._cycleMount(col, dir);
   }
 }
