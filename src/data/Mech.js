@@ -400,6 +400,17 @@ export class Mech {
   // shields being optional (#496).
   isComplete() { return this.validate().ok && MOUNT_LOCATIONS.every((loc) => this.usedSlots(loc) > 0); }
 
+  // #532: the Garage's READY gate is stricter than isComplete() above — Jackson's Garage feedback
+  // batch asked that a column not be able to ready up with ANY gap at all: all 4 weapon slots, both
+  // ability slots, and the one core/passive slot. isComplete() is kept as-is (and still used
+  // elsewhere as "is this build even legal to deploy") since ability/core were deliberately
+  // optional up to now; this is the newer, full-loadout check the Garage's ready toggle uses.
+  isFullyEquipped() {
+    return this.isComplete()
+      && ABILITY_SLOTS.every((slot) => !!this.abilityMounts[slot])
+      && CORE_SLOTS.every((slot) => !!this.coreMounts[slot]);
+  }
+
   // ── Ability slots (#506) ──────────────────────────────────────────────────────────────────
   canMountAbility(slot, itemId) { return loadout.canMountAbility(this.abilityMounts, slot, itemId); }
   abilitySlotOf(itemId) { return loadout.abilityLocationOf(this.abilityMounts, itemId); }
