@@ -58,11 +58,12 @@ const TILT_SMOOTH_K = 12;
 // off (rate-limited "twist slew" turning + accel/decel ramp, paired with a much slower player
 // top speed in mediumPlayer.js) and wanted a LIVE toggle to A/B the two feels without a
 // redeploy — so this is now `player.legacyMovement` (per-player runtime state, toggled by
-// D-pad down, edge-detected in Controls.js as `movementTogglePressed` and applied below),
-// defaulting to false (the #501 slower/twist-slew feel — the current shipped default). `true`
-// restores the exact pre-#501/#154 instant-snap feel AND the original speed/turn numbers
-// (`LEGACY_MOVEMENT_OVERRIDE`, mediumPlayer.js). Only affects the player's _drive()/_stepGait()
-// below — enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is untouched.
+// D-pad down, edge-detected in Controls.js as `movementTogglePressed` and applied below).
+// Follow-up flipped the DEFAULT: `true` (fast/legacy — the original pre-#501 instant-snap feel
+// and speed/turn numbers, `LEGACY_MOVEMENT_OVERRIDE` in mediumPlayer.js) is now what a fresh
+// player gets; D-pad down toggles INTO the #501 slower/twist-slew re-experiment (`false`), not
+// out of it. Only affects the player's _drive()/_stepGait() below — enemy turn-rate/turret-slew
+// logic (enemies.js / enemyBehaviors.js) is untouched.
 
 
 // #159 follow-up (collision-tunneling fix): `_blocked` is a single-POINT check — it only tests
@@ -208,11 +209,19 @@ export const LocomotionMixin = {
   // frame). `undefined` on a fresh player defaults to false — the shipped slower/twist-slew
   // feel — same as if the field had never existed before this toggle was added.
   _movementFor(player) {
-    return player.legacyMovement ? { ...player.mech.movement, ...LEGACY_MOVEMENT_OVERRIDE } : player.mech.movement;
+    // `?? true`: fast/legacy is the default even before `_drive` has run once for this player
+    // (e.g. a mid-frame ordering edge case) — matches the explicit seeding in `_drive` below.
+    const legacy = player.legacyMovement ?? true;
+    return legacy ? { ...player.mech.movement, ...LEGACY_MOVEMENT_OVERRIDE } : player.mech.movement;
   },
 
   _drive(intent, dt, player = primaryPlayerOf(this)) {
     const p = player;
+    // #501 follow-up: fast/legacy is the DEFAULT (Jackson: "make fast-mech movement the
+    // default, toggle to slow with d-pad") — only the #501 re-experiment itself needs opting
+    // INTO via D-pad down, not out of. `undefined` (a fresh player) is seeded true here rather
+    // than relying on falsy-undefined, so the default is explicit rather than incidental.
+    if (p.legacyMovement === undefined) p.legacyMovement = true;
     if (intent.movementTogglePressed) p.legacyMovement = !p.legacyMovement;
     const mv = this._movementFor(p);
     const legF = p.mech.legFactor();
