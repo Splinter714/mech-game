@@ -41,6 +41,14 @@ export const MECH_SWATCHES = [
   0xa6e838, // CHARTREUSE (h83)  yellow-green     — sat twice the infantry olive it neighbours
   0x2fa83f, // FOREST     (h128) deep green
   0x0f9c8c, // TEAL       (h173) deep teal        — dark enough to never read as the cyan glows
+  // Standard neutrals (low/zero saturation) — every hue band above is already packed tight against
+  // a signal colour, but a near-zero-saturation swatch can't be confused with any of them regardless
+  // of hue: the audit's own rule is that a shared hue only clashes when the TONE is also close, and
+  // a vivid alert red/ballistic gold is about as far in tone from a desaturated neutral as it gets.
+  0xe6e6ea, // WHITE      near-white cool grey
+  0x8a8f96, // ASH        true neutral mid grey
+  0x3a3d42, // CHARCOAL   dark neutral grey — kept off pure black so it stays visible against shadow
+  0xb08968, // BRONZE     desaturated warm tan/brown
 ];
 
 // Human-readable name per swatch, aligned index-for-index with MECH_SWATCHES. The cycle picker
@@ -49,6 +57,7 @@ export const MECH_SWATCHES = [
 export const MECH_SWATCH_NAMES = [
   'AZURE', 'LIME', 'MAGENTA', 'JADE', 'STEEL',
   'INDIGO', 'ROSE', 'CHARTREUSE', 'FOREST', 'TEAL',
+  'WHITE', 'ASH', 'CHARCOAL', 'BRONZE',
 ];
 
 // The display name for a swatch hex, or '' if it isn't one.
