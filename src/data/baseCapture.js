@@ -38,3 +38,20 @@ export function applyCapturedBases(bases, capturedIds) {
   }
   return swappedHexKeys;
 }
+
+// #516: a captured base's own alert tower doesn't belong to it anymore either — drop it from the
+// list `scenes/arena/bases.js`'s `_initAlertTowers`/`_updateAlertTowers`/`_spawnTowerPatrols` all
+// read (`this.alertTowerHexes`), so a base the player already holds never spools a countdown,
+// sirens, or spawns a hostile patrol guarding it. `_wakeBase` itself is already a harmless no-op
+// against a captured base (`applyCapturedBases` above already emptied its docks, so there's
+// nothing left to wake), but leaving the tower live would still show its escalating-ring FX/siren
+// and spawn a hostile patrol on ground that reads as the player's own — this closes that gap
+// rather than relying on the wake no-op alone. Pure filter, mirrors `applyCapturedBases`'
+// signature/shape (takes the already-computed `capturedIds` Set, never re-derives it) so
+// `scenes/arena/world.js` `_buildWorld` can call both from the same spot. A tower with no
+// `baseId` at all (shouldn't happen — `placeGapTowers` always stamps one — but defensive) is
+// never filtered out by this alone.
+export function filterCapturedAlertTowers(alertTowers, capturedIds) {
+  if (!capturedIds || !capturedIds.size) return alertTowers ?? [];
+  return (alertTowers ?? []).filter((t) => t.baseId == null || !capturedIds.has(t.baseId));
+}

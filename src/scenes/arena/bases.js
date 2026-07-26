@@ -547,10 +547,23 @@ export const BasesMixin = {
   // the 5-strong opener instead of overlapping. Spawning goes through `_spawnEnemy` (not
   // `_spawnKind` directly) because a late tier includes a light MECH ('light'), and `_spawnEnemy`
   // is the existing `isEnemyKind` dispatcher that routes kind-vs-mech — the same one
-  // `_spawnDormantUnits` above already relies on for mech docks. Everything else is unchanged:
-  // patrol units still get NO `baseId`/`dockKey` and still spawn UNAWARE (both `_spawnKind` and
-  // `_spawnMech`/`_resetAiState` default to UNAWARE), so they remain outside the base wake/win
-  // bookkeeping exactly as before.
+  // `_spawnDormantUnits` above already relies on for mech docks. Patrol units still get NO
+  // `baseId`/`dockKey` and still spawn UNAWARE (both `_spawnKind` and `_spawnMech`/`_resetAiState`
+  // default to UNAWARE), so they remain outside the base win-condition bookkeeping (`isBaseCleared`/
+  // `baseClearState`, which key off `e.baseId`) exactly as before — #516 does NOT make killing a
+  // patrol part of clearing a base.
+  //
+  // #516 (corridor bypass routing — "alert towers and patrols that can spot you and escalate that
+  // base"): each spawned patrol unit DOES get `e.alertsBaseId`, a separate field from `baseId`
+  // specifically for this — the tower's own linked base (`t.baseId`, same relationship
+  // `_alertTowerBaseId` uses for the tower itself, #284's gap-ownership threading). enemies.js'
+  // two UNAWARE→AWARE transition sites (the mech tactical path and the generic vehicle path) call
+  // `this._wakeBase(e.alertsBaseId)` the instant a unit carrying it becomes AWARE — so a patrol that
+  // spots the player independently escalates its base exactly like an alert tower's countdown
+  // completing, without pulling patrols into the objective/kill-count bookkeeping `baseId` drives.
+  // Skipped entirely for a tower guarding an already-captured/friendly base — `this.alertTowerHexes`
+  // itself excludes those (world.js `_buildWorld`, filtered against `this._capturedBaseIds`), so a
+  // patrol never spawns there at all, let alone carries a baseId to escalate.
   _spawnTowerPatrols() {
     const towers = this.alertTowerHexes ?? [];
     towers.forEach((t, towerIndex) => {
@@ -568,7 +581,8 @@ export const BasesMixin = {
         const a = (i / n) * Math.PI * 2 + Math.PI / 4;
         const px = n > 1 ? x + Math.cos(a) * TOWER_PATROL_HUDDLE_OFFSET : x;
         const py = n > 1 ? y + Math.sin(a) * TOWER_PATROL_HUDDLE_OFFSET : y;
-        this._spawnEnemy(px, py, composition[i]);
+        const e = this._spawnEnemy(px, py, composition[i]);
+        if (e) e.alertsBaseId = t.baseId ?? null;
       }
     });
   },

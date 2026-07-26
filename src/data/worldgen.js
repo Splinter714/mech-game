@@ -372,6 +372,33 @@ export function drawDockKind(rng, lateFraction) {
 export const BASE_FOOTPRINT_HALF_LENGTH = 6;
 export const BASE_FOOTPRINT_HALF_WIDTH = 2.6;
 
+// #516 (corridor bypass routing): how far, in hex steps, a base's compound is nudged off the
+// corridor centreline before its footprint is built (`placeBases` below) — perpendicular to the
+// compound's own local corridor heading, alternating flanks base-to-base so roughly half a run's
+// bases open their bypass shoulder on each side. The point is literal: "offset base footprints
+// from the centerline enough that there's a viable path around a base's engagement radius" is the
+// design's own wording for this issue. Centred placement (the pre-#516 behaviour) left only
+// `CORRIDOR_HALF_WIDTH_PX*2 - BASE_FOOTPRINT_HALF_WIDTH*2*HEX_STEP_PX ≈ 540 - 432 ≈ 108px` split
+// across BOTH flanks combined at full size — not enough for a mech to meaningfully route around
+// anything. 1.5 hex steps (≈125px) pushes the compound far enough that the FAR shoulder opens to
+// roughly its own ~216px footprint half-width PLUS most of this nudge on top of the pre-existing
+// split — a real, if still narrow, lane past the base, at the cost of squeezing (sometimes to a
+// shrink-ladder rung, sometimes to a hugging-the-wall sliver) the near flank. `nudgeCandidate`
+// below falls back to the UN-nudged hex whenever the nudge would land outside the playable
+// corridor at all, so this can never itself cause the "never seals the lane" invariant to fail —
+// worst case the nudge is silently skipped for that one candidate and placement proceeds exactly
+// as it did before #516. NOT a claim that this makes bypass ALWAYS undetected — the alert tower's
+// own detection radius (data/alertTower.js `ALERT_DETECT_RADIUS`, 480px, distance-only) and a
+// dormant unit's proximity-wake radius (data/awareness.js `PROXIMITY_WAKE_RANGE_CAP`, 320px, also
+// distance-only) both still exceed the corridor's total width, so those stay deliberately hard to
+// evade outright by design (see ALERT_DETECT_RADIUS's own comment: "a normal drive-by anywhere
+// near it trips" is the intended tripwire behaviour, not a bug). What this buys is real: a
+// meaningfully wider shoulder to actually attempt a bypass along, and — since a base's own garrison
+// sits INSIDE its footprint rather than smeared along the wall — genuinely more clearance between
+// the player's bypass route and the units that would otherwise notice them. Tunable, not a locked
+// balance number; playtest will tell us whether 1.5 is enough or needs to grow.
+export const BASE_LATERAL_OFFSET_HEX = 0.75;
+
 // #373 playtest follow-up ("the docks need to still be within the base walls"): the minimum
 // hex-distance from a dock to the nearest hex OUTSIDE its base's footprint — i.e. how much yard
 // has to sit between a structure and its own wall ring. 1 means "may sit on the apron, touching
@@ -519,6 +546,29 @@ function corridorStillOpen(open, footprint, start, goal) {
     }
   }
   return seen.has(goalKey);
+}
+
+// #516: nudge a candidate footprint centre `offsetHexSteps` hex-steps perpendicular to its own
+// local corridor `axis` (the same axis `footprintShape`/`baseFootprint` orient the compound on),
+// so the compound sits off the centreline rather than dead-centred in the lane — see
+// `BASE_LATERAL_OFFSET_HEX`'s own comment for why. Pure pixel-space geometry (rotate the axis 90°,
+// step along it, snap back to the nearest hex via `pixelToHex`), same "orientation-independent,
+// physical-distance-correct" reasoning `footprintShape` already uses for the same reason. Falls
+// back to the UN-nudged hex whenever either there is no axis to nudge perpendicular to (null —
+// the no-spine test/fallback case) or the nudged hex would land outside `playableKeys` entirely —
+// this function must never be able to push a base's own CENTRE off the corridor, only shift it
+// within the corridor's own bounds. `baseFootprint`'s existing playable-clip + the try loop's
+// existing `corridorStillOpen` shrink-ladder remain the sole authority on whether the resulting
+// (possibly still centred) compound is acceptable; this only changes WHERE the candidate the rest
+// of the pipeline evaluates actually sits.
+export function nudgeCandidateLateral(h, axis, offsetHexSteps, playableKeys) {
+  if (!axis || !offsetHexSteps) return h;
+  const len = Math.hypot(axis.x, axis.y);
+  if (len < 1e-9) return h;
+  const px = -axis.y / len, py = axis.x / len;   // unit vector perpendicular to the local axis
+  const c = hexToPixel(h.q, h.r);
+  const nudged = pixelToHex(c.x + px * offsetHexSteps * HEX_STEP_PX, c.y + py * offsetHexSteps * HEX_STEP_PX);
+  return playableKeys.has(axialKey(nudged.q, nudged.r)) ? nudged : h;
 }
 
 // #333: the hexes a bypassing route may actually use — playable, not already annexed by a placed
@@ -707,10 +757,19 @@ export function placeBases(
     const laneStart = sorted.find((h) => laneOpen.has(axialKey(h.q, h.r)));
     const laneGoal = [...sorted].reverse().find((h) => laneOpen.has(axialKey(h.q, h.r)));
     const attempts = shuffled.slice(0, BASE_PLACEMENT_TRIES);
+    // #516: alternate which flank this base's bypass shoulder opens on, base 0/2/4… vs. 1/3…
+    // — a fixed, deterministic alternation off the base INDEX rather than an extra `rng()` draw,
+    // so the placement RNG stream itself is untouched by this addition and every existing seed's
+    // downstream draws (dock kinds, patrol composition, etc.) still land exactly where they did
+    // before #516; only the compound's own position moves.
+    const lateralSign = i % 2 === 0 ? 1 : -1;
     outer:
     for (const sc of BASE_SHRINK_LADDER) {
-      for (const cand of attempts) {
-        const candAxis = axisOf ? axisOf(cand) : null;
+      for (const cand0 of attempts) {
+        const candAxis = axisOf ? axisOf(cand0) : null;
+        // #516: shift the candidate off the centreline before building its footprint — see
+        // `BASE_LATERAL_OFFSET_HEX`/`nudgeCandidateLateral` for why and the safety fallback.
+        const cand = nudgeCandidateLateral(cand0, candAxis, lateralSign * BASE_LATERAL_OFFSET_HEX, playable);
         const fp = baseFootprint(
           cand, buildable, candAxis,
           BASE_FOOTPRINT_HALF_LENGTH * sc, BASE_FOOTPRINT_HALF_WIDTH * sc,
@@ -1279,7 +1338,22 @@ export function generateTerrain({
 // worldgen.test.js) put spawn-side boundary visibility at ~99% at 250px — better than #158's blob
 // (~90.6%) because a corridor is wrapped by boundary on BOTH sides AND behind the spawn end, so
 // SOME ring hex lands in the view far more reliably than a single blob's lone near edge did.
-export const CORRIDOR_HALF_WIDTH_PX = 250;
+// #516 (corridor bypass routing): widened from 250 → 270. 250 was tuned tight against the #126
+// boundary-visibility simulation (worldgen.test.js's "corridor sizing" describe block re-derives
+// the SAME check against the real math on every test run, so it isn't just a one-time sweep going
+// stale). Re-run at several candidate widths as part of this issue: 270 still passes that
+// visibility check AND the #442 wall-turret-envelope base-separation invariant
+// (`MIN_BASE_SEPARATION_PX` vs `envelopeTouch`, worldgen.test.js "actually achieves that
+// separation…") with room to spare; 280 already passes but with a thin margin, and 300 FAILS the
+// separation check outright (a wider lane gives `placeBases` enough extra lateral freedom that two
+// bases can land closer together in straight-line terms even while still honouring the along-
+// corridor floor) — so 270 is deliberately short of the point where corridor width alone starts
+// eating the wall-turret no-cross-fire guarantee, rather than the max value that merely happens to
+// pass today. The extra 20px per side (500px → 540px total) is modest by itself; it exists to give
+// `BASE_LATERAL_OFFSET_HEX` below (which pushes a compound off the centreline into part of this
+// new headroom) a real shoulder to open up on the far flank without needing corridorStillOpen's
+// shrink-ladder to bail it out on every seed. Both numbers are playtest-tunable, not balance-locked.
+export const CORRIDOR_HALF_WIDTH_PX = 270;
 
 // LENGTH — the main-axis span from the spawn end to the far end, in pixels. Long and independent
 // of width: at GAMEPLAY_ZOOM=1.3 the camera shows ~985px of world across, so the corridor reveals

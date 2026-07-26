@@ -1182,6 +1182,10 @@ export const EnemiesMixin = {
       const noiseDist = noiseLive ? Math.hypot(this._lastFireX - e.x, this._lastFireY - e.y) : null;
       if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange, hasLos: los, noiseDist })) {
         e.awareness = AWARE;
+        // #516: a tower-patrol MECH (late patrol tiers can include one, bases.js
+        // `_spawnTowerPatrols`) carries `alertsBaseId` — spotting the player independently
+        // escalates its linked base, same as the alert tower's own countdown completing.
+        if (e.alertsBaseId != null) this._wakeBase(e.alertsBaseId);
       }
     }
     const aware = e.awareness === AWARE;
@@ -1581,6 +1585,13 @@ export const EnemiesMixin = {
       const noiseDist = noiseLive ? Math.hypot(this._lastFireX - e.x, this._lastFireY - e.y) : null;
       if (shouldBecomeAware(e.awareness, { dist, detectRange: e.detectRange, noiseDist })) {
         e.awareness = AWARE;
+        // #516: a tower patrol (bases.js `_spawnTowerPatrols`) carries `alertsBaseId` — spotting
+        // the player independently escalates its linked base to active/alert (the same `_wakeBase`
+        // an alert tower's countdown completing already triggers), regardless of whether the
+        // player is engaging that base directly. `e.baseId` is deliberately left unset on patrols
+        // (see `_spawnTowerPatrols`'s comment) so this does not fold a patrol into the base's own
+        // win-condition kill count.
+        if (e.alertsBaseId != null) this._wakeBase(e.alertsBaseId);
       }
     }
     // #285: same `reacting` stagger gate as the mech path (_updateEnemy) — see `_isReacting`'s

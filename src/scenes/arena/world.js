@@ -20,7 +20,7 @@ import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, MAX_WORLD_RADIUS, spineSpawnHex,
 } from '../../data/worldgen.js';
-import { capturedBaseIdsFor, applyCapturedBases } from '../../data/baseCapture.js';
+import { capturedBaseIdsFor, applyCapturedBases, filterCapturedAlertTowers } from '../../data/baseCapture.js';
 import { regionalBaseFor } from '../../data/regionalBases.js';
 import { OUTPOSTS_KEY, REGIONAL_BASES_KEY } from '../../data/events.js';
 import { Audio } from '../../audio/index.js';
@@ -177,9 +177,9 @@ export const WorldMixin = {
     // bases.js). #275: alert towers are now placed one per gap between bases
     // (`placeGapTowers`, data/worldgen.js) — same `generateTerrain` result field,
     // `this.alertTowerHexes`, feeds `_initAlertTowers`/`_updateAlertTowers`/`_spawnTowerPatrols`
-    // (same file) completely unchanged; only WHERE the positions in that list came from moved.
+    // (same file) — #516 filters this list against captured bases a few lines below (once
+    // `capturedBaseIds` exists), so `this.alertTowerHexes` isn't set here; see that block.
     this.bases = bases;
-    this.alertTowerHexes = alertTowers;
     // #518: wire any already-claimed bases (data/outposts.js) back into this freshly generated
     // `bases` list — matched by INDEX (`base.id`, e.g. "base2"), never by coord, because terrain
     // regenerates from a brand-new random seed every deploy (see data/baseCapture.js's header for
@@ -198,6 +198,12 @@ export const WorldMixin = {
       terrain.set(k, 'playerStructure');
       buildingHp.delete(k);
     }
+    // #516: a captured base's own alert tower doesn't belong to it anymore either — see
+    // `filterCapturedAlertTowers`'s own comment (data/baseCapture.js) for the full reasoning. The
+    // physical tower hex is left standing (still `alertTower` terrain, still impassable/blocks
+    // LOS) — this only stops it FUNCTIONING as a hostile sensor, the same "structure remains,
+    // role goes neutral" treatment #518 already gives a captured base's wall turrets just below.
+    this.alertTowerHexes = filterCapturedAlertTowers(alertTowers, capturedBaseIds);
     // #288 (rebuilt as edge geometry): each base's approach wall, as destructible spans living on
     // the BOUNDARIES between hexes rather than on hexes of their own — so the barrier eats none of
     // the play space it crosses. This is a completely separate layer from `this.terrain`: nothing
