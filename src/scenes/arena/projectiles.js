@@ -847,8 +847,8 @@ export const ProjectilesMixin = {
     this.dyingBeams = this.dyingBeams.filter((b) => b.fadeAge < b.fadeTtl);
 
     this.beamFx.clear();
-    for (const b of this.beams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age);
-    for (const b of this.dyingBeams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl);
+    for (const b of this.beams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age, 1, b.coneDeg || 0);
+    for (const b of this.dyingBeams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl, b.coneDeg || 0);
   },
 
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a

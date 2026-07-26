@@ -936,3 +936,54 @@ export function chargeConeAngleDeg(frac, maxDeg = CHARGE_CONE_MAX_DEG) {
   const f = Math.max(0, Math.min(1, frac));
   return maxDeg * (1 - f * f);
 }
+
+// ── Charge-lance telegraph rework #2 (#493 playtest follow-up, 2026-07-26) ──────────────────
+// Jackson, on the first cone-telegraph pass: "better, but let's make the arc of the cone
+// rounded instead of flat, let's make the opacity of the charging less opaque further away
+// from the player, so it fades to transparent at the far edge; also let's remove the strong
+// middle line during charging... that should really just be there if they hold charge all the
+// way to middle convergence; and then the actual weapon burst visual should depend on when it
+// was released what the shape of the arc was." Four pure pieces below feed both the telegraph
+// (firing.js `_drawChargeFor`, via the shared `drawChargeWedge` art primitive) and the actual
+// fired burst (art/projectileArt.js `drawBeam`'s `coneDeg` parameter), so the shot that leaves
+// the gun visibly carries whatever cone width was showing the instant it was released.
+
+// The ROUNDED far edge of the cone/wedge: `segments + 1` points swept from `angle - halfAngle`
+// to `angle + halfAngle` at a fixed `radius` from the apex (cx, cy) — i.e. a circular arc, not
+// the straight chord the original wedge drew between its two corner points. Pure + testable:
+// every returned point sits exactly `radius` from the apex, the first/last points land exactly
+// on the half-angle bounds, and the arc bulges outward from the chord at its midpoint (the
+// "rounded" part). `drawChargeWedge` walks this to build both the curved boundary stroke and
+// each faded fill band's inner/outer edges.
+export function chargeArcPoints(cx, cy, angle, halfAngleRad, radius, segments = 12) {
+  const n = Math.max(1, Math.round(segments));
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const a = angle - halfAngleRad + (2 * halfAngleRad) * (i / n);
+    pts.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius });
+  }
+  return pts;
+}
+
+// Distance-based opacity fade for the charge cone/burst: full intensity at the muzzle
+// (t = 0), fading LINEARLY to fully transparent at the far edge (t = 1) — "less opaque
+// further away from the player... fades to transparent at the far edge." `t` is a 0..1
+// fraction of the way from the apex to the cone's reach; out-of-range input clamps.
+export function chargeDistanceFade(t) {
+  const u = Math.max(0, Math.min(1, t));
+  return 1 - u;
+}
+
+// The centre convergence line (the "strong middle line") should NOT read during the wide-
+// cone early/mid charge — only once charge is at/near full ("middle convergence"). Returns
+// 0 below `threshold` (fully hidden) easing linearly up to 1 at frac = 1, so it fades IN
+// over the last stretch of the hold rather than snapping into view. `frac` is the same
+// elapsed/maxTime fraction `chargeConeAngleDeg` takes (0 at the start of a hold, 1 at full
+// charge).
+export const CHARGE_CORE_VISIBLE_START = 0.85;
+
+export function chargeCoreAlpha(frac, threshold = CHARGE_CORE_VISIBLE_START) {
+  const f = Math.max(0, Math.min(1, frac));
+  if (f <= threshold || threshold >= 1) return f > threshold ? 1 : 0;
+  return (f - threshold) / (1 - threshold);
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, scatterMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC, chargeConeAngleDeg, CHARGE_CONE_MAX_DEG } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, scatterMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC, chargeConeAngleDeg, CHARGE_CONE_MAX_DEG, chargeArcPoints, chargeDistanceFade, chargeCoreAlpha, CHARGE_CORE_VISIBLE_START } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -1606,5 +1606,94 @@ describe('chargeConeAngleDeg (#493 playtest follow-up — "start at maybe 90 deg
     expect(chargeConeAngleDeg(0, 60)).toBe(60);
     expect(chargeConeAngleDeg(1, 60)).toBe(0);
     expect(chargeConeAngleDeg(0.5, 60)).toBeCloseTo(45, 5);   // 60 * (1-0.5^2) = 45°
+  });
+});
+
+describe('chargeArcPoints (#493 playtest follow-up 2 — the rounded far edge)', () => {
+  it('every returned point sits exactly `radius` away from the apex', () => {
+    const pts = chargeArcPoints(100, 200, 0, Math.PI / 4, 50, 8);
+    for (const p of pts) {
+      expect(Math.hypot(p.x - 100, p.y - 200)).toBeCloseTo(50, 6);
+    }
+  });
+
+  it('the first and last points land exactly on the ±half-angle bounds', () => {
+    const angle = Math.PI / 3, half = Math.PI / 6, radius = 40;
+    const pts = chargeArcPoints(0, 0, angle, half, radius, 10);
+    expect(pts[0].x).toBeCloseTo(Math.cos(angle - half) * radius, 6);
+    expect(pts[0].y).toBeCloseTo(Math.sin(angle - half) * radius, 6);
+    const last = pts[pts.length - 1];
+    expect(last.x).toBeCloseTo(Math.cos(angle + half) * radius, 6);
+    expect(last.y).toBeCloseTo(Math.sin(angle + half) * radius, 6);
+  });
+
+  it('bulges outward from the straight chord at its midpoint — this is the "rounded" part', () => {
+    // Facing straight along +x (angle 0) with a wide half-angle: the chord between the two
+    // corner points is well short of `radius` at its centre, but the arc's own midpoint sample
+    // sits exactly on the aim line at the full radius — a strictly wider silhouette than a
+    // flat chord would draw, i.e. genuinely rounded rather than a triangle wedge.
+    const radius = 100, half = Math.PI / 3;   // 60° half-angle either side
+    const pts = chargeArcPoints(0, 0, 0, half, radius, 20);
+    const mid = pts[Math.floor(pts.length / 2)];
+    const chordMidX = (pts[0].x + pts[pts.length - 1].x) / 2;
+    const chordMidY = (pts[0].y + pts[pts.length - 1].y) / 2;
+    expect(mid.x).toBeCloseTo(radius, 6);         // arc midpoint: straight out along the aim line
+    expect(mid.y).toBeCloseTo(0, 6);
+    expect(mid.x).toBeGreaterThan(chordMidX);     // bulges past where a flat chord would sit
+  });
+
+  it('returns segments+1 points, and degenerates gracefully at radius 0 / zero half-angle', () => {
+    expect(chargeArcPoints(0, 0, 0, Math.PI / 4, 10, 6)).toHaveLength(7);
+    const zeroRadius = chargeArcPoints(5, 5, 0, Math.PI / 4, 0, 4);
+    for (const p of zeroRadius) { expect(p.x).toBeCloseTo(5, 6); expect(p.y).toBeCloseTo(5, 6); }
+    const zeroHalf = chargeArcPoints(0, 0, 0, 0, 10, 4);
+    for (const p of zeroHalf) { expect(p.x).toBeCloseTo(10, 6); expect(p.y).toBeCloseTo(0, 6); }
+  });
+});
+
+describe('chargeDistanceFade (#493 playtest follow-up 2 — "opacity... fades to transparent at ' +
+  'the far edge")', () => {
+  it('is fully opaque at the muzzle (t=0) and fully transparent at the far edge (t=1)', () => {
+    expect(chargeDistanceFade(0)).toBe(1);
+    expect(chargeDistanceFade(1)).toBe(0);
+  });
+
+  it('fades monotonically with distance', () => {
+    expect(chargeDistanceFade(0.25)).toBeGreaterThan(chargeDistanceFade(0.5));
+    expect(chargeDistanceFade(0.5)).toBeGreaterThan(chargeDistanceFade(0.75));
+  });
+
+  it('clamps out-of-range input instead of going negative or above 1', () => {
+    expect(chargeDistanceFade(-1)).toBe(1);
+    expect(chargeDistanceFade(2)).toBe(0);
+  });
+});
+
+describe('chargeCoreAlpha (#493 playtest follow-up 2 — the centre convergence line only near ' +
+  'full charge)', () => {
+  it('is fully hidden through the wide-cone early/mid charge', () => {
+    expect(chargeCoreAlpha(0)).toBe(0);
+    expect(chargeCoreAlpha(0.5)).toBe(0);
+    expect(chargeCoreAlpha(CHARGE_CORE_VISIBLE_START)).toBe(0);   // right at the threshold: still hidden
+  });
+
+  it('fades IN smoothly from the threshold up to full charge, never snapping into view', () => {
+    const justAbove = chargeCoreAlpha(CHARGE_CORE_VISIBLE_START + 0.001);
+    expect(justAbove).toBeGreaterThan(0);
+    expect(justAbove).toBeLessThan(0.02);   // a small step in frac is a small step in alpha
+    expect(chargeCoreAlpha(1)).toBe(1);
+    const mid = (CHARGE_CORE_VISIBLE_START + 1) / 2;
+    expect(chargeCoreAlpha(mid)).toBeCloseTo(0.5, 5);
+  });
+
+  it('clamps out-of-range fractions', () => {
+    expect(chargeCoreAlpha(-1)).toBe(0);
+    expect(chargeCoreAlpha(2)).toBe(1);
+  });
+
+  it('respects a custom threshold', () => {
+    expect(chargeCoreAlpha(0.4, 0.5)).toBe(0);
+    expect(chargeCoreAlpha(0.75, 0.5)).toBeCloseTo(0.5, 5);
+    expect(chargeCoreAlpha(1, 0.5)).toBe(1);
   });
 });

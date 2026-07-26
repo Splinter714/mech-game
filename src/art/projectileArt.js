@@ -12,7 +12,7 @@ import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
 import { CORE_ITEMS } from '../data/coreItems.js';
-import { projectileKind } from '../data/delivery.js';
+import { projectileKind, chargeArcPoints, chargeDistanceFade } from '../data/delivery.js';
 import { drawProjectileBody } from './projectiles/index.js';
 import { drawAbilityIcon } from './abilityIcons.js';
 
@@ -28,10 +28,70 @@ export { drawProjectileBody };
 // either way. Flip to false to disable if they ever read as too noisy again.
 const SPARKS_ENABLED = true;
 
+// #493 follow-up: the charge-lance telegraph's cone/wedge — a rounded far edge (the circular
+// arc from `chargeArcPoints`, not the original straight chord between the two corner points)
+// filled in a handful of concentric bands whose alpha fades with distance from the apex
+// (`chargeDistanceFade`), so the whole shape reads as "opaque near the mech, transparent at
+// the tip" instead of a flat wash. Shared by the charge-up telegraph (firing.js
+// `_drawChargeFor`) AND the fired burst below (`drawBeam`'s `coneDeg`), so a charge-lance shot
+// releases looking like whatever cone was on screen the instant it went off — same geometry,
+// same fade, same visual language, just one drawn every frame during the hold and the other
+// drawn once at the moment of release.
+export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1) {
+  const halfAngle = (coneDeg * Math.PI) / 180 / 2;
+  if (halfAngle <= 0.002 || reach <= 0 || alpha <= 0.002) return;
+  const BANDS = 6, SEGMENTS = 12;
+
+  // Filled bands: each an annular wedge slice (rounded inner + outer edges), progressively
+  // fainter further from the apex.
+  for (let i = 0; i < BANDS; i++) {
+    const r0 = reach * (i / BANDS), r1 = reach * ((i + 1) / BANDS);
+    const bandAlpha = alpha * chargeDistanceFade((i + 0.5) / BANDS) * 0.6;
+    if (bandAlpha <= 0.004) continue;
+    const outer = chargeArcPoints(x, y, angle, halfAngle, r1, SEGMENTS);
+    const inner = chargeArcPoints(x, y, angle, halfAngle, r0, SEGMENTS).reverse();
+    g.fillStyle(color, bandAlpha);
+    g.beginPath();
+    g.moveTo(outer[0].x, outer[0].y);
+    for (let k = 1; k < outer.length; k++) g.lineTo(outer[k].x, outer[k].y);
+    for (const p of inner) g.lineTo(p.x, p.y);
+    g.closePath();
+    g.fillPath();
+  }
+
+  // Straight cone sides (apex → corner), faded the same way band-by-band so they thin toward
+  // the tip instead of ending in one hard, fully-opaque line.
+  for (let i = 0; i < BANDS; i++) {
+    const r0 = reach * (i / BANDS), r1 = reach * ((i + 1) / BANDS);
+    const segAlpha = Math.min(1, alpha * chargeDistanceFade((i + 0.5) / BANDS) * 1.3);
+    if (segAlpha <= 0.004) continue;
+    g.lineStyle(1.5, color, segAlpha);
+    g.lineBetween(x + Math.cos(angle - halfAngle) * r0, y + Math.sin(angle - halfAngle) * r0,
+                  x + Math.cos(angle - halfAngle) * r1, y + Math.sin(angle - halfAngle) * r1);
+    g.lineBetween(x + Math.cos(angle + halfAngle) * r0, y + Math.sin(angle + halfAngle) * r0,
+                  x + Math.cos(angle + halfAngle) * r1, y + Math.sin(angle + halfAngle) * r1);
+  }
+
+  // The rounded far edge itself — the curved silhouette boundary, drawn as one continuous
+  // stroke so the "arc instead of a flat chord" reads clearly even where the fill has nearly
+  // faded away.
+  const edge = chargeArcPoints(x, y, angle, halfAngle, reach, SEGMENTS);
+  g.lineStyle(1.5, color, alpha * 0.5);
+  g.beginPath();
+  g.moveTo(edge[0].x, edge[0].y);
+  for (let k = 1; k < edge.length; k++) g.lineTo(edge[k].x, edge[k].y);
+  g.strokePath();
+}
+
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.
 // `phase` is a ms timestamp driving the warble (callers pass time or beam age).
-// `heavy` thickens everything for the rail lance.
-export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1) {
+// `heavy` thickens everything for the rail lance. `coneDeg` (#493 follow-up, default 0 — every
+// non-charge weapon is unaffected): the charge-lance's release-time cone width, in degrees —
+// see `drawChargeWedge` above. 0 draws exactly the beam this always drew; > 0 bursts a faded,
+// rounded wedge behind the beam first, sized to the beam's own length, so a shot released
+// before full charge visibly reads as a wide, sloppy burst rather than the clean tight beam a
+// full-charge release still produces (chargeConeAngleDeg(1) === 0).
+export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1, coneDeg = 0) {
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1) return;
@@ -43,6 +103,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const SEGS = heavy ? 48 : 64;
 
   if (sparkAlpha >= 1) {
+  if (coneDeg > 0.5) drawChargeWedge(g, x0, y0, Math.atan2(ny, nx), coneDeg, len, color, 0.85);
   // #421 legibility: a thin dark under-line the length of the beam, drawn BEFORE the glow/core,
   // so a pale energy/support beam (cyan/green) holds an edge against light ground (snow, sand)
   // instead of the low-alpha glow washing into it. Slightly narrower than the core so it reads

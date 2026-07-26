@@ -4,6 +4,7 @@
 // projectile/hitscan spawn pipeline (which needs a live Phaser scene).
 import { describe, it, expect, vi } from 'vitest';
 import { FiringMixin } from './firing.js';
+import { chargeConeAngleDeg } from '../../data/delivery.js';
 
 const CHARGEABLE = { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5 };
 
@@ -43,7 +44,12 @@ describe('#493 _handleChargeFire — accumulates charge, fires on release', () =
     scene._handleChargeFire(w, { fire: { rightArm: true } }, 400, p, true);   // exactly minTime
     scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);
     expect(scene.fireWeapon).toHaveBeenCalledTimes(1);
-    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.minDamageMult, chargeSpread: 0 });
+    // #493 follow-up: chargeConeDeg is the cone width AT RELEASE (elapsed/maxTime = 0.4/1.6 = 0.25).
+    const expectedConeDeg = chargeConeAngleDeg(0.4 / CHARGEABLE.maxTime);
+    const call = scene.fireWeapon.mock.calls[0][2];
+    expect(call.chargeMult).toBe(CHARGEABLE.minDamageMult);
+    expect(call.chargeSpread).toBe(0);
+    expect(call.chargeConeDeg).toBeCloseTo(expectedConeDeg, 5);
   });
 
   it('holding past maxTime does NOT auto-fire — it just holds at the cap until released', () => {
@@ -54,7 +60,11 @@ describe('#493 _handleChargeFire — accumulates charge, fires on release', () =
     expect(p.chargeState.rightArm.charging).toBe(true);
     scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);   // the actual release
     expect(scene.fireWeapon).toHaveBeenCalledTimes(1);
-    expect(scene.fireWeapon.mock.calls[0][2]).toEqual({ chargeMult: CHARGEABLE.maxDamageMult, chargeSpread: 0 });
+    // A full-charge release (elapsed === maxTime) narrows the cone all the way to 0° — a clean beam.
+    const call = scene.fireWeapon.mock.calls[0][2];
+    expect(call.chargeMult).toBe(CHARGEABLE.maxDamageMult);
+    expect(call.chargeSpread).toBe(0);
+    expect(call.chargeConeDeg).toBe(0);
   });
 
   it('a release halfway between minTime and maxTime scales linearly', () => {
@@ -64,6 +74,22 @@ describe('#493 _handleChargeFire — accumulates charge, fires on release', () =
     scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);
     const expectedMult = (CHARGEABLE.minDamageMult + CHARGEABLE.maxDamageMult) / 2;
     expect(scene.fireWeapon.mock.calls[0][2].chargeMult).toBeCloseTo(expectedMult, 5);
+  });
+
+  it('a shot released before full charge bursts as the cone it actually was — earlier release = wider burst cone', () => {
+    const scene = makeScene(), w = makeWeapon(), p = player();
+    scene._handleChargeFire(w, { fire: { rightArm: true } }, 600, p, true);    // 0.6s, well past minTime
+    scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);
+    const early = scene.fireWeapon.mock.calls[0][2].chargeConeDeg;
+
+    scene.fireWeapon.mockClear();
+    scene._handleChargeFire(w, { fire: { rightArm: true } }, 1400, p, true);   // 1.4s, close to maxTime
+    scene._handleChargeFire(w, { fire: { rightArm: false } }, 16, p, true);
+    const late = scene.fireWeapon.mock.calls[0][2].chargeConeDeg;
+
+    expect(early).toBeGreaterThan(late);
+    expect(early).toBeGreaterThan(0);
+    expect(late).toBeGreaterThan(0);
   });
 
   it('running out of ammo mid-charge (fireReady goes false) resolves the charge same as a release', () => {
