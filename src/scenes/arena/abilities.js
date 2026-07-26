@@ -167,6 +167,9 @@ export function updateAbilities(scene, intent, delta, player) {
       // #490: fires the instant it activates — no movement, no "arrival" to wait for.
       if (next.active && !wasActive) {
         burstAoeAt(scene, player, player.x, player.y, def.radius, def.damage);
+        // Was silent-but-for-damage — `burstAoeAt` itself has no visual, so with no enemies in
+        // range the whole ability read as doing nothing. Reuses Jump Blast's shockwave FX.
+        scene._aoeBlastFx?.(player.x, player.y, def.radius, 0x5ec8e0);
         Audio.ui('sprintOn');
       }
     } else if (def.effect === 'jumpBlast') {
