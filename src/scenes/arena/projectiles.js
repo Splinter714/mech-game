@@ -11,8 +11,17 @@ import { getCoreItem } from '../../data/coreItems.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
+import { LOS_REFRESH_MS } from './world.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
+
+// #543: a 'field' hazard's (Gravity Well's) visual ring is sampled at this many evenly-spaced
+// angles around its centre to find which arcs have a clear line to hard cover — enough to read
+// as a smooth cut rather than a jagged polygon at the field's visual radius (~65-210px), while
+// staying cheap (each sample is one short `_wallDistanceLos` ray out to `vr`, not the full pull
+// radius). Same idea as a fog-of-war vision wedge, just sampled all the way around instead of
+// within a forward cone.
+const FIELD_VIS_SAMPLES = 24;
 
 // #72: is a round an incendiary? Flame damage is multiplied against soft cover (terrain.js
 // FLAME_COVER_MULT) so the flamethrower ('flame' particles) and napalm ('fire' canisters +
@@ -725,6 +734,11 @@ export const ProjectilesMixin = {
           // centre. Exclude the hazard's own caster from the pull, same as the stationary-unit
           // exclusion just above.
           if (hz.caster && e === hz.caster) continue;
+          // #543 (Jackson: "the gravity well visual and effect [should] be blocked by hard
+          // cover in that section of the arc"): a wall/destructible hex between the field's own
+          // centre and this enemy blocks the pull exactly like it blocks sight — same raycast
+          // (`_wallDistanceLos`) every other cover check in this codebase already shares.
+          if (this._fieldCoverBlocksPull(hz, e.x, e.y)) continue;
           const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt);
           e.x += dx; e.y += dy;
         }
@@ -732,6 +746,46 @@ export const ProjectilesMixin = {
       this._drawHazard(hz);
     }
     if (this.hazards.some((hz) => hz.dead)) this.hazards = this.hazards.filter((hz) => !hz.dead);
+  },
+
+  // #543 (Jackson: "the gravity well visual and effect [should] be blocked by hard cover in
+  // that section of the arc"): does a wall/destructible hex sit between the field's own centre
+  // and the point being pulled? Same raycast every other cover check in this file already uses
+  // (`_wallDistanceLos`, world.js) — `!== Infinity` means something blocked it before reaching
+  // the target. Optional-chained the same way `_computePlayerSight` guards it: a hand-rolled
+  // scene double without WorldMixin (most of this file's tests) just never blocks.
+  _fieldCoverBlocksPull(hz, tx, ty) {
+    if (!this._wallDistanceLos) return false;
+    const dx = tx - hz.x, dy = ty - hz.y;
+    const d = Math.hypot(dx, dy);
+    if (d <= 1) return false;
+    return this._wallDistanceLos(hz.x, hz.y, Math.atan2(dy, dx), d, tx, ty) !== Infinity;
+  },
+
+  // #543: which of the field's `FIELD_VIS_SAMPLES` angular slices — sampled at the drawn
+  // `vr` (visual) radius, all the way around the circle like a fog-of-war vision wedge but for
+  // the full 360° — have a clear line back to the hazard's own centre. Cached on the hazard
+  // object and recomputed on the same staggered LOS_REFRESH_MS cadence (world.js) every other
+  // per-frame raycast cache in this file uses, with a random first-touch phase (same trick as
+  // `_playerSightClear`) so a batch of fields planted on the same frame doesn't all recompute
+  // together. Dies with the hazard; no separate bookkeeping needed.
+  _fieldVisMask(hz, vr) {
+    const now = this.time.now;
+    if (hz._visMask === undefined || now >= hz._visNextAt) {
+      hz._visNextAt = now + (hz._visMask === undefined ? Math.random() * LOS_REFRESH_MS : LOS_REFRESH_MS);
+      hz._visMask = this._computeFieldVisMask(hz, vr);
+    }
+    return hz._visMask;
+  },
+
+  _computeFieldVisMask(hz, vr) {
+    const mask = new Array(FIELD_VIS_SAMPLES);
+    for (let i = 0; i < FIELD_VIS_SAMPLES; i++) {
+      const a = (i / FIELD_VIS_SAMPLES) * Math.PI * 2;
+      const tx = hz.x + Math.cos(a) * vr, ty = hz.y + Math.sin(a) * vr;
+      mask[i] = !this._wallDistanceLos || this._wallDistanceLos(hz.x, hz.y, a, vr, tx, ty) === Infinity;
+    }
+    return mask;
   },
 
   // Live visual for one planted hazard, drawn into `groundFx` (already cleared/redrawn this frame
@@ -763,10 +817,33 @@ export const ProjectilesMixin = {
       // actual pull reach, so the orb reads as the landing zone the pull drags things INTO rather
       // than the whole area it reaches out to grab from.
       const vr = hz.visualRadius ?? hz.radius;
-      g.fillStyle(0x2a0845, 0.16).fillCircle(hz.x, hz.y, vr);
-      g.lineStyle(1.5, 0x8a2be2, 0.45).strokeCircle(hz.x, hz.y, vr);
+      // #543: draw the fill+ring one angular slice at a time instead of one full circle, and
+      // simply skip any slice whose sampled ray back to the hazard's own centre is blocked —
+      // the ring visibly cuts off on the far side of cover instead of sitting untouched next to
+      // a wall while nothing on that side is actually reachable by the pull.
+      const mask = this._fieldVisMask(hz, vr);
+      const step = (Math.PI * 2) / FIELD_VIS_SAMPLES;
+      for (let i = 0; i < FIELD_VIS_SAMPLES; i++) {
+        if (!mask[i]) continue;
+        const a0 = i * step, a1 = a0 + step;
+        g.beginPath();
+        g.arc(hz.x, hz.y, vr, a0, a1, false);
+        g.lineTo(hz.x, hz.y);
+        g.closePath();
+        g.fillStyle(0x2a0845, 0.16);
+        g.fillPath();
+        g.beginPath();
+        g.arc(hz.x, hz.y, vr, a0, a1, false);
+        g.lineStyle(1.5, 0x8a2be2, 0.45);
+        g.strokePath();
+      }
       for (let i = 0; i < 3; i++) {
         const a = t * 2.4 + (i * Math.PI * 2) / 3;
+        // #543: an orbiting dot currently swinging through a blocked slice doesn't draw this
+        // frame either — it reads as ducking behind the cover rather than floating in front of it.
+        const wrapped = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const sample = Math.floor(wrapped / step) % FIELD_VIS_SAMPLES;
+        if (!mask[sample]) continue;
         const r = vr * 0.55;
         g.fillStyle(0x9a4bf0, 0.85).fillCircle(hz.x + Math.cos(a) * r, hz.y + Math.sin(a) * r * 0.7, 5);
       }
