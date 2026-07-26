@@ -23,6 +23,7 @@ import { gen, scaledGraphics, drawDilated, ART_SCALE } from './_frames.js';
 import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
+import { luminanceGrey } from '../data/desaturate.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, plateOutline, plate, glowBar,
   exposedInternals, statusSpotBar,
@@ -513,4 +514,53 @@ export function buildMechTextures(scene, key, mech, opts) {
 // redrawn identically — see buildMechTextures.
 export function reskinMech(scene, key, mech, opts) {
   buildMechTextures(scene, key, mech, { ...opts, skipHull: true });
+}
+
+// #500 (playtest follow-up): bake a GENUINE per-pixel greyscale variant of an already-baked part
+// texture, under `${key}_grey`, and return that key. This exists because Cloak's original visual
+// was a Phaser sprite tint (`setTint`) — a per-channel MULTIPLY, which can dim or colour-cast a
+// sprite but can never desaturate one (a saturated red panel tinted by any grey still comes out
+// saturated red, just darker — see data/desaturate.js's header for the full explanation). Getting
+// an actual "removed all colour" read requires collapsing each pixel's R/G/B to the SAME value,
+// which needs real pixel access — not available through the tint/pipeline API in a way that also
+// works under the Canvas renderer (this repo's smoke harness can force `?canvas`, where WebGL-only
+// postFX pipelines don't run at all — see the old CLOAK_TINT comment this replaces). Baking a
+// second texture via the Canvas 2D `getImageData`/`putImageData` pair sidesteps that: it's a plain
+// canvas operation, independent of which renderer is driving the live scene, so it works
+// everywhere the game does.
+//
+// Idempotent and safe to call repeatedly on the same key (redraws the existing `_grey` canvas
+// texture in place, like `gen()` does for a reskin) — callers that need a fresh bake after a
+// reskin (a part's damage state changed) just call this again; callers that only need it ONCE per
+// texture (the walk-cycle hull frames, which are damage-independent — see buildMechTextures'
+// `skipHull` note) can cache the returned key themselves.
+//
+// Guarded so it's a harmless no-op key handout against the hand-rolled scene doubles the ability
+// unit tests use (no `.textures`, or a `.textures` with no real canvas backing) — those tests
+// assert the ORCHESTRATION (which key a sprite gets pointed at), not the pixel math itself, which
+// has its own pure unit test (data/desaturate.test.js) and is otherwise verified live.
+export function desaturateTexture(scene, key) {
+  const dstKey = `${key}_grey`;
+  const srcTex = scene?.textures?.get?.(key);
+  const src = srcTex?.getSourceImage?.();
+  if (!src || !src.width || !src.height) return dstKey;
+  const w = src.width, h = src.height;
+  const canvasTex = scene.textures.exists(dstKey)
+    ? scene.textures.get(dstKey)
+    : scene.textures.createCanvas(dstKey, w, h);
+  if (!canvasTex?.draw) return dstKey;
+  // `CanvasTexture`'s own draw()/clear() (Phaser's dedicated API for exactly this — read/write a
+  // baked texture's raw pixels) rather than reaching past it for the underlying 2D context: clear
+  // wipes any previous bake, draw stamps the CURRENT source pixels and refreshes `canvasTex.data`
+  // (a live Uint8ClampedArray view) for us to mutate directly.
+  canvasTex.clear(0, 0, w, h, false);
+  canvasTex.draw(0, 0, src);
+  const d = canvasTex.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const grey = luminanceGrey(d[i], d[i + 1], d[i + 2]);   // alpha (d[i + 3]) passes through untouched
+    d[i] = grey; d[i + 1] = grey; d[i + 2] = grey;
+  }
+  canvasTex.context.putImageData(canvasTex.imageData, 0, 0);   // commit the mutated pixels
+  canvasTex.refresh();                                        // push to the GPU texture under WebGL
+  return dstKey;
 }

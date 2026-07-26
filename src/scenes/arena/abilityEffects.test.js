@@ -5,13 +5,16 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../audio/index.js', () => ({ Audio: { ui: vi.fn() } }));
 
-import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_TINT, CLOAK_ALPHA } from './abilities.js';
+import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_ALPHA } from './abilities.js';
 import { ABILITIES } from '../../data/abilities.js';
 
 // Mirrors abilities.js's own local `MECH_PART_KEYS` (kept private there, and deliberately not
 // imported from shieldOutline.js — see that file's comment on why: it pulls in the real
 // `phaser` package, which this test suite runs without).
 const MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
+// setCloakVisual swaps every part EXCEPT the hull (locomotion.js `_stepGait` owns the hull's
+// texture every gait tick, cloaked or not — see abilities.js's CLOAK_SWAPPABLE_PARTS comment).
+const CLOAK_SWAPPABLE_PARTS = MECH_PART_KEYS.filter((p) => p !== 'hull');
 
 function fakeEnemy(x, y, hp = 10) {
   return {
@@ -23,15 +26,24 @@ function fakeEnemy(x, y, hp = 10) {
   };
 }
 
-function fakePartSprite() {
-  return { setTint: vi.fn(), clearTint: vi.fn() };
+// `desaturateTexture` (art/mechArt.js) needs a real `scene.textures`/canvas to actually bake
+// pixels — against this suite's Phaser-free fake scene (no `.textures` at all) it degrades to its
+// documented safe fallback: handing back the deterministic `${key}_grey` key with no side effect.
+// That's exactly what these tests want to exercise: that `setCloakVisual` points each part at the
+// RIGHT key, not the pixel math itself (which has its own pure test, data/desaturate.test.js).
+function fakePartSprite(key) {
+  const sprite = {
+    texture: { key },
+    setTexture: vi.fn((k) => { sprite.texture = { key: k }; }),
+  };
+  return sprite;
 }
 
 // A minimal stand-in for a `_makeMechView` container: `setAlpha` plus the six named part
 // sprites `setCloakVisual` (abilities.js) reaches into.
 function fakeMechView() {
   const view = { setAlpha: vi.fn() };
-  for (const part of MECH_PART_KEYS) view[part] = fakePartSprite();
+  for (const part of MECH_PART_KEYS) view[part] = fakePartSprite(`mechTex_${part}`);
   return view;
 }
 
@@ -127,8 +139,8 @@ describe('#498 jumpBlast — movement burst that blasts on arrival', () => {
   });
 });
 
-describe('#500 cloak — greyscale/phantom tint + translucency on the mech view', () => {
-  it('tints every part sprite and sets the container translucent on activation', () => {
+describe('#500 cloak (follow-up) — GENUINE desaturation (not a tint) + translucency, ring excluded', () => {
+  it('swaps every non-hull part sprite to its own desaturated _grey texture and sets the container translucent on activation', () => {
     const scene = makeScene([]);
     const player = makePlayer({ abilityX: 'cloak' });
     player.view = fakeMechView();
@@ -136,13 +148,17 @@ describe('#500 cloak — greyscale/phantom tint + translucency on the mech view'
     updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
 
     expect(player.view.setAlpha).toHaveBeenCalledWith(CLOAK_ALPHA);
-    for (const part of MECH_PART_KEYS) {
-      expect(player.view[part].setTint).toHaveBeenCalledWith(CLOAK_TINT);
-      expect(player.view[part].clearTint).not.toHaveBeenCalled();
+    for (const part of CLOAK_SWAPPABLE_PARTS) {
+      expect(player.view[part].setTexture).toHaveBeenCalledWith(`mechTex_${part}_grey`);
+      expect(player.view[part].texture.key).toBe(`mechTex_${part}_grey`);
     }
+    // The hull's texture is deliberately left untouched here — see CLOAK_SWAPPABLE_PARTS'
+    // comment: locomotion.js's `_stepGait` is the sole owner of which hull frame is showing,
+    // cloaked or not, because it re-picks it every gait tick regardless of ability state.
+    expect(player.view.hull.setTexture).not.toHaveBeenCalled();
   });
 
-  it('restores full colour and opacity the instant the burst ends', () => {
+  it('restores each part to its EXACT pre-cloak texture key and full opacity the instant the burst ends', () => {
     const scene = makeScene([]);
     const player = makePlayer({ abilityX: 'cloak' });
     player.view = fakeMechView();
@@ -151,9 +167,38 @@ describe('#500 cloak — greyscale/phantom tint + translucency on the mech view'
     updateAbilities(scene, { ability: noAbility }, ABILITIES.cloak.duration * 1000, player);
 
     expect(player.view.setAlpha).toHaveBeenLastCalledWith(1);
-    for (const part of MECH_PART_KEYS) {
-      expect(player.view[part].clearTint).toHaveBeenCalledTimes(1);
+    for (const part of CLOAK_SWAPPABLE_PARTS) {
+      expect(player.view[part].texture.key).toBe(`mechTex_${part}`);
     }
+  });
+
+  it('rebakes from whatever texture a part is CURRENTLY showing on each fresh activation (so a damage reskin between cloaks is picked up, not a stale first-press snapshot)', () => {
+    const scene = makeScene([]);
+    const player = makePlayer({ abilityX: 'cloak' });
+    player.view = fakeMechView();
+
+    updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
+    // Advance past BOTH the burst duration and the full cooldown so a second press is honoured.
+    updateAbilities(scene, { ability: noAbility }, ABILITIES.cloak.cooldown * 1000, player);
+    // Stand in for a reskin (damage) having changed what this part is showing since the last cloak.
+    player.view.turret.texture.key = 'mechTex_turret_damaged';
+
+    updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
+
+    expect(player.view.turret.setTexture).toHaveBeenLastCalledWith('mechTex_turret_damaged_grey');
+  });
+
+  it('never touches the co-op identity ring (player.marker) — it is not part of player.view at all, and stays the player colour while the mech greys out', () => {
+    const scene = makeScene([]);
+    const player = makePlayer({ abilityX: 'cloak' });
+    player.view = fakeMechView();
+    // Mirrors coop.js's real ring: a separate GameObject on `player.marker`, never inside `view`.
+    player.marker = { setStrokeStyle: vi.fn(), setVisible: vi.fn(), setPosition: vi.fn(), setFillStyle: vi.fn() };
+
+    updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
+    updateAbilities(scene, { ability: noAbility }, ABILITIES.cloak.duration * 1000, player);
+
+    for (const fn of Object.values(player.marker)) expect(fn).not.toHaveBeenCalled();
   });
 
   it('is a safe no-op with no view at all (a bare test double)', () => {

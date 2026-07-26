@@ -7,7 +7,7 @@ import { buildIconTextures } from './iconArt.js';
 import { buildItemFxTextures } from './projectileArt.js';
 import { buildMountIconTextures } from './mounts/icons.js';
 
-export { buildMechTextures, reskinMech, mechLayout, DESIGN, ART_SCALE, ARM_LOCATIONS, SIDE_TORSO_LOCATIONS, PIVOT_LOCATIONS, PART_PIVOT, MUZZLE_GLOW_SUFFIX, HULL_FRAMES, PLAYER_HULL_FRAMES, strideDir, armSpriteTransform, partSpriteTransform } from './mechArt.js';
+export { buildMechTextures, reskinMech, desaturateTexture, mechLayout, DESIGN, ART_SCALE, ARM_LOCATIONS, SIDE_TORSO_LOCATIONS, PIVOT_LOCATIONS, PART_PIVOT, MUZZLE_GLOW_SUFFIX, HULL_FRAMES, PLAYER_HULL_FRAMES, strideDir, armSpriteTransform, partSpriteTransform } from './mechArt.js';
 // Non-mech unit textures (wall turret / tank / drone / helicopter / carrier / infantry),
 // built per-unit on spawn.
 export { buildVehicleTextures } from './vehicles/index.js';

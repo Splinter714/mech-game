@@ -9,6 +9,7 @@ import { initialAbilityState, canActivate, activateAbility, updateAbilityState }
 import { ABILITY_SLOTS } from '../../data/anatomy.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { otherLivePlayers } from './players.js';
+import { desaturateTexture } from '../../art/mechArt.js';
 import { Audio } from '../../audio/index.js';
 
 // The six mech part-sprite names on a mech view (locomotion.js `_makeMechView`) — mirrors
@@ -17,36 +18,57 @@ import { Audio } from '../../audio/index.js';
 // and this file is imported by several ability unit tests (stealth.test.js, abilityTrigger.test.js,
 // this file's own test) that run under vitest's plain node environment with no Phaser mock —
 // importing shieldOutline.js here would break all of them the same way enemies.js's own
-// `import Phaser` already requires a stub in carrierDeploy.test.js/dormantWake.test.js.
+// `import Phaser` already requires a stub in carrierDeploy.test.js/dormantWake.test.js. (mechArt.js
+// is safe to import directly, below — unlike shieldOutline.js it never touches the real `phaser`
+// package, it only calls duck-typed methods on whatever `scene` it's handed.)
 const MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
+// Every part EXCEPT the hull: these six textures never change on their own, so this function can
+// safely swap them straight to/from their pre-baked `_grey` variant. The hull is the one part
+// something ELSE re-picks every frame (locomotion.js `_stepGait` sets `p.view.hull`'s texture to
+// the current walk-cycle frame on every gait tick, cloaked or not) — if this function swapped the
+// hull's texture too, the very next footstep would silently stomp it back to full colour.
+// `_stepGait` is cloak-aware instead (checks `hasActiveEffect(p, 'cloak')` itself) and points
+// straight at the matching pre-baked `${key}_hull_${frame}_grey` frame — see its own comment.
+const CLOAK_SWAPPABLE_PARTS = MECH_PART_KEYS.filter((p) => p !== 'hull');
 
-// #500 (owner playtest: "should be more greyscale/phantom-esque" — a flat alpha fade alone
-// didn't read as a stealth effect, just a faded-out mech). A near-neutral, cool-toned grey TINT
-// on every part sprite desaturates the mech's own palette toward grey (Phaser `setTint`
-// multiplies each pixel's colour, so a saturated body panel reads flat and washed-out under it)
-// while the container alpha keeps it translucent — together that's the "ghostly, drained of
-// colour" read instead of just "the same mech, fainter." Deliberately NOT a WebGL-only postFX
-// grayscale pipeline: this repo's smoke/test harness can force the Canvas renderer (`?canvas`),
-// where postFX doesn't run at all (see shieldOutline.js's header for the same constraint) — tint
-// is a basic texture op supported by both renderers, so this works everywhere the game does.
-export const CLOAK_TINT = 0xaab4bd;   // pale steel-blue-grey — desaturates without going pitch dark
-export const CLOAK_ALPHA = 0.45;      // up from the old flat 0.35: dim enough to read as translucent,
-                                       // bright enough that the tint (the actual "greyscale" cue) is visible
+// #500 (owner playtest, second pass — the first tint-based cut still read as "has colour": "cloaking
+// ability needs to remove color from the mech except for the multiplayer color ring"). A Phaser
+// sprite tint is a per-channel MULTIPLY (`out = texture * tint`), which can only dim/colour-cast a
+// sprite — it preserves every pixel's hue and saturation exactly, so it can never actually remove
+// colour from an already-saturated panel (a player's saturated rim-accent especially). Genuine
+// desaturation needs real per-pixel access, which `desaturateTexture` (art/mechArt.js) provides by
+// baking a true greyscale `_grey` variant of each part texture via Canvas 2D `getImageData` — see
+// its header for why that (not a WebGL postFX pipeline) is what works under both renderers.
+export const CLOAK_ALPHA = 0.45;      // dim enough to read as translucent; the desaturation itself
+                                       // (not the alpha) is what now carries the "ghostly" cue.
 
-// Apply/clear Cloak's visual on a player's mech view: a grey tint on every part sprite (the
-// container itself has no paintable pixels of its own to tint) plus the container's own alpha for
-// translucency. `active` false restores the mech to its normal colours/opacity. Guarded per-part
-// (`?.`) so a hand-rolled test double's partial view (or a torso/arm currently missing after part
-// loss — see anatomy.js) never throws.
-function setCloakVisual(player, active) {
+// Apply/clear Cloak's visual on a player's mech view: swap every non-hull part sprite to a
+// genuinely-desaturated `_grey` texture variant (baked fresh from whatever the part's CURRENT
+// texture is, so it always matches the mech's live damage state) plus the container's own alpha
+// for translucency. `active` false restores every swapped part to the exact texture key it had
+// before cloaking, and restores full opacity. Guarded per-part (`?.`) so a hand-rolled test
+// double's partial view (or a torso/arm currently missing after part loss — see anatomy.js) never
+// throws. Deliberately does NOT touch `player.marker` — the co-op ground identity ring (coop.js) —
+// which lives entirely outside `player.view` and is never in scope of this loop at all, so the
+// ring keeps its own player colour while the mech greys out around it.
+function setCloakVisual(scene, player, active) {
   const view = player.view;
   if (!view) return;
   view.setAlpha?.(active ? CLOAK_ALPHA : 1);
-  for (const part of MECH_PART_KEYS) {
+  for (const part of CLOAK_SWAPPABLE_PARTS) {
     const sprite = view[part];
-    if (!sprite) continue;
-    if (active) sprite.setTint?.(CLOAK_TINT);
-    else sprite.clearTint?.();
+    if (!sprite?.setTexture) continue;
+    if (active) {
+      // Remember the exact key this part was showing so deactivation can restore it precisely,
+      // even if a reskin (damage) happens later under a DIFFERENT active-cloak texture key.
+      const baseKey = sprite._cloakBaseKey ?? sprite.texture?.key;
+      if (!baseKey) continue;
+      sprite._cloakBaseKey = baseKey;
+      sprite.setTexture(desaturateTexture(scene, baseKey));
+    } else if (sprite._cloakBaseKey) {
+      sprite.setTexture(sprite._cloakBaseKey);
+      sprite._cloakBaseKey = null;
+    }
   }
 }
 
@@ -132,12 +154,12 @@ export function updateAbilities(scene, intent, delta, player) {
     } else if (def.effect === 'cloak') {
       // #500: purely a visual on the edges — `isPlayerStealthed` (scenes/arena/stealth.js)
       // is what actually suppresses noise-aggro while `next.active` is true; nothing to spawn or
-      // tick here. `setCloakVisual` (above) is the greyscale/phantom tint + translucency.
+      // tick here. `setCloakVisual` (above) is the genuine desaturation + translucency.
       if (next.active && !wasActive) {
-        setCloakVisual(player, true);
+        setCloakVisual(scene, player, true);
         Audio.ui('sprintOn');
       } else if (!next.active && wasActive) {
-        setCloakVisual(player, false);
+        setCloakVisual(scene, player, false);
         Audio.ui('sprintOff');
       }
     } else if (def.effect === 'smokeScreen') {

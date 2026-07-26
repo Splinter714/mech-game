@@ -9,9 +9,10 @@
 //   data/players.js  — the collection, nearest-player targeting, the identifying colours
 //
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
-import { buildMechTextures } from '../../art/index.js';
+import { buildMechTextures, desaturateTexture, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { playerMechArt } from '../../art/playerMechLook.js';
 import { Mech } from '../../data/Mech.js';
+import { getAbility } from '../../data/abilities.js';
 import { shieldConfigFor } from '../../data/coreItems.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
@@ -98,6 +99,19 @@ export const CoopMixin = {
     // the one shared definition (art/playerMechLook.js), the same one the garage preview uses.
     // #487: the resolved colour is threaded in as the accent override.
     buildMechTextures(this, textureKey, mech, playerMechArt(index, { accent: color }));
+    // #500 (Cloak follow-up): pre-bake a genuinely-desaturated GREY variant of every walk-cycle
+    // hull frame, once, right now — not lazily on first cloak press. The hull is the one part
+    // `_stepGait` (locomotion.js) re-picks every gait tick regardless of cloak state (it swaps
+    // between the baked walk frames), so its grey variants have to already exist before the first
+    // cloaked footstep or that frame would show a missing/blank texture. Safe to do once and cache
+    // forever: hull art is damage-independent (see buildMechTextures' skipHull note), so unlike the
+    // torso/arm/turret grey variants (rebaked fresh on every cloak press in abilities.js, to track
+    // damage) these can never go stale. Gated on the build actually mounting Cloak in some slot, so
+    // a build that never cloaks never pays for it.
+    const hasCloak = Object.values(mech.abilityMounts || {}).some((id) => id && getAbility(id)?.effect === 'cloak');
+    if (hasCloak) {
+      for (let f = 0; f < PLAYER_HULL_FRAMES; f++) desaturateTexture(this, `${textureKey}_hull_${f}`);
+    }
     player.view = this._makeMechView(textureKey, x, y, player.angle, true);
     // Created hidden: `_updatePlayerMarkers` owns visibility every frame, and starting hidden
     // means a solo player never sees a one-frame flash of a ring before that rule first runs.
