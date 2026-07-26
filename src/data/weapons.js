@@ -483,8 +483,10 @@ export const WEAPONS = {
     // Playtest follow-up #4 (2026-07-26, #492): "tendrils should also be purple and should have
     // more range and be more spooky tendrilly." travelAoe.radius 130 -> 175 (+35%, still below
     // the force-field radii at 190/210) so the tendrils reach visibly farther; the tendril
-    // recolor + more-elaborate sinuous-strand treatment lives in `_drawAoeTendril` itself
-    // (scenes/arena/projectiles.js) since it's shared drawing code, not a per-weapon field.
+    // recolor lives in `_drawAoeTendril` itself (scenes/arena/projectiles.js) since it's shared
+    // drawing code, not a per-weapon field. Follow-up #5 reverted that same function's SHAPE
+    // back to a simple jagged line (kept the purple, dropped the sinuous-strand treatment) —
+    // range here is unaffected.
     id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
     damage: 18, range: { min: 40, opt: 700, max: 900 },
     ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
