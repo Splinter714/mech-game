@@ -5,7 +5,10 @@
 // is pinned to the arena's own CONSOLE_TILES size (not fit to the column), the preview is square
 // and derives its size from that block's height, and the pair is centered as ONE unit.
 import { describe, it, expect } from 'vitest';
-import { garageColumnLayout, COLUMN_PAD, HEADER_H, FOOTER_H, GAP, TILE_SIZE, TILE_GAP, TILE_N } from './columnLayout.js';
+import {
+  garageColumnLayout, COLUMN_PAD, HEADER_H, FOOTER_H, GAP, TILE_SIZE, TILE_GAP, TILE_N,
+  LABEL_BOTTOM_INSET,
+} from './columnLayout.js';
 import { weaponAbilityRows, TILE_ORDER, HUD_ABILITY_ORDER } from '../../ui/skillTiles.js';
 import { CONSOLE_TILES, tileRowWidth } from '../../data/hudLayout.js';
 
@@ -77,10 +80,20 @@ describe('garageColumnLayout (#505)', () => {
         expect(Math.abs(pairLeftGap - pairRightGap)).toBeLessThanOrEqual(2);
       });
 
-      it(`the player label is centered under the preview and sits below it (w=${w}, h=${h})`, () => {
+      // #505 playtest follow-up: the player-number label moved from just below the preview box to
+      // INSIDE it, anchored near its bottom edge.
+      it(`the player label is centered horizontally on the preview and anchored INSIDE it, near the bottom (w=${w}, h=${h})`, () => {
         const gl = garageColumnLayout(w, h);
+        const previewTop = gl.preview.cy - gl.preview.h / 2;
+        const previewBottom = gl.preview.cy + gl.preview.h / 2;
         expect(gl.label.cx).toBe(gl.preview.cx);
-        expect(gl.label.y).toBeGreaterThanOrEqual(gl.preview.cy + gl.preview.h / 2);
+        // Inside the box vertically...
+        expect(gl.label.y).toBeGreaterThan(previewTop);
+        expect(gl.label.y).toBeLessThan(previewBottom);
+        // ...and specifically in the bottom portion of it, not centered or near the top.
+        expect(gl.label.y).toBeGreaterThan(gl.preview.cy);
+        // Exactly the configured inset up from the box's own bottom edge.
+        expect(gl.label.y).toBe(previewBottom - LABEL_BOTTOM_INSET);
       });
 
       it(`the catalog sits above the tile block/preview row with a sane minimum height (w=${w}, h=${h})`, () => {

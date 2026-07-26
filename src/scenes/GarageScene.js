@@ -14,7 +14,7 @@ import {
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, drawSkillTile, updateSkillTile, coreTileRect } from '../ui/skillTiles.js';
+import { TILE_ORDER, drawSkillTile, updateSkillTile, coreTileRect, paintTilePlate } from '../ui/skillTiles.js';
 import { stepIndex, cycleListId } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
@@ -263,18 +263,22 @@ export default class GarageScene extends Phaser.Scene {
     // sitting immediately LEFT of it as one centered pair (see garageColumnLayout). Built ONCE;
     // every later mount/colour change re-bakes the SAME texture key in place
     // (buildMechTextures/reskinMech), so these sprites never need rebuilding.
+    // #505 playtest follow-up ("round the mech preview box, matching the weapon/ability tile
+    // style"): the panel is now a Graphics painted with the SAME `paintTilePlate` the skill tiles
+    // themselves use (rounded corners, crisp edge, outside halo) rather than a plain squared-off
+    // Rectangle — so the preview box reads as one more plate in the same button/panel language.
     const { cx: previewCx, cy: previewCy, w: previewW, h: previewH } = gl.preview;
-    col.previewPanel = this.add.rectangle(previewCx, previewCy, previewW, previewH, 0x10151c)
-      .setStrokeStyle(1, UI.panelEdge);
+    col.previewPanel = this.add.graphics();
+    paintTilePlate(col.previewPanel, { x: previewCx - previewW / 2, y: previewCy - previewH / 2, w: previewW, h: previewH });
     const scale = (Math.min(previewW, previewH) - 24) / 230;
     col.previewScale = scale; col.previewCx = previewCx; col.previewCy = previewCy;
     col.preview = makeMechParts(this, col.textureKey, { x: previewCx, y: previewCy, scale, isPlayer: true });
     col.layer.add([col.previewPanel, ...col.preview.children]);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
 
-    // The player-number label — now sits directly under the preview art (Jackson: "any player1
-    // label should just be at the bottom below the mech preview art"), with the identity-colour
-    // dot right beside it instead of up in the header.
+    // The player-number label — now sits INSIDE the preview box, at its bottom (#505 playtest
+    // follow-up on top of the earlier "just below the mech preview art" placement), with the
+    // identity-colour dot right beside it.
     col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
       fontFamily: 'monospace', fontSize: '12px', color: UI.text,
     }).setOrigin(0.5, 0);

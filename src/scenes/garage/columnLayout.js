@@ -26,6 +26,11 @@ export const HEADER_H = 34;
 export const FOOTER_H = 18;
 export const GAP = 8;
 export const PREVIEW_TILE_GAP = 10;
+// #505 playtest follow-up: the player-number label sits INSIDE the preview box now, near its
+// bottom edge, rather than below it — this is the gap from the box's own bottom edge to the top
+// of the label text (the text itself, via GarageScene's `setOrigin(0.5, 0)`, then reads a few
+// pixels above that bottom edge instead of clipping it).
+export const LABEL_BOTTOM_INSET = 20;
 // The loadout block's tile size/gap/count are pinned to the arena's own dial (CONSOLE_TILES),
 // not a Garage-local constant — "the same size as it is in arena" means literally the same
 // pixels, so there is nothing left here to independently tune.
@@ -40,7 +45,10 @@ export const TILE_N = CONSOLE_TILES.n;
 //               hand straight to drawSkillTile — always at the arena's full TILE_SIZE
 //   preview   — { cx, cy, w, h } for the mech-preview panel: SQUARE, sized to the tile block's
 //               own height, sitting immediately LEFT of it
-//   label     — { cx, y } — where the player-number label sits, centered under the preview
+//   label     — { cx, y } — where the player-number label sits, centered horizontally on the
+//               preview and anchored INSIDE it, near its bottom edge (#505 playtest follow-up:
+//               "move the PLAYER N label to sit inside the preview box, at its bottom" — it used
+//               to sit just below the preview box entirely)
 //
 // The preview+tiles pair is centered as ONE unit within the column's inner width. At a narrow
 // column width (more players, smaller colW — see GarageScene's `colW = W / session.count`) the
@@ -52,6 +60,7 @@ export function garageColumnLayout(w, h, opts = {}) {
   const {
     pad = COLUMN_PAD, headerH = HEADER_H, footerH = FOOTER_H, gap = GAP,
     previewTileGap = PREVIEW_TILE_GAP, tileSize = TILE_SIZE, tileGap = TILE_GAP, tileN = TILE_N,
+    labelBottomInset = LABEL_BOTTOM_INSET,
   } = opts;
   const innerW = Math.max(0, w - pad * 2);
   const tileBlockW = tileRowWidth(tileSize, tileN, tileGap);
@@ -89,6 +98,6 @@ export function garageColumnLayout(w, h, opts = {}) {
     catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
     preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
-    label: { cx: previewCx, y: blockBottom + gap * 0.5 },
+    label: { cx: previewCx, y: previewCy + previewSize / 2 - labelBottomInset },
   };
 }
