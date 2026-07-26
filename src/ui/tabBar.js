@@ -33,6 +33,11 @@ const TAB_UI = {
 
 export const TAB_BAR_H = 52;   // logical px
 
+// #505 (fifth rework): exported so a caller (GarageScene's SCRAP readout) can position its own
+// chrome relative to the pinned Deploy/Ready button without duplicating its magic numbers.
+export const DEPLOY_W = 160;
+export const DEPLOY_MARGIN = 16;
+
 // The tabs, in order. `scene` is the Phaser scene key each one navigates to.
 // #296: the AUDIO tab (→ AudioScene, every sound-authoring surface there is — the music/mix
 // tuner plus, since #470, the per-sound SFX tuner and its weapon/explosion/UI trigger rows) is a
@@ -119,8 +124,8 @@ export function buildTabBar(scene, {
   }
 
   // Deploy, pinned right. Greyed + inert when the build is incomplete (canDeploy === false).
-  const depW = 160;
-  const dx = W - depW - 16;
+  const depW = DEPLOY_W;
+  const dx = W - depW - DEPLOY_MARGIN;
   const enabled = canDeploy && !!onDeploy;
   const dr = scene.add.rectangle(dx, y, depW, tabH, TAB_UI.tab).setOrigin(0, 0)
     .setStrokeStyle(1, enabled ? TAB_UI.sel : TAB_UI.barEdge);
