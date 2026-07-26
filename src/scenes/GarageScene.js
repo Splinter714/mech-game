@@ -17,7 +17,7 @@ import {
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { TILE_ORDER, HUD_ABILITY_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
-import { stepIndex } from '../ui/padNav.js';
+import { stepIndex, dominantDir, DirRepeater } from '../ui/padNav.js';
 import { LAB_TABS, nextLabTab, labTabForSlotKind, TAB_DEFAULT_SLOT } from '../ui/labTabs.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
@@ -171,6 +171,10 @@ export default class GarageScene extends Phaser.Scene {
     // unclaimed one is only ever polled for START (join); a claimed one drives its own column.
     this.padEdges = [];
     for (let i = 0; i < MAX_GARAGE_PLAYERS; i++) this.padEdges[i] = new PadEdges(this, i);
+    // One DirRepeater per pad index, so the left stick's held-direction auto-repeat is tracked
+    // independently per player, same reasoning as padEdges above.
+    this.stickRepeat = [];
+    for (let i = 0; i < MAX_GARAGE_PLAYERS; i++) this.stickRepeat[i] = new DirRepeater();
 
     // The keyboard/mouse player is always column 0 (mirrors input/Controls.js — only player 0
     // ever owns the keyboard). 'D' readies/unreadies them, '.'/',' cycle their colour, 'B' bails
@@ -1007,8 +1011,21 @@ export default class GarageScene extends Phaser.Scene {
       if (e.pressed(PAD.DPAD_RIGHT)) { this._navSlot(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
       if (e.pressed(PAD.DPAD_DOWN)) { this._navRow(col, 1); continue; }
+      // LT/RT are one more way to move the live slot cursor, same as D-pad left/right.
+      if (e.pressed(PAD.LT)) { this._navSlot(col, -1); continue; }
+      if (e.pressed(PAD.RT)) { this._navSlot(col, 1); continue; }
       if (e.pressed(PAD.A)) { this._confirmOrSelect(col); continue; }
       if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
+      // The left stick mirrors the D-pad exactly (up/down row-nav, left/right slot-nav), with
+      // the same auto-repeat cadence padNav.js's DirRepeater already gives every other held-
+      // direction control in this scene.
+      const ls = e.pad()?.leftStick;
+      const dir = ls ? dominantDir(ls.x, ls.y) : null;
+      const step = this.stickRepeat[i].step(dir, time);
+      if (step === 'left') this._navSlot(col, -1);
+      else if (step === 'right') this._navSlot(col, 1);
+      else if (step === 'up') this._navRow(col, -1);
+      else if (step === 'down') this._navRow(col, 1);
     }
   }
 }
