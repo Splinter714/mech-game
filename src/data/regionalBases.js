@@ -12,12 +12,12 @@
 // that, not `coord`, is the stable cross-deploy identity. `coord` is kept as an informational
 // snapshot only, same convention as outposts.js.
 //
-// DESIGN DECISION (surfaced, not assumed): once set, a biome's regional-base pointer is NOT
-// cleared if that base is later lost to #519 regarrison. A redeploy still spawns at ITS gate —
-// the player arrives to find their forward base overrun and has to retake it, rather than falling
-// back to the drop-pod treatment. The issue text doesn't cover this interaction; this is the
-// simplest rule that keeps worldgen deterministic without adding a second "was this ever
-// established" flag, and it reads as a real narrative beat rather than a special case.
+// #517 follow-up: playtest overturned the original design decision above (kept here for
+// history) — losing the regional base to #519 regarrison now CLEARS this pointer for the
+// biome (`clearRegionalBase` below), so the next deploy falls back to the ordinary drop-pod/
+// staging spawn (world.js's existing "no regional base yet" path) instead of dropping the
+// player at a gate that's hostile again. Called from launchMission.js right after a regarrison
+// roll reverts a base that happens to be the biome's current regional base.
 
 // The first established base in a biome wins; a later `establishRegionalBase` call for a biome
 // that already has one is a no-op (mirrors `claimOutpost`'s "claiming an already-held id" no-op).
@@ -28,4 +28,12 @@ export function establishRegionalBase(regionalBases, { biomeId, baseId, coord })
 
 export function regionalBaseFor(regionalBases, biomeId) {
   return regionalBases.find((r) => r.biomeId === biomeId) ?? null;
+}
+
+// #517 follow-up: drop the biome's regional-base pointer entirely — used when that base is lost
+// (regarrison, or any future loss path), so the biome reads as "no regional base yet" again and
+// worldgen falls back to the generic drop-pod/staging spawn. A biome with no pointer is a no-op,
+// same convention as loseOutpost() on an unknown id.
+export function clearRegionalBase(regionalBases, biomeId) {
+  return regionalBases.filter((r) => r.biomeId !== biomeId);
 }

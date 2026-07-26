@@ -6,10 +6,11 @@
 // blind pickNextBiome() auto-pick the base's scanner hex used before #510 existed).
 import { ACTIVE_MECH_KEY } from '../../data/rosters.js';
 import { PLAYER_MECH_KEYS } from '../../data/coopGarage.js';
-import { MECH_DEPLOYED, OUTPOSTS_KEY } from '../../data/events.js';
+import { MECH_DEPLOYED, OUTPOSTS_KEY, REGIONAL_BASES_KEY } from '../../data/events.js';
 import { RECENCY_WINDOW } from '../../data/biomes.js';
-import { saveAllMechs, saveOutposts } from '../../data/save.js';
+import { saveAllMechs, saveOutposts, saveRegionalBases } from '../../data/save.js';
 import { resolveAllUndefendedLosses, rollRegarrisonForBiome } from '../../data/outposts.js';
+import { regionalBaseFor, clearRegionalBase } from '../../data/regionalBases.js';
 
 export function launchMission(scene, biomeId, isDeep = false) {
   const allMechs = scene.registry.get('allMechs');
@@ -51,6 +52,22 @@ export function launchMission(scene, biomeId, isDeep = false) {
   if (regarrisoned !== outposts) {
     scene.registry.set(OUTPOSTS_KEY, regarrisoned);
     saveOutposts(regarrisoned);
+    // #517 follow-up: if regarrison just reverted the biome's CURRENT regional base, clear that
+    // biome's regional-base pointer too — otherwise the next deploy still spawns the player at
+    // that now-hostile base's gate. Find which base(s) this roll actually took (present in
+    // `resolved`, gone from `regarrisoned`) and compare against the regional-base record.
+    const lostBaseIds = resolved
+      .filter((o) => o.biomeId === biomeId && !regarrisoned.some((r) => r.id === o.id))
+      .map((o) => o.baseId);
+    if (lostBaseIds.length) {
+      const regionalBases = scene.registry.get(REGIONAL_BASES_KEY) ?? [];
+      const regional = regionalBaseFor(regionalBases, biomeId);
+      if (regional && lostBaseIds.includes(regional.baseId)) {
+        const clearedRegionalBases = clearRegionalBase(regionalBases, biomeId);
+        scene.registry.set(REGIONAL_BASES_KEY, clearedRegionalBases);
+        saveRegionalBases(clearedRegionalBases);
+      }
+    }
   }
   scene.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
   scene.scene.start('ArenaScene');
