@@ -1,15 +1,7 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
+import { buildMechTextures, reskinMech, HULL_FRAMES, itemFxKey } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
-import { Mech } from '../data/Mech.js';
-import { CHASSIS_IDS } from '../data/chassis/index.js';
-import { ACTIVE_MECH_KEY } from '../data/rosters.js';
-import {
-  PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, makeGarageSession, sessionEditingKey, sessionMechKeys,
-  garageAction, garageActionLabel, garageStatusText, advanceEditing, joinPlayer, canJoin,
-  playerTabs,
-} from '../data/coopGarage.js';
 import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
@@ -17,48 +9,57 @@ import { ABILITIES } from '../data/abilities.js';
 import { CORE_ITEMS } from '../data/coreItems.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
-import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind } from '../data/anatomy.js';
+import {
+  WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, CORE_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
+} from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
-import { PadEdges, PAD, SKILL_BINDS, ABILITY_BINDS } from '../input/Controls.js';
-import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
+import { PadEdges, PAD } from '../input/Controls.js';
+import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
+import { stepIndex, cycleListId } from '../ui/padNav.js';
+import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
+import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
-import { WeaponCardList } from '../ui/weaponCardList.js';
-import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
 
-// The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
-// centerTorso, jumpJet/bubbleShield — is gone; #261: L3/Space is a hardcoded Dash, never
-// mounted), shown as a row of square "skill button" tiles
-// (#26) along the bottom-left — one per slot, each showing its mounted item + fire bind. Click
-// a tile to edit that slot: the catalog (the SHARED WeaponCardList, formerly also hosted by the
-// now-retired Weapon Lab tab) filters to the items that fit it, each card running its live
-// shot/fx preview. Click a card to mount it (or to unmount if it's already there).
-// #470: the sound-authoring surface that #121 folded in here — the sound-tuning panel and the
-// explosion-category / UI-cue / catalog-demo-sound trigger rows — has MOVED OUT to the dev-only
-// AUDIO tab (scenes/AudioScene.js). The mech lab is player-facing UI again: the catalog spans the
-// full width and this scene has no dev-vs-prod layout branch at all. A
-// small live mech preview sits bottom-right (#248: the chassis switch is disabled for now —
-// light/heavy are off, every mech is locked to medium; #454 dropped the leftover chassis-name
-// label, since there's only one chassis to show). #509/#514: the primary button (greyed until
-// every slot is filled) no longer enters the arena directly — it returns to the base, where
-// MissionSelectScene is now the one place a run actually launches.
+// The mech lab (#505 rework — this scene absorbed the SIMULTANEOUS multi-cursor build layout
+// that used to live as a separate SimulGarageScene, per Jackson's playtest feedback: "the
+// separate 'simul' menu is weird... it should just BECOME that way when/if you add a second
+// player," and — the follow-up correction — "the 1p garage should be basically identical to the
+// 2-4p garage, just less horizontally squished." So there is now exactly ONE layout: every
+// joined player (1..MAX_GARAGE_PLAYERS) gets its own vertical COLUMN, all built/edited at the
+// same time, no handoff, no separate scene to navigate to. A solo player's column simply spans
+// the full width; a join reflows every column to the new, narrower width. There is deliberately
+// no reserved placeholder column for an unjoined player — that was the exact "squished next to
+// 3 empty columns" complaint — the join affordance is just a hint line in the header band, and
+// pressing START on an unclaimed pad grows the column count (mirrors the arena's mid-sortie join,
+// scenes/arena/coop.js).
+//
+// Readiness replaces the old sequential "P1 READY" handoff: each column has its own READY pill
+// (mouse-clickable, or its pad's START). The scene deploys the instant every joined column is
+// ready — which for a lone player just means "press ready, go," identical in feel to the old
+// single-player Deploy button.
+//
+// The condensed square-icon catalog (one column-sized grid, no scrolling, no live per-card fx
+// preview) replaces the old full-width animated WeaponCardList — that catalog assumed exactly one
+// editing surface on screen; a layout that can show up to four at once needs a much smaller
+// footprint per column, and it is now what every player count sees, including solo.
+//
+// This still deploys onto the same four persistent build slots (data/rosters.js's mech1..mech4,
+// PLAYER_MECH_KEYS) and publishes the same registry keys (`coopMechKeys`/`coopPlayerCount`) the
+// arena reads.
 const UI = {
-  text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a',
+  text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', bad: '#e2533a', good: '#7bd17b',
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
 };
 
-// The skill-tile row (order, layout, drawing) is shared with the arena HUD via
-// ../ui/skillTiles.js, so the two read identically. TILE_ORDER comes from there.
+// Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
+const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
 
-// Each slot's controller button, so pressing a slot's own bind quick-mounts the highlighted
-// catalog item straight into it (#30). Mirrors SKILL_BINDS' pad labels: RT/LT triggers,
-// RB/LB bumpers. #188: L3 dropped out — it's Sprint's fixed toggle now, not a mountable slot.
-const SLOT_BUTTON = {
-  leftArm: PAD.LT, rightArm: PAD.RT,
-  leftTorso: PAD.LB, rightTorso: PAD.RB,
-};
+// The header band under the shared tab bar: SCRAP/last-run readout + the "another controller can
+// join" hint. Columns start below this.
+const HEADER_BAND_H = 34;
 
 export default class GarageScene extends Phaser.Scene {
   constructor() {
@@ -72,157 +73,82 @@ export default class GarageScene extends Phaser.Scene {
     this.cameras.main.setZoom(dpr);
     this.cameras.main.setOrigin(0, 0);
     this.cameras.main.setBackgroundColor('#0d1014');
-    this.cameras.main.fadeIn(400, 13, 16, 20);   // ~0x0d1014, matches the background color above (#215, mirrors #202's Arena fade)
+    this.cameras.main.fadeIn(400, 13, 16, 20);   // ~0x0d1014, matches the background color above
 
     this.allMechs = this.registry.get('allMechs');
-    // #349/#388: the co-op session `{ count, editing }`. The joined COUNT survives a return from
-    // the arena (so a co-op squad coming back from a run finds all its tabs still there) but
-    // `editing` always resets to player 1 — the sequential flow is re-walked from the top every
-    // visit, which is also what makes each handoff an explicit act rather than sticky state
-    // nobody remembers setting.
-    this.session = makeGarageSession({ count: this.registry.get('coopPlayerCount') || 1 });
-    this.mechKey = sessionEditingKey(this.session);
-    this.mech = this.allMechs[this.mechKey];
-    // #249: every entry into the Garage (fresh boot, ESC from the Music tab, or — the bug —
-    // returning from Arena after a run ends in a win OR a loss) must show a healthy mech. Damage
-    // used to only get healed at the START of the NEXT deploy (see deploy() below), so the
-    // bottom-right preview + paper-doll kept reading as destroyed for the whole time the player
-    // was back in the Garage after a loss. repairAll() is idempotent (a no-op on an already-healthy
-    // mech), so doing it unconditionally here — before textures are built below — is safe on every
-    // path, not just the post-run one; deploy()'s own repairAll() stays as a harmless belt-and-braces.
-    // #349: repair EVERY player slot, not just the one on screen — player 2's mech comes back
-    // from a co-op run damaged too, and it must be healthy the moment the handoff swaps it in
-    // (there is no second create() to heal it). Still idempotent, still safe on every path.
+    // #249/#349: every entry into the Garage (fresh boot, ESC from another tab, or returning from
+    // Arena after a run ends in a win OR a loss) must show every joined player's mech healthy —
+    // there is no second create() to heal a column once it's on screen. Idempotent, so doing it
+    // unconditionally here (before any column bakes its textures) is safe on every path.
     for (const key of PLAYER_MECH_KEYS) this.allMechs[key]?.repairAll();
     saveAllMechs(this.allMechs);
-    this.selected = null;   // the slot currently being edited (filters the catalog)
+
     this.catalogIds = [...WEAPON_IDS];
-    // #65: the permanently-unlocked catalog (meta-progression, persists across runs). Loaded
-    // before the WeaponCardList so its isLocked/costOf callbacks see real data from frame one.
+    // #65: the permanently-unlocked catalog (meta-progression, persists across runs).
     this.unlocked = loadUnlocked();
-    // #124: dev builds skip the unlock grind entirely — every weapon/equipment id starts
-    // unlocked so playtesting isn't gated behind the shop. `import.meta.env.DEV` is Vite's
-    // build-time flag (true under `npm run dev`, stripped to `false` — and dead-code-eliminated
-    // — in `npm run build`/`vite build`), so this can never leak into a production bundle. Kept
-    // here (a Phaser scene) rather than in data/save.js or data/shop.js: those are pure `data/`
-    // modules with no Vite/browser dependency today, and Vitest doesn't run through Vite's env
-    // injection the same way, so importing `import.meta.env` there risks breaking `npm test`.
+    // #124: dev builds skip the unlock grind entirely.
     if (import.meta.env.DEV) {
       for (const id of this.catalogIds) this.unlocked.add(id);
     }
 
-    // Layout: the top region is the weapon catalog (shared WeaponCardList) at full width; a
-    // bottom strip holds the skill tiles (left) and the small live mech preview (right).
-    this.bottomH = 200;                             // bottom strip height (tiles + preview)
-    this.previewW = 210;                            // right slice of the strip for the preview
-    this.dollX = 20;
-    // #506: a fixed slice at the RIGHT end of the weapon-tile band is reserved for the new
-    // ability-diamond + core-tile cluster, shrinking the weapon tileRow's own width by that much
-    // — it re-centers in the smaller region, the freed slice holds the cluster.
-    this.abilityClusterW = 170;
-    this.abilityGap = 20;
-    this.dollW = this.W - this.previewW - 60 - this.abilityClusterW - this.abilityGap;
-    this.abilityClusterX = this.dollX + this.dollW + this.abilityGap;
-    this._rowBottom = this.H - 22;                  // tile-row bottom edge
+    // The co-op session `{ count, ready }` (data/simulGarage.js). `count` survives a return from
+    // the arena (so a squad coming back from a run finds every column still there); `ready`
+    // always resets — a fresh garage visit re-declares readiness rather than remembering it.
+    this.session = makeSimulSession({ count: this.registry.get('coopPlayerCount') || 1 });
 
-    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
+    this.colTop = TAB_BAR_H + HEADER_BAND_H;
+    this.cols = [];
 
-    // The catalog starts below the two-line SCRAP/last-run readout (right-anchored, see below)
-    // rather than right under the tab bar, so the two never share a horizontal band at narrow
-    // widths. CATALOG_TOP_GAP clears currencyText + lastRunText (2 lines).
-    const CATALOG_TOP_GAP = 54;
-    const r = this._topRegion(TAB_BAR_H + CATALOG_TOP_GAP);
-    this.list = new WeaponCardList(this, {
-      x: r.list.x, y: r.list.y, w: r.list.w, h: r.list.h,
-      ids: this.catalogIds, onSelect: (id) => this._pickItem(id),
-      // #506: abilities/core items have no SCRAP-unlock data at all (shop.js's catalog is
-      // weapon-only) — they're always unlocked and free to mount, so only a weapon id is ever
-      // gated here.
-      isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
-      costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
-    });
-
-    this._buildPreview();
-    this.doll = this.add.container(0, 0);
-
-    // #64: the run-currency readout (banked total, meta-progression pool). Full spend/shop UI
-    // is #65's job — this is just a visible, persisted number, top-right under the tab bar. Also
-    // shows the last run's result (WON/DIED + its payout) as a one-line recap when present.
-    this.currencyText = this.add.text(this.W - 16, TAB_BAR_H + 10, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: UI.accent,
-    }).setOrigin(1, 0);
-    this.lastRunText = this.add.text(this.W - 16, TAB_BAR_H + 30, '', {
-      fontFamily: 'monospace', fontSize: '12px', color: '#7c8794',
-    }).setOrigin(1, 0);
-    this._refreshCurrency();
-    this._buildPlayerTabs();
-
-    // #423: the post-run stats screen — a modal overlay showing the committed run history
-    // (per-weapon and per-enemy tables + a copyable plain-text report). #445: it's a dev-only
-    // tuning tool, so both the overlay and the STATS button that opens it are built only under
-    // `import.meta.env.DEV` (Vite's build-time flag, stripped/dead-code-eliminated in
-    // `npm run build`) — a production garage has neither. The button itself is no longer a
-    // free-floating rect in the band under the tab bar: it's an `actions` entry in the shared tab
-    // bar's own row, next to MECH LAB / MUSIC / Deploy (see _buildHeader).
+    // #445: the dev-only run-stats overlay, opened from the tab bar's STATS action.
     if (import.meta.env.DEV) this._statsOverlay = new StatsOverlay(this);
 
-    // Controller support (#29 deploy + #30 + #70): CATALOG-FIRST. The pad focus lives in the
-    // catalog from the first pad press — the whole unfiltered weapon set, never a per-slot
-    // filter. D-pad/left-stick up-down browse it with auto-scroll; a slot's own fire bind
-    // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
-    // already holds exactly that item. There is no tile-first gate: the tile row still renders
-    // (mounts + binds) but is not a pad focus zone. Focus visuals + the button legend only
-    // appear once a pad button is used (`padActive`), so mouse/keyboard users see no cursor.
-    // #388: `padEdges` reads the CURRENT builder's pad (== that player's index), not always pad 0.
-    this._bindBuilderPad();
-    // START on any UNCLAIMED pad (indices count..MAX-1) is the JOIN button — one PadEdges per
-    // watchable pad, mirroring the arena's mid-sortie join (scenes/arena/coop.js). Pads below the
-    // current count are already claimed builders; `_updateGarageJoin` only polls the unclaimed ones.
-    this._joinEdges = {};
-    for (let pad = 1; pad < MAX_GARAGE_PLAYERS; pad++) this._joinEdges[pad] = new PadEdges(this, pad);
-    this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
-    this.padActive = false;       // pad in use → show the catalog cursor + legend
-    this.dirRepeat = new DirRepeater();   // shared d-pad/stick step auto-repeat
-    // #523: SELECT used to cycle the top tabs (attachPadTabCycle) — it's now claimed globally by
-    // the shared pause menu instead (wirePauseMenu, below), per the issue's confirmed "ESC or
-    // gamepad SELECT/BACK" design. The tabs stay mouse-clickable; there's no pad equivalent for
-    // cycling them any more.
-    // The pad button legend, along the very bottom under the tile row. Text set per-zone.
-    this.legend = this.add.text(this.dollX + this.dollW / 2, this.H - 11, '', {
-      fontFamily: 'monospace', fontSize: '10px', color: '#7c8794',
-    }).setOrigin(0.5).setVisible(false);
+    this._refreshHeader();
+    this.currencyText = this.add.text(this.W - 16, TAB_BAR_H + 6, '', {
+      fontFamily: 'monospace', fontSize: '13px', color: UI.accent,
+    }).setOrigin(1, 0);
+    this.lastRunText = this.add.text(this.W - 16, TAB_BAR_H + 21, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(1, 0);
+    this.joinHint = this.add.text(16, TAB_BAR_H + 12, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: '#efc14a',
+    }).setOrigin(0, 0.5);
+    this._refreshCurrency();
+    this._refreshJoinHint();
 
-    this.refresh();
+    this._relayoutColumns();
 
-    this.input.keyboard.on('keydown-D', () => this.deploy());
-    // #509: BaseScene is now the game's hub — Garage is reached by walking onto its
-    // customization hex and returns there, rather than being the root scene itself.
+    // One PadEdges per pad index 0..MAX-1, reused whether that index is claimed or not — an
+    // unclaimed one is only ever polled for START (join); a claimed one drives its own column.
+    this.padEdges = [];
+    for (let i = 0; i < MAX_GARAGE_PLAYERS; i++) this.padEdges[i] = new PadEdges(this, i);
+
+    // The keyboard/mouse player is always column 0 (mirrors input/Controls.js — only player 0
+    // ever owns the keyboard). 'D' readies/unreadies them, '.'/',' cycle their colour, 'B' bails
+    // back to base without deploying.
+    this.input.keyboard.on('keydown-D', () => this._toggleReady(0));
     this.input.keyboard.on('keydown-B', () => this.scene.start('BaseScene'));
-    // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
-    // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
-    // #523: ESC used to deselect the current slot — it now always opens the shared pause menu
-    // instead (wirePauseMenu, below), per the issue's confirmed design ("ESC now always opens
-    // the pause menu instead, in every scene"). There's no keyboard shortcut for deselecting a
-    // slot any more; clicking the slot (or another slot) still works.
-    wirePauseMenu(this);
-    // #487 (second pass): '.'/',' cycle the mech colour forward/back — the < > keys, so they line
-    // up with the on-screen ‹ › arrows. Free keys (the D binds above are the only garage keys).
-    this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(+1));
-    this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(-1));
-    // PROTOTYPE: 'P' jumps to the simultaneous co-op garage (SimulGarageScene) — see its file
-    // header. Same button also lives in the tab bar's SIMUL action, above.
-    this.input.keyboard.on('keydown-P', () => this.scene.start('SimulGarageScene'));
-    this.events.once('shutdown', () => this.list.destroy());
+    this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(this.cols[0], +1));
+    this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(this.cols[0], -1));
 
-    // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
-    this.input.on('pointermove', () => this._setInputMode('kbm'));
-    this.input.on('pointerdown', () => this._setInputMode('kbm'));
-    this.input.keyboard.on('keydown', () => this._setInputMode('kbm'));
+    // #523: ESC always opens the shared pause menu.
+    wirePauseMenu(this);
   }
 
-  // #64: read the banked run currency + last run's result (if any) from the registry and
-  // paint them top-right. Called once from create() and again whenever they might have
-  // changed (there's no live-updating source once in the garage, so a single paint suffices).
+  // ── Header chrome (tab bar + SCRAP/last-run + join hint) ─────────────────────────────────────
+  _refreshHeader() {
+    this.tabBar?.layer.destroy();
+    const ready0 = !!this.session.ready[0];
+    this.tabBar = buildTabBar(this, {
+      active: 'GarageScene',
+      canDeploy: true,
+      onDeploy: () => this._toggleReady(0),
+      deployLabel: ready0 ? '✓ READY' : '▶ READY',
+      actions: [
+        ...(import.meta.env.DEV ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }] : []),
+      ],
+    });
+  }
+
   _refreshCurrency() {
     const total = this.registry.get(RUN_CURRENCY_KEY) || 0;
     this.currencyText.setText(`⚙ ${total} SCRAP`);
@@ -235,399 +161,269 @@ export default class GarageScene extends Phaser.Scene {
     }
   }
 
-  // #388: the co-op player-tab row — a strip of small tabs tucked into the band between the tab
-  // bar and the catalog (the same 54px gap the SCRAP/last-run readout uses). That band is empty
-  // on the LEFT and the readout is right-anchored, so this adds nothing to the horizontal
-  // crowding the garage already has at narrow widths (#330/#342). One OCCUPIED tab per joined
-  // player (the active one highlighted) plus a trailing dotted ADD tab inviting the next START,
-  // with a status/hint line beside it. Rebuilt wholesale on every session change via a container.
-  _buildPlayerTabs() {
-    this.tabsY = TAB_BAR_H + 8;
-    this.tabsLayer = this.add.container(0, 0);
-    this.coopHint = this.add.text(0, this.tabsY + 12, '', {
-      fontFamily: 'monospace', fontSize: '11px', color: '#efc14a',
+  _refreshJoinHint() {
+    this.joinHint.setText(canJoin(this.session) ? 'START ON ANOTHER CONTROLLER ADDS A PLAYER' : '');
+  }
+
+  // ── Column layout ─────────────────────────────────────────────────────────────────────────────
+  // Rebuild every joined column at the CURRENT column width (W / count) — called at create() and
+  // again on every join, so an existing column reflows wider→narrower as the squad grows, and a
+  // solo column always fills the whole width rather than sitting squished next to empty ones.
+  _relayoutColumns() {
+    for (const col of this.cols) col?.layer?.destroy(true);
+    this.cols = [];
+    this.colW = Math.floor(this.W / this.session.count);
+    this.colH = this.H - this.colTop;
+    for (const i of activeIndices(this.session)) this._buildColumn(i);
+  }
+
+  // Build every element of column `i` from its own persistent mech slot. All coordinates are
+  // LOCAL to `col.layer` (whose position IS the column's screen offset).
+  _buildColumn(i) {
+    const layer = this.add.container(i * this.colW, this.colTop);
+    const col = { index: i, layer, selectedSlot: TILE_ORDER[0] };
+    this.cols[i] = col;
+    col.mech = this.allMechs[PLAYER_MECH_KEYS[i]];
+    col.textureKey = `garageMech${i}`;
+    buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
+
+    const w = this.colW, h = this.colH;
+    const pad = 8;
+    const innerW = w - pad * 2;
+
+    // Section heights, top to bottom: header, catalog, weapon row, ability row, preview, colour.
+    const HEADER_H = 30, WEAPON_ROW_H = 66, ABILITY_ROW_H = 56, PREVIEW_BOX = Math.min(150, innerW), COLOR_H = 30, GAP = 8;
+    const catalogY = HEADER_H + GAP;
+    const catalogH = Math.max(70, h - HEADER_H - WEAPON_ROW_H - ABILITY_ROW_H - PREVIEW_BOX - COLOR_H - GAP * 5);
+    const weaponY = catalogY + catalogH + GAP;
+    const abilityY = weaponY + WEAPON_ROW_H + GAP;
+    const previewY = abilityY + ABILITY_ROW_H + GAP;
+    const colorY = previewY + PREVIEW_BOX + GAP;
+
+    col.rects = { catalog: { x: pad, y: catalogY, w: innerW, h: catalogH }, weaponY, abilityY, previewY, colorY, pad, innerW };
+
+    // Header: player number (in their colour) + a clickable READY pill.
+    col.headerColor = this.add.rectangle(pad, 6, 12, 12, mechColorFor(col.mech, i)).setOrigin(0, 0);
+    col.headerLabel = this.add.text(pad + 18, 12, `PLAYER ${i + 1}`, {
+      fontFamily: 'monospace', fontSize: '13px', color: UI.text,
     }).setOrigin(0, 0.5);
-    // #487 (third pass): the colour CYCLE control lives WITH the player tabs now (moved up from the
-    // right slice under the preview), so player count, whose turn it is, and their colour are one
-    // grouped cluster. The persistent indicator/arrow objects are built once here; _refreshPlayerTabs
-    // positions them (it trails the tabs' current extent) and _refreshColorCycle repaints them.
-    this._buildColorCycle();
-    this._refreshPlayerTabs();
+    col.readyBg = this.add.rectangle(w - pad - 70, 4, 70, 20, UI.btn).setOrigin(0, 0)
+      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this._toggleReady(i));
+    col.readyText = this.add.text(w - pad - 35, 14, 'READY?', {
+      fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
+    }).setOrigin(0.5);
+    col.layer.add([col.headerColor, col.headerLabel, col.readyBg, col.readyText]);
+
+    // The weapon-tile row (shared layout with the arena HUD) + the ability diamond + core tile.
+    col.tileRefs = {};
+    for (const rect of tileRow(pad, innerW, { y: weaponY, maxSize: 60 })) this._drawColTile(col, rect);
+    const abilCx = pad + innerW / 2, abilCy = abilityY + ABILITY_ROW_H / 2;
+    for (const rect of diamondLayout(abilCx, abilCy, { size: 40 })) this._drawColTile(col, rect);
+    this._drawColTile(col, coreTileRect(abilCx, abilCy, 28));
+
+    // The condensed catalog grid — rebuilt whenever the selected slot (or a mount) changes.
+    col.catalogIcons = [];
+    this._refreshCatalog(col);
+
+    // The live mech preview — built ONCE; every later mount/colour change re-bakes the SAME
+    // texture key in place (buildMechTextures/reskinMech), so these sprites never need rebuilding.
+    const previewCx = pad + innerW / 2, previewCy = previewY + PREVIEW_BOX / 2;
+    col.previewPanel = this.add.rectangle(previewCx, previewCy, PREVIEW_BOX, PREVIEW_BOX, 0x10151c)
+      .setStrokeStyle(1, UI.panelEdge);
+    const scale = (PREVIEW_BOX - 24) / 230;
+    col.previewScale = scale; col.previewCx = previewCx; col.previewCy = previewCy;
+    col.preview = makeMechParts(this, col.textureKey, { x: previewCx, y: previewCy, scale, isPlayer: true });
+    col.layer.add([col.previewPanel, ...col.preview.children]);
+    poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
+
+    // The colour cycle — bottom of the column. Click either half to cycle forward; the pad's
+    // d-pad left/right (see update()) is the primary control.
+    const cy = colorY + COLOR_H / 2;
+    col.colorSwatch = this.add.rectangle(pad + 10, cy, 14, 14, 0xffffff).setOrigin(0.5)
+      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this._cycleColor(col, 1));
+    col.colorName = this.add.text(pad + 22, cy, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: UI.text,
+    }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => this._cycleColor(col, 1));
+    col.colorHint = this.add.text(w - pad, cy, '◀ ▶ D-PAD', {
+      fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
+    }).setOrigin(1, 0.5);
+    col.layer.add([col.colorSwatch, col.colorName, col.colorHint]);
+    this._refreshColorControl(col);
+    this._refreshReady(col);
   }
 
-  // #404 follow-up (third pass): the art options the lab preview is baked with. This method no
-  // longer WRITES those options — it asks `art/playerMechLook.js` for them, the one definition the
-  // arena's spawn/join and damage-reskin paths bake from too. Two rounds of this issue were caused
-  // by the lab assembling its own option object and being a field behind: first no accent at all
-  // (grey in the lab, azure the instant it deployed), then the accent but no `statusSpot` — which
-  // dropped mechArt into its ENEMY branch and painted the reactor spine, its two vents and the
-  // cockpit optic REACTOR PURPLE, which the deployed mech has never had.
-  //
-  // The subject is whoever is BUILDING RIGHT NOW (`session.editing`), so the co-op handoff re-tints
-  // the preview to player 2 the moment the editing surface rebinds to their slot.
-  //
-  // The one deliberate lab-vs-arena difference is `hullFrames`: the preview is a STILL pose that
-  // only ever shows `_hull_0`, and frame 0 is pixel-identical at any frame count
-  // (`strideDir(0, n) === 0`), so it bakes the cheap 4 rather than the arena player's 16 and still
-  // shows the exact same legs. Everything else is the arena's own player look, unedited.
-  _previewArt() {
-    // #487: the preview bakes with the CURRENT builder's chosen colour (their build's pick, or the
-    // per-index auto-default) as the rim-tint accent — so the moment a swatch is clicked, or the
-    // handoff rebinds the surface to the next player, the preview shows that player's colour.
-    return playerMechArt(this.session.editing, {
-      hullFrames: HULL_FRAMES,
-      accent: mechColorFor(this.mech, this.session.editing),
+  _artFor(col) {
+    return playerMechArt(col.index, { hullFrames: HULL_FRAMES, accent: mechColorFor(col.mech, col.index) });
+  }
+
+  // ── Tiles (weapon/ability/core) ──────────────────────────────────────────────────────────────
+  _drawColTile(col, rect) {
+    const loc = rect.loc;
+    const id = this._mountedIn(col, loc);
+    const kind = slotKind(loc);
+    const refs = drawSkillTile(this, col.layer, rect, {
+      loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
+      emptyLabel: kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core',
+      subtitle: id ? getItem(id).name : '',
+    });
+    refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._selectSlot(col, loc));
+    col.tileRefs[loc] = refs;
+  }
+
+  _refreshTile(col, loc) {
+    const refs = col.tileRefs[loc];
+    if (!refs) return;
+    const id = this._mountedIn(col, loc);
+    const kind = slotKind(loc);
+    updateSkillTile(refs, {
+      loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
+      emptyLabel: kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core',
+      subtitle: id ? getItem(id).name : '',
     });
   }
 
-  _refreshPlayerTabs() {
-    this.tabsLayer?.removeAll(true);
-    const tabW = 34, tabH = 24, gap = 6, x0 = 20, y = this.tabsY;
-    const tabs = playerTabs(this.session);
-    for (const tab of tabs) {
-      const x = x0 + tab.index * (tabW + gap);
-      if (tab.occupied) {
-        // #487 (third pass): each occupied tab renders in that player's ACTUAL chosen colour
-        // (their build's pick, or the per-index auto-default) via mechColorFor — not the flat
-        // playerColor default — so the tab row doubles as the colour readout, and the ACTIVE
-        // player's tab repaints LIVE as they cycle (_applyColor re-runs this).
-        const col = mechColorFor(this.allMechs[PLAYER_MECH_KEYS[tab.index]], tab.index);
-        const rect = this.add.rectangle(x, y, tabW, tabH, col, tab.active ? 0.32 : 0.14)
-          .setOrigin(0, 0).setStrokeStyle(tab.active ? 2 : 1, col, tab.active ? 1 : 0.6);
-        const t = this.add.text(x + tabW / 2, y + tabH / 2, `P${tab.index + 1}`, {
-          fontFamily: 'monospace', fontSize: '12px', color: '#e8eef4',
-        }).setOrigin(0.5);
-        this.tabsLayer.add([rect, t]);
-      } else {
-        // The ADD affordance: a dotted-border ghost tab with a plus, meaning "press START to
-        // join". Drawn as a dashed rectangle so it reads as an empty slot, not a real player.
-        const g = this._dashedRect(x, y, tabW, tabH, 0x7c8794);
-        const t = this.add.text(x + tabW / 2, y + tabH / 2, '+', {
-          fontFamily: 'monospace', fontSize: '15px', color: '#7c8794',
-        }).setOrigin(0.5);
-        this.tabsLayer.add([g, t]);
-      }
-    }
-    // #487 (third pass): the colour-cycle control seats just right of the last tab (positioned
-    // here, since the tab row is rebuilt wholesale, so it always trails the tabs' current extent).
-    const tabsEndX = x0 + tabs.length * (tabW + gap);
-    const cycleEndX = this._layoutColorCycle(tabsEndX + 10, y + tabH / 2);
-    // The hint follows the colour control. It names whose turn it is once there is more than one
-    // player, and always reminds that START adds another player while slots remain.
-    const status = garageStatusText(this.session);
-    const addable = canJoin(this.session) ? 'START JOINS' : '';
-    const hint = [status, addable].filter(Boolean).join('   ');
-    this.coopHint.setPosition(cycleEndX + 12, y + tabH / 2).setText(hint);
+  _refreshAllTiles(col) {
+    for (const loc of ALL_SLOTS) this._refreshTile(col, loc);
   }
 
-  // A dashed-border rectangle (Phaser has no dotted stroke), used for the empty "add player" tab.
-  _dashedRect(x, y, w, h, color) {
-    const g = this.add.graphics().lineStyle(1, color, 0.8);
-    const dash = 4, gapLen = 3;
-    const line = (x1, y1, x2, y2) => {
-      const len = Math.hypot(x2 - x1, y2 - y1);
-      const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
-      for (let d = 0; d < len; d += dash + gapLen) {
-        const e = Math.min(d + dash, len);
-        g.beginPath();
-        g.moveTo(x1 + ux * d, y1 + uy * d);
-        g.lineTo(x1 + ux * e, y1 + uy * e);
-        g.strokePath();
-      }
-    };
-    line(x, y, x + w, y); line(x + w, y, x + w, y + h);
-    line(x + w, y + h, x, y + h); line(x, y + h, x, y);
-    return g;
-  }
-
-  // Bind the single editing surface to whichever player's mech the session now says. This IS the
-  // whole "the whole squad shares one garage" mechanism: nothing is duplicated, the same tiles,
-  // catalog and preview are simply pointed at the other saved build. Also rebinds the active
-  // build controller to the current builder's OWN pad (#388: the build surface is driven by whose
-  // turn it is, not always pad 0) and repaints the tab row.
-  _setSession(next) {
-    const prevKey = this.mechKey;
-    this.session = next;
-    this.registry.set('coopPlayerCount', this.session.count);
-    this.mechKey = sessionEditingKey(this.session);
-    if (this.mechKey !== prevKey) {
-      this.allMechs[prevKey] = this.mech;      // commit the outgoing player's work
-      this.mech = this.allMechs[this.mechKey];
-      this.mech.repairAll();
-      // A handoff changes the ACCENT as well as the build, and the rim tint runs over the hull
-      // (leg plates, skirts, thruster glow) just as much as the turret — so this is a full
-      // rebuild, not a reskin. reskinMech deliberately skips the hull (it is damage-independent),
-      // which would have left the outgoing player's colour on the legs. Four garage hull frames
-      // re-raster once per handoff; the arena's 16-frame player set is untouched by this path.
-      buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
-      this._positionPreviewParts();
-      this.selected = null;
-      this.list.setIds(this._eligibleIds(null));
-      this.list.setSelected(null);
-    }
-    saveAllMechs(this.allMechs);
-    this._bindBuilderPad();
-    this._refreshPlayerTabs();
-    // #487: a handoff rebinds the picker to the new builder's colour — repaint the indicator.
-    this._refreshColorCycle();
-    this.refresh();
-  }
-
-  // Point the catalog-navigation PadEdges at the CURRENT builder's physical pad (player index ==
-  // pad index). Solo = pad 0, unchanged. This is what makes player 2's controller — not player
-  // 1's — drive the paper-doll/catalog during player 2's turn (#388).
-  _bindBuilderPad() {
-    this.padEdges = new PadEdges(this, this.session.editing);
-  }
-
-  // Per-frame: has an unclaimed controller pressed START to JOIN? Players claim pads 0..count-1,
-  // so the unclaimed pads are count..MAX-1. Mirrors the arena's `_updateCoopJoin` pad model
-  // (scenes/arena/coop.js) so the two ways in behave identically. Inert in solo only until
-  // someone presses a second pad — a single-player garage with no second controller never joins.
-  _updateGarageJoin() {
-    if (!this._joinEdges || !canJoin(this.session)) return;
-    for (let pad = this.session.count; pad < MAX_GARAGE_PLAYERS; pad++) {
-      if (this._joinEdges[pad]?.pressed(PAD.START)) { this._joinPlayer(); return; }
-    }
-  }
-
-  _joinPlayer() {
-    Audio.ui('deploy');
-    this._setSession(joinPlayer(this.session));   // count++, editing unchanged (join never steals control)
-    this.toast(`PLAYER ${this.session.count} JOINED — PRESS START TO HAND OFF`, UI.accent);
-  }
-
-  // Switch the displayed control scheme (and focus-cursor/legend visibility), redrawing once.
-  // Waking the pad drops focus into the full catalog (catalog-first, #70); dropping back to
-  // kbm restores the mouse's slot-filtered view so no stale pad state lingers under the mouse.
-  _setInputMode(mode) {
-    if (this.inputMode === mode) return;
-    this.inputMode = mode;
-    this.padActive = mode === 'pad';
-    if (mode === 'pad') this._enterCatalogFull();
-    else this._restoreMouseCatalog();
-    this.refresh();
-  }
-
-  // Catalog-first pad entry: show the whole unfiltered catalog, clear any mouse slot
-  // selection, and put the focus cursor on the first card. Never calls the slot-filtering
-  // _selectSlot — the pad path always browses the full id set.
-  _enterCatalogFull() {
-    this.selected = null;
-    this.list.setIds(this.catalogIds);
-    this.list.setSelected(null);
-    this.list.setFocus(0);
-  }
-
-  // Return to the mouse's expected state: the slot-filtered catalog (or the full set when no
-  // slot is selected), the mounted item highlighted, and no pad focus cursor.
-  _restoreMouseCatalog() {
-    this.list.setIds(this._eligibleIds(this.selected));
-    this.list.setSelected(this.selected ? this._mountedIn(this.selected) : null);
-    this.list.setFocus(null);
-  }
-
-  // Per-frame: tick the live catalog previews, then handle the gamepad (#70, catalog-first).
-  // D-pad/left-stick up-down browse the full catalog with auto-scroll. A slot's own fire bind
-  // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
-  // already holds exactly that item; a locked item routes to purchase instead. Start deploys;
-  // Select opens the pause menu (#523, wirePauseMenu) rather than cycling tabs any more. (#248:
-  // the X/Y chassis-cycle shortcut is disabled for now — see cycleChassis.) The first pad press
-  // of a session just wakes the cursor (reveals it at the top of the catalog).
-  update(time, delta) {
-    this.list.update(time, delta);
-
-    // #388: a new controller joining via START on an unclaimed pad, checked before the builder's
-    // own input so a join is never mistaken for a build action.
-    this._updateGarageJoin();
-
-    const e = this.padEdges;
-    const pad = e.pad();
-    if (!pad) return;
-
-    // The current builder's START: hand off to the next joined player, or (if they are the last)
-    // deploy. deploy() itself branches on garageAction, so this is the same call for both.
-    if (e.pressed(PAD.START)) { this.deploy(); return; }
-    // #248: X/Y chassis-cycle pad shortcut disabled along with the rest of the switcher.
-
-    // #487 (second pass): B advances the mech colour, X steps it back — spatially east/west face
-    // buttons, matching the on-screen ‹ › arrows. Neither collides with the slot binds (LT/RT/LB/RB)
-    // or START. Cycles directly (no catalog-cursor wake gate — this isn't a catalog action).
-    if (e.pressed(PAD.B)) { this._cycleColor(+1); return; }
-    if (e.pressed(PAD.X)) { this._cycleColor(-1); return; }
-
-    for (const loc of TILE_ORDER) {
-      if (e.pressed(SLOT_BUTTON[loc])) {
-        if (this._wakePad()) return;   // first pad press just reveals the catalog cursor
-        this._slotBind(loc);
-        return;
-      }
-    }
-
-    const step = this.dirRepeat.step(this._padDir(pad), this.time.now);
-    if (!step) return;
-    if (this._wakePad()) return;       // first pad press just reveals the catalog cursor at 0
-    if (step === 'up') this.list.moveFocus(-1);
-    else if (step === 'down') this.list.moveFocus(+1);
-  }
-
-  // Reveal the pad cursor on the first pad use. Returns true when this call was that first
-  // wake, so the caller treats the press as "show me the cursor" rather than an action.
-  _wakePad() {
-    if (this.padActive) return false;
-    this._setInputMode('pad');
-    return true;
-  }
-
-  // The held 4-way direction this frame — d-pad first, else the left stick's dominant axis.
-  _padDir(pad) {
-    const btn = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
-    if (btn(PAD.DPAD_UP)) return 'up';
-    if (btn(PAD.DPAD_DOWN)) return 'down';
-    if (btn(PAD.DPAD_LEFT)) return 'left';
-    if (btn(PAD.DPAD_RIGHT)) return 'right';
-    const s = pad.leftStick;
-    return s ? dominantDir(s.x, s.y) : null;
-  }
-
-  // A slot's fire bind (RT/LT/RB/LB): assign the highlighted catalog item straight into
-  // that slot — "highlight the autocannon, pull RT to put it in the right arm." A bind
-  // always mounts/replaces and never removes; re-pressing a bind while the slot already
-  // holds that exact item is a no-op (it stays mounted, #70). An invalid target (melee
-  // outside an arm) toasts via _mountInto; a locked item routes to purchase.
-  _slotBind(loc) {
-    const id = this.list.focusedId();
-    if (id) this._quickMount(loc, id);
-  }
-
-  _quickMount(loc, id) {
-    if (!this.unlocked.has(id)) { this._purchase(id); return; }
-    // A slot bind always mounts / replaces; re-pressing the same item is a no-op (#70). A
-    // slot bind never removes a weapon — there's no toggle-off, and no separate pad clear.
-    if (slotBindAction(this.mech.mounts[loc][0] ?? null, id) === 'mount') this._mountInto(loc, id);
-  }
-
-  button(x, y, w, h, label, onClick, color = UI.text) {
-    const r = this.add.rectangle(x, y, w, h, UI.btn).setOrigin(0, 0)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-    const t = this.add.text(x + w / 2, y + h / 2, label, { fontFamily: 'monospace', fontSize: '13px', color }).setOrigin(0.5);
-    r.on('pointerover', () => r.setFillStyle(UI.btnHover));
-    r.on('pointerout', () => r.setFillStyle(UI.btn));
-    r.on('pointerdown', onClick);
-    return { r, t };
-  }
-
-  // Build (or rebuild) the shared tab bar. Rebuilt on refresh so Deploy greys/ungreys as the
-  // build becomes valid/invalid.
-  _buildHeader() {
-    this.tabBar?.layer.destroy();
-    this.tabBar = buildTabBar(this, {
-      active: 'GarageScene',
-      canDeploy: this.mech.isComplete(),
-      onDeploy: () => this.deploy(),
-      // #349: in co-op, while player 1 is the one building, the pinned action is the HANDOFF —
-      // same button, different label, so no new control was added to the bar.
-      deployLabel: garageActionLabel(this.session),
-      // #445: the run-stats overlay's opener lives IN the tab row (same size/gap/alignment as the
-      // tabs), and only in dev builds — spread in exactly like the MUSIC tab is in tabBar.js.
-      // The SIMUL entry (prototype, see SimulGarageScene.js) is not dev-gated — it's the whole
-      // point of the prototype that Jackson can jump to it and evaluate it live.
-      actions: [
-        ...(import.meta.env.DEV ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }] : []),
-        { key: 'SIMUL', onClick: () => this.scene.start('SimulGarageScene') },
-      ],
-    });
-  }
-
-  // Swap to the next chassis, carrying the loadout over (all chassis share the same four
-  // weapon skill slots, so mounts stay valid).
-  // #248: unreachable from the UI for now — the keyboard/pad shortcuts and the chassis-switch
-  // button are all disabled (light/heavy chassis are off; every mech is locked to medium via
-  // rosters.js's `migrate` hook). Left in place, untouched, so re-wiring a control back to it
-  // is the entire job of re-enabling the switcher later.
-  cycleChassis(dir = 1) {
-    const i = CHASSIS_IDS.indexOf(this.mech.chassisId);
-    const n = CHASSIS_IDS.length;
-    const next = CHASSIS_IDS[(i + dir + n) % n];
-    const data = this.mech.toJSON();
-    data.chassisId = next;
-    this.mech = new Mech(data);
-    this.allMechs[this.mechKey] = this.mech;   // #349: whichever player is currently editing
-    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
-    this._positionPreviewParts();  // layout (side-torso/arm placement) changes with the chassis
-    saveAllMechs(this.allMechs);
-    this._chassisBtn?.t.setText(`⟳ ${this.mech.chassis.name}`);
-    this.refresh();
-  }
-
-  // Catalog ids eligible for a slot (occupancy ignored — picking replaces). With no slot
-  // selected, the whole (weapon) catalog shows — abilities/core items are only ever browsed
-  // once their own slot is selected, never mixed into the unfiltered view.
-  // #506: an ability/core slot swaps the SAME WeaponCardList to its own small catalog instead
-  // of the weapon-filtering body below; a weapon slot keeps the #188 weapon-slot/melee-arm rule.
+  // ── The condensed catalog grid ───────────────────────────────────────────────────────────────
   _eligibleIds(loc) {
-    if (!loc) return this.catalogIds;
     const kind = slotKind(loc);
     if (kind === 'ability') return Object.keys(ABILITIES);
     if (kind === 'core') return Object.keys(CORE_ITEMS);
     return this.catalogIds.filter((id) => {
-      if (!isWeapon(id) || !WEAPON_SLOTS.includes(loc)) return false;
+      if (!WEAPON_SLOTS.includes(loc)) return false;
       if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
       return true;
     });
   }
 
-  // What's currently mounted in `loc`, across all three slot families (#506).
-  _mountedIn(loc) {
+  // Auto-fit a square grid of `n` icons into `w`x`h` with no scrolling — shrink the square size
+  // (down to a hard floor) until every row fits, rather than a fixed size that might overflow.
+  _fitGrid(n, w, h, { gap = 4, min = 20, max = 34 } = {}) {
+    for (let size = max; size >= min; size--) {
+      const cols = Math.max(1, Math.floor((w + gap) / (size + gap)));
+      const rows = Math.ceil(n / cols);
+      if (rows * (size + gap) - gap <= h) return { size, cols };
+    }
+    const cols = Math.max(1, Math.floor((w + gap) / (min + gap)));
+    return { size: min, cols };
+  }
+
+  _refreshCatalog(col) {
+    for (const o of col.catalogIcons) o.destroy();
+    col.catalogIcons = [];
+    const ids = this._eligibleIds(col.selectedSlot);
+    const { x, y, w, h } = col.rects.catalog;
+    const gap = 4;
+    const { size, cols } = this._fitGrid(ids.length, w, h, { gap });
+    const mountedId = this._mountedIn(col, col.selectedSlot);
+    ids.forEach((id, idx) => {
+      const cx = x + (idx % cols) * (size + gap);
+      const cy = y + Math.floor(idx / cols) * (size + gap);
+      const locked = isWeapon(id) && !this.unlocked.has(id);
+      const mounted = id === mountedId;
+      const bg = this.add.rectangle(cx, cy, size, size, 0x131820, 1).setOrigin(0, 0)
+        .setStrokeStyle(mounted ? 2 : 1, mounted ? 0xefc14a : 0x2a333f, mounted ? 1 : 0.7)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this._clickCatalogItem(col, id));
+      const icon = this.add.image(cx + size / 2, cy + size / 2, itemFxKey(id))
+        .setDisplaySize(size * 0.62, size * 0.62).setAlpha(locked ? 0.35 : 1);
+      col.layer.add([bg, icon]);
+      col.catalogIcons.push(bg, icon);
+      if (locked) {
+        const lock = this.add.text(cx + size / 2, cy + size / 2, '🔒', {
+          fontFamily: 'monospace', fontSize: `${Math.max(9, Math.floor(size * 0.4))}px`,
+        }).setOrigin(0.5);
+        col.layer.add(lock);
+        col.catalogIcons.push(lock);
+      }
+    });
+    if (!ids.length) {
+      const empty = this.add.text(x + w / 2, y + 12, 'nothing eligible', {
+        fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
+      }).setOrigin(0.5, 0);
+      col.layer.add(empty);
+      col.catalogIcons.push(empty);
+    }
+  }
+
+  _selectSlot(col, loc) {
+    Audio.ui('menuNav');
+    col.selectedSlot = loc;
+    this._refreshAllTiles(col);
+    this._refreshCatalog(col);
+  }
+
+  _mountedIn(col, loc) {
     const kind = slotKind(loc);
-    if (kind === 'ability') return this.mech.abilityMounts[loc] ?? null;
-    if (kind === 'core') return this.mech.coreMounts[loc] ?? null;
-    return this.mech.usedSlots(loc) >= 1 ? this.mech.mounts[loc][0] : null;
+    if (kind === 'ability') return col.mech.abilityMounts[loc] ?? null;
+    if (kind === 'core') return col.mech.coreMounts[loc] ?? null;
+    return col.mech.usedSlots(loc) >= 1 ? col.mech.mounts[loc][0] : null;
   }
 
-  // Select a slot to edit: filter the catalog to what fits it and highlight the mounted item.
-  _selectSlot(loc) {
-    Audio.ui('menuNav');   // #178: short quiet blip — skill-tile focus change
-    this.selected = this.selected === loc ? null : loc;
-    this.list.setIds(this._eligibleIds(this.selected));
-    this.list.setSelected(this.selected ? this._mountedIn(this.selected) : null);
-    this.refresh();
-  }
-
-  // The top catalog area: the card list, full width, between `top` and the bottom strip.
-  // #470: there is nothing else in this region any more — the SFX panel and the explosion/UI/
-  // demo-sound trigger rows that used to reserve space here moved to the AUDIO tab — so this is
-  // ONE unconditional rect, identical in dev and production.
-  _topRegion(top) {
-    const bottom = this.H - this.bottomH - 16;
-    return { list: { x: 20, y: top, w: this.W - 40, h: bottom - top } };
-  }
-
-  // Pick a catalog item: mount it into the selected slot. With no slot selected, picking a card
-  // selects the first slot it fits. Selecting a weapon never removes it — re-clicking the item
-  // already mounted in the selected slot is a no-op (#70); only choosing a DIFFERENT item
-  // replaces. #65: a LOCKED item can't be mounted at all — clicking it attempts to buy it
-  // instead (spends SCRAP, permanent). Abilities/core items are always unlocked (#506), and —
-  // unlike weapon slots, which must stay filled — re-clicking one already mounted UNMOUNTS it,
-  // since an empty ability/core slot is a legal build choice.
-  _pickItem(id) {
+  _clickCatalogItem(col, id) {
     if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
-    if (!this.selected) {
-      const loc = this._eligibleSlotFor(id);
-      if (loc) this._selectSlot(loc);
-      return;
-    }
-    const cur = this._mountedIn(this.selected);
-    if (cur === id) {
-      if (slotKind(this.selected) !== 'weapon') this._unmountFrom(this.selected);
-    } else {
-      this._mountInto(this.selected, id);
-    }
-    this.list.setSelected(this._mountedIn(this.selected));
+    this._mountInto(col, col.selectedSlot, id);
   }
 
-  // #65: spend banked SCRAP to permanently unlock `id`. Insufficient funds just toasts —
-  // no partial spend, no per-use cost once unlocked (a flat, one-time purchase).
+  // A weapon slot always mounts/replaces (re-picking the mounted item is a no-op, and there's no
+  // unmount — a weapon slot must stay filled to deploy); an ability/core slot is optional, so
+  // re-picking the mounted item UNMOUNTS it instead.
+  _mountInto(col, loc, itemId) {
+    const mech = col.mech, kind = slotKind(loc);
+    if (kind === 'ability' || kind === 'core') {
+      const prevItem = this._mountedIn(col, loc);
+      if (prevItem === itemId) { this._unmountFrom(col, loc); return; }
+      if (prevItem) (kind === 'ability' ? mech.unmountAbility(loc) : mech.unmountCore(loc));
+      const res = kind === 'ability' ? mech.mountAbility(loc, itemId) : mech.mountCore(loc, itemId);
+      if (!res.ok) {
+        if (prevItem) (kind === 'ability' ? mech.mountAbility(loc, prevItem) : mech.mountCore(loc, prevItem));
+        this.toast(res.reason); return;
+      }
+    } else {
+      if (this._mountedIn(col, loc) === itemId) return;
+      const prev = mech.usedSlots(loc) >= 1 ? mech.mounts[loc][0] : null;
+      if (prev) mech.unmount(loc, 0);
+      const res = mech.mount(loc, itemId);
+      if (!res.ok) {
+        if (prev) mech.mount(loc, prev);
+        this.toast(res.reason); return;
+      }
+    }
+    Audio.ui('equip');
+    this._onMechChanged(col);
+  }
+
+  // Pad B / the ability-core "clear" path — weapon slots have no unmount at all (see above).
+  _unmountFrom(col, loc) {
+    const kind = slotKind(loc);
+    if (kind === 'ability') col.mech.unmountAbility(loc);
+    else if (kind === 'core') col.mech.unmountCore(loc);
+    else return;
+    Audio.ui('equip');
+    this._onMechChanged(col);
+  }
+
+  _onMechChanged(col) {
+    reskinMech(this, col.textureKey, col.mech, this._artFor(col));
+    saveAllMechs(this.allMechs);
+    this._refreshAllTiles(col);
+    this._refreshCatalog(col);
+  }
+
+  // Pad A/X: cycle the focused slot's mount forward/back through its own eligible list, reusing
+  // the same mount path (and so the same lock/purchase gate) a direct catalog click would.
+  _cycleMount(col, dir) {
+    const ids = this._eligibleIds(col.selectedSlot);
+    const next = cycleListId(ids, this._mountedIn(col, col.selectedSlot), dir);
+    if (next != null) this._clickCatalogItem(col, next);
+  }
+
+  // #65: spend banked SCRAP to permanently unlock `id` — one shared unlock set/currency every
+  // column's catalog reads from (one wallet, same as every persistent build slot always shared).
   _purchase(id) {
     const price = costOf(id);
     const balance = this.registry.get(RUN_CURRENCY_KEY) || 0;
@@ -638,313 +434,117 @@ export default class GarageScene extends Phaser.Scene {
     this.registry.set(RUN_CURRENCY_KEY, remaining);
     saveRunCurrency(remaining);
     this._refreshCurrency();
-    this.list.refreshLocks();
+    for (const col of this.cols) if (col) this._refreshCatalog(col);
     this.toast(`UNLOCKED ${getItem(id).name}`, UI.accent);
   }
 
-  _eligibleSlotFor(id) {
-    return TILE_ORDER.find((loc) => this._eligibleIds(loc).includes(id)) ?? null;
-  }
-
-  // A small live, top-down render of the actual mech (hull + turret), in the bottom strip's
-  // right slice. The sprites reference fixed texture keys; onChange re-skins those textures in
-  // place.
-  // #248: light/heavy chassis are disabled for now, so the clickable chassis-switch button is
-  // gone — swap a `this.button(...)` call (see cycleChassis) back in here to re-enable switching.
-  // #454: the plain chassis-name label that #248 left in its place is gone too — with exactly one
-  // chassis to fly, "TROOPER" told the player nothing. Only the label was removed; the chassis
-  // data + cycleChassis are untouched.
-  _buildPreview() {
-    // #487 (third pass): the colour CYCLE control moved UP to the player-tab row (see
-    // _buildColorCycle / _refreshPlayerTabs), so the preview is no longer shrunk-and-top-hugged to
-    // seat a picker beneath it — it goes back to the full-size box centred in the strip's usable
-    // band (its state before #487's second pass parked the picker here).
-    const box = this.bottomH - 56;                             // square preview size
-    const cx = this.W - this.previewW / 2 - 20;                // centred in the right slice
-    const cy = (this.H - this.bottomH + 6 + this._rowBottom) / 2;
-    this.previewPanel = this.add.rectangle(cx, cy, box, box, 0x10151c).setStrokeStyle(1, UI.panelEdge);
-    const scale = (box - 30) / 230;
-    this._previewScale = scale;
-    this._previewCx = cx; this._previewCy = cy + 8;
-    // #404 (third pass): the sprite stack is built by the SAME shared helper the arena mech view
-    // uses (art/mechView.js) — hull → side torsos → arms, each with its #433 muzzle-glow overlay
-    // above it → turret — rather than a hand-maintained copy of that list. `isPlayer: true`,
-    // because the lab is showing a PLAYER mech: it gets the lit muzzle overlays exactly as the
-    // deployed mech does. The only lab-specific bits are the fixed screen position and the preview
-    // scale; the sprites are free (not containered) because nothing here moves.
-    this._preview = makeMechParts(this, 'garageMech', { x: cx, y: cy + 8, scale, isPlayer: true });
-    this.previewHull = this._preview.hull;
-    this.previewTurret = this._preview.turret;
-    this._positionPreviewParts();
-  }
-
-  // #487 (second pass): the mech-colour CYCLE control — one indicator swatch + the colour's name.
-  // The button cycle (gamepad B/X, keyboard '.'/',') is the point; #487 (fourth pass) replaced the
-  // ‹ › arrows with clicking the SWATCH itself (forward-only) as the mouse affordance. #487 (third
-  // pass): it moved from under the preview box UP to the player-tab row, so the persistent objects
-  // are built here at a placeholder position and laid out by `_layoutColorCycle` (called from
-  // `_refreshPlayerTabs`, which trails them off the tabs' extent); `_refreshColorCycle` repaints it.
-  _buildColorCycle() {
-    // The indicator IS the control: a small swatch on the left, the colour name to its right.
-    // Clicking EITHER cycles FORWARD one colour (wrapping, skipping taken co-op colours); the
-    // swatch + name read as ONE clickable unit — hovering either brightens both (swatch stroke +
-    // name text), and both carry the hand cursor, giving the same affordance the old arrows had.
-    const over = () => this._hoverColorCycle(true);
-    const out = () => this._hoverColorCycle(false);
-    const click = () => this._cycleColor(+1);
-    this._colorSwatch = this.add.rectangle(0, 0, 14, 14, 0xffffff)
-      .setOrigin(0.5).setStrokeStyle(1, UI.panelEdge, 0.85)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', over).on('pointerout', out).on('pointerdown', click);
-    this._colorName = this.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.text,
-    }).setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerover', over).on('pointerout', out).on('pointerdown', click);
-    this._refreshColorCycle();
-  }
-
-  // Brighten (or restore) the whole swatch+name unit together, so hovering either half lights
-  // both — the shared clickable affordance for the forward-cycle click.
-  _hoverColorCycle(on) {
-    this._colorSwatch.setStrokeStyle(1, on ? 0xffffff : UI.panelEdge, on ? 1 : 0.85);
-    this._colorName.setColor(on ? '#ffffff' : UI.text);
-  }
-
-  // Lay the colour-cycle control out from a left edge `leftX`, vertically centred on `cy`, and
-  // return its right edge (so the caller can seat the hint after it). A fixed name reserve keeps
-  // the returned edge stable as the colour name (up to "CHARTREUSE") changes width.
-  _layoutColorCycle(leftX, cy) {
-    const NAME_RESERVE = 64;
-    this._colorSwatch.setPosition(leftX + 8, cy);
-    this._colorName.setPosition(leftX + 19, cy);
-    return leftX + 19 + NAME_RESERVE;
-  }
-
-  // The joined players' builds, in player order — what co-op distinctness reads. In solo this is
-  // just `[mech1]`, so `takenSwatches` is empty and P1 picks freely. Each entry is the live Mech
-  // in the roster (the currently-edited one included, since `this.mech` IS `allMechs[mechKey]`).
-  _joinedBuilds() {
-    const builds = [];
-    for (let i = 0; i < this.session.count; i++) builds.push(this.allMechs[PLAYER_MECH_KEYS[i]]);
-    return builds;
-  }
-
-  // Repaint the indicator to the current builder's resolved colour + its name. Re-run on every
-  // cycle / handoff / join, so a co-op handoff shows the incoming player's own colour. The cycle
-  // itself enforces co-op distinctness (it only ever lands on a colour the editing player may
-  // hold), so there is nothing to grey out here — the indicator only shows the ONE current pick.
-  _refreshColorCycle() {
-    if (!this._colorSwatch) return;
-    const current = mechColorFor(this.mech, this.session.editing);
-    this._colorSwatch.setFillStyle(current, 1);
-    this._colorName.setText(swatchName(current));
-  }
-
-  // Advance the current builder's colour one step (`dir` +1 forward / -1 back) to the next
-  // AVAILABLE swatch, skipping any a live co-op player already holds (`cycleSwatch`). Bound to the
-  // gamepad (B forward, X back), the keyboard ('.'/','), and a forward click on the swatch itself.
-  _cycleColor(dir) {
-    const current = mechColorFor(this.mech, this.session.editing);
-    this._applyColor(cycleSwatch(this._joinedBuilds(), this.session.editing, current, dir));
-  }
-
-  // Commit a colour to the current builder's slot. `hex` is already a valid, available swatch
-  // (cycleSwatch guarantees it); a no-op when it equals the current colour. A colour change
-  // re-tints the WHOLE mech — hull plates included — so it is a full texture rebuild, exactly like
-  // the handoff path; `reskinMech` skips the hull and would leave the old colour on the legs.
-  // Persists immediately so the pick survives the session.
-  _applyColor(hex) {
-    if (this.mech.color === hex) return;
-    this.mech.color = hex;
+  // ── Colour cycle ─────────────────────────────────────────────────────────────────────────────
+  _cycleColor(col, dir) {
+    if (!col) return;
+    const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
+    const current = mechColorFor(col.mech, col.index);
+    const next = cycleSwatch(builds, col.index, current, dir);
+    if (next === col.mech.color) return;
+    col.mech.color = next;
     Audio.ui('menuNav');
-    buildMechTextures(this, 'garageMech', this.mech, this._previewArt());
-    this._positionPreviewParts();
+    buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
-    this._refreshColorCycle();
-    // #487 (third pass): the active player's TAB is now the colour readout too, so repaint the
-    // tab row live on every cycle (mechColorFor picks up the just-committed colour).
-    this._refreshPlayerTabs();
+    poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    this._refreshColorControl(col);
+    // The header swatch shows the same colour — cheap enough to just repaint it too.
+    col.headerColor?.setFillStyle(next, 1);
   }
 
-  // Place + pivot the static preview side-torso + arm sprites at their joints. Poses through the
-  // arena's own joint math (art/mechView.js `poseMechParts`) with an EMPTY tilt map — the lab shows
-  // the mech at REST, where the arena's live weapon-convergence tilts are 0 too, so this is the
-  // same pose, not a different one. The preview faces "up" (turret rotation 0): passing
-  // angle = -π/2 gives rot = 0 (matching the turret) and the right dx/dy. Called on build and after
-  // a chassis switch (which changes mechLayout → part placement).
-  _positionPreviewParts() {
-    if (!this._preview) return;
-    poseMechParts(this._preview, this.mech, -Math.PI / 2, this._previewScale,
-      this._previewCx, this._previewCy, {});
+  _refreshColorControl(col) {
+    const current = mechColorFor(col.mech, col.index);
+    col.colorSwatch.setFillStyle(current, 1);
+    col.colorName.setText(swatchName(current));
   }
 
-  // The shared skill-tile row, along the bottom of the LEFT region.
-  _tileRow() {
-    return tileRow(this.dollX, this.dollW, { bottom: this._rowBottom, maxSize: 150 });
+  // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
+  _refreshReady(col) {
+    const ready = this.session.ready[col.index];
+    col.readyBg.setFillStyle(ready ? 0x1c3a24 : UI.btn).setStrokeStyle(1, ready ? 0x7bd17b : UI.panelEdge);
+    col.readyText.setText(ready ? '✓ READY' : 'READY?').setColor(ready ? UI.good : UI.dim);
   }
 
-  // The ability tiles + core tile's shared centre — the reserved slice at the right end of the
-  // bottom strip (see `create()`), vertically centred on the same band the tile row and the mech
-  // preview occupy.
-  _abilityClusterCenter() {
-    const top = this.H - this.bottomH + 6;
-    return { cx: this.abilityClusterX + this.abilityClusterW / 2, cy: (top + this._rowBottom) / 2 };
-  }
-
-  _abilityTiles() {
-    const { cx, cy } = this._abilityClusterCenter();
-    return diamondLayout(cx, cy, { size: 44 });
-  }
-
-  _coreTile() {
-    const { cx, cy } = this._abilityClusterCenter();
-    return coreTileRect(cx, cy, 30);
-  }
-
-  // Rebuild the doll: the shared skill-tile row (weapons) plus the ability tiles + core tile,
-  // each click-to-mount / click-to-clear. Also rebuilds the tab bar so Deploy reflects the
-  // current build validity, and repaints the pad legend (the catalog-first button map; hidden
-  // entirely under mouse/keyboard).
-  refresh() {
-    this._buildHeader();
-    this.doll.removeAll(true);
-    for (const rect of this._tileRow()) this._drawTile(rect);
-    for (const rect of this._abilityTiles()) this._drawTile(rect);
-    this._drawTile(this._coreTile());
-    this.legend?.setText(this._legendText()).setVisible(this.padActive);
-  }
-
-  _legendText() {
-    // #248: 'X/Y CHASSIS' dropped — the chassis switcher is disabled for now. #506: the ability/
-    // core slots have no pad quick-mount (deliberately deferred — see plan), so the legend still
-    // only names the weapon binds.
-    return '▲▼ BROWSE   RT/LT/RB/LB ASSIGN   RE-PRESS CLEARS   SELECT TABS   START TO BASE';
-  }
-
-  // #506: one draw path for all three slot families — a weapon tile (fire bind, must stay
-  // filled), an ability tile (numbered/face-button bind, optional), or the core tile (no bind at
-  // all, optional). `_mountedIn`/`slotKind` are the only per-kind branches; the paint call itself
-  // is identical.
-  _drawTile(rect) {
-    const loc = rect.loc;
-    const id = this._mountedIn(loc);
-    const selected = loc === this.selected;
-    const kind = slotKind(loc);
-    const bindGlyph = kind === 'weapon'
-      ? (this.inputMode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key)
-      : kind === 'ability'
-        ? (this.inputMode === 'pad' ? ABILITY_BINDS[loc].pad : ABILITY_BINDS[loc].key)
-        : '';
-    const emptyLabel = kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core';
-    const refs = drawSkillTile(this, this.doll, rect, {
-      loc, itemId: id, mode: this.inputMode, selected, bindGlyph, emptyLabel,
-      subtitle: id ? getItem(id).name : '', subtitleColor: TILE_UI.text,
-    });
-    // Catalog-first pad flow (#70): the pad cursor lives on a catalog card, not the tile row,
-    // so tiles carry no pad focus ring — they just render the current mounts + fire binds.
-    // Click a tile to edit that slot — the catalog filters to what fits it (mouse path).
-    refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._selectSlot(loc));
-  }
-
-  // Mount `itemId` into `loc`, replacing whatever was there. An invalid mount (e.g. melee
-  // outside an arm) is rejected with a toast and the displaced item restored.
-  // #506: mountAbility/mountCore (unlike weapon mount) refuse to mount into an OCCUPIED slot —
-  // they only handle moving the item itself off whatever OTHER slot it was previously in — so a
-  // slot that already holds a different item still needs the same unmount-then-mount-with-
-  // restore-on-failure dance the weapon path below uses.
-  _mountInto(loc, itemId) {
-    if (!itemId) return;
-    const kind = slotKind(loc);
-    if (kind === 'ability' || kind === 'core') {
-      const prevItem = this._mountedIn(loc);
-      if (prevItem) this._unmountFrom(loc, { silent: true });
-      const res = kind === 'ability' ? this.mech.mountAbility(loc, itemId) : this.mech.mountCore(loc, itemId);
-      if (!res.ok) {
-        if (prevItem) (kind === 'ability' ? this.mech.mountAbility(loc, prevItem) : this.mech.mountCore(loc, prevItem));
-        this.refresh();
-        return this.toast(res.reason);
-      }
-      Audio.ui('equip');
-      return this.onChange();
+  // Toggling a player TO ready is gated on their build being complete (every weapon slot filled —
+  // ability/core stay optional, #506); toggling back off is always allowed. In practice a weapon
+  // slot can never be left empty through this UI (mounting always replaces, there is no weapon
+  // unmount), so this only ever fires for a slot that somehow still starts incomplete.
+  _toggleReady(i) {
+    const col = this.cols[i];
+    if (!col) return;
+    const goingReady = !this.session.ready[i];
+    if (goingReady && !col.mech.isComplete()) {
+      const empty = MOUNT_LOCATIONS.filter((loc) => col.mech.usedSlots(loc) === 0);
+      const names = empty.map((loc) => LOCATION_INFO[loc].short).join(', ') || 'all weapon slots';
+      this.toast(`P${i + 1} BUILD INCOMPLETE — fill ${names}`);
+      return;
     }
-    const prev = this.mech.usedSlots(loc) >= 1 ? this.mech.mounts[loc][0] : null;
-    if (prev) this.mech.unmount(loc, 0);
-    const res = this.mech.mount(loc, itemId);
-    if (!res.ok) {
-      if (prev) this.mech.mount(loc, prev);   // restore the displaced item
-      this.refresh();
-      return this.toast(res.reason);
-    }
-    Audio.ui('equip');   // #178: confident mechanical clunk-click — fresh mount or a swap
-    this.onChange();
+    this.session = toggleReady(this.session, i);
+    Audio.ui('menuNav');
+    this._refreshReady(col);
+    if (i === 0) this._refreshHeader();
+    if (allReady(this.session)) this._deploy();
   }
 
-  // #506: click-again-to-unmount, for the ability/core slots only (weapon slots must stay
-  // filled to deploy — see Mech.isComplete — so they have no unmount interaction at all).
-  // `silent` skips the sound/texture-rebuild/refresh — used by _mountInto's own internal
-  // vacate-the-slot-first step, where a mount immediately follows and would otherwise double up.
-  _unmountFrom(loc, { silent = false } = {}) {
-    const kind = slotKind(loc);
-    if (kind === 'ability') this.mech.unmountAbility(loc);
-    else if (kind === 'core') this.mech.unmountCore(loc);
-    else return;
-    if (silent) return;
+  _deploy() {
+    for (const i of activeIndices(this.session)) this.allMechs[PLAYER_MECH_KEYS[i]]?.repairAll();
+    saveAllMechs(this.allMechs);
+    this.registry.set('coopMechKeys', PLAYER_MECH_KEYS.slice(0, this.session.count));
+    this.registry.set('coopPlayerCount', this.session.count);
     Audio.ui('equip');
-    this.onChange();
+    this.toast('ALL READY — DEPLOYING', UI.accent);
+    this.time.delayedCall(650, () => this.scene.start('BaseScene'));
   }
 
-  onChange() {
-    reskinMech(this, 'garageMech', this.mech, this._previewArt());
-    saveAllMechs(this.allMechs);
-    this.refresh();
+  // ── Join ─────────────────────────────────────────────────────────────────────────────────────
+  _joinPlayer() {
+    if (!canJoin(this.session)) return;
+    Audio.ui('deploy');
+    this.session = joinSimulPlayer(this.session);
+    this.registry.set('coopPlayerCount', this.session.count);
+    this._relayoutColumns();
+    this._refreshJoinHint();
+    this._refreshHeader();
+    this.toast(`PLAYER ${this.session.count} JOINED`, UI.accent);
+  }
+
+  _updateJoin() {
+    if (!canJoin(this.session)) return;
+    for (let pad = this.session.count; pad < MAX_GARAGE_PLAYERS; pad++) {
+      if (this.padEdges[pad]?.pressed(PAD.START)) { this._joinPlayer(); return; }
+    }
   }
 
   toast(msg, color = UI.bad) {
-    if (this._toast) this._toast.destroy();
-    this._toast = this.add.text(this.W / 2, this.H - 28, msg, {
+    if (this._toastText) this._toastText.destroy();
+    this._toastText = this.add.text(this.W / 2, this.H - 24, msg, {
       fontFamily: 'monospace', fontSize: '14px', color, backgroundColor: '#161b22', padding: { x: 8, y: 4 },
     }).setOrigin(0.5);
-    this.tweens.add({ targets: this._toast, alpha: 0, delay: 1100, duration: 500, onComplete: () => this._toast?.destroy() });
+    this.tweens.add({ targets: this._toastText, alpha: 0, delay: 1100, duration: 500, onComplete: () => this._toastText?.destroy() });
   }
 
-  // #509/#514: this button no longer launches a run itself — it just finishes building and
-  // returns to the base, where MissionSelectScene (reached via the scanner hex) is now the one
-  // place a run actually launches. Still inert unless the build is valid (all slots filled,
-  // mounts legal) — the tab-bar button is greyed to match — so nobody wanders off with an
-  // unusable build; pressing it on an invalid build toasts what's wrong and focuses the first
-  // empty slot (filtering the catalog to what fits it) so the fix is one click away.
-  deploy() {
-    if (!this.mech.isComplete()) {
-      const empty = MOUNT_LOCATIONS.filter((loc) => this.mech.usedSlots(loc) === 0);
-      if (empty.length) {
-        const names = empty.map((loc) => LOCATION_INFO[loc].short).join(', ');
-        this.toast(`BUILD INCOMPLETE — fill ${names}`);
-        if (this.selected !== empty[0]) this._selectSlot(empty[0]);   // focus + filter to the empty slot
-      } else {
-        this.toast('BUILD INVALID — check your mounts');
-      }
-      return;
+  // ── Per-player pad controls ──────────────────────────────────────────────────────────────────
+  // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
+  // every other player's: d-pad left/right cycles colour, up/down moves which of the seven slots
+  // is focused, A/X cycle that slot's mount forward/back, B clears an ability/core slot (weapon
+  // slots can't be cleared), START toggles ready.
+  update() {
+    this._updateJoin();
+    for (const i of activeIndices(this.session)) {
+      const col = this.cols[i];
+      const e = this.padEdges[i];
+      if (!col || !e.pad()) continue;
+      if (e.pressed(PAD.START)) { this._toggleReady(i); continue; }
+      if (e.pressed(PAD.DPAD_LEFT)) { this._cycleColor(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_RIGHT)) { this._cycleColor(col, 1); continue; }
+      if (e.pressed(PAD.DPAD_UP)) { this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), -1, ALL_SLOTS.length)]); continue; }
+      if (e.pressed(PAD.DPAD_DOWN)) { this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), 1, ALL_SLOTS.length)]); continue; }
+      if (e.pressed(PAD.A)) { this._cycleMount(col, 1); continue; }
+      if (e.pressed(PAD.X)) { this._cycleMount(col, -1); continue; }
+      if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
     }
-    // #349/#388: in co-op, a non-last player pressing this button means "I'm done, next player's
-    // turn" — the completeness check above already gates it, so a player cannot hand off a
-    // half-built mech and then be unable to get back to it. Only the LAST joined player's press
-    // (garageAction === 'deploy') actually finishes and returns to the base.
-    if (garageAction(this.session) === 'handoff') {
-      Audio.ui('equip');
-      const next = this.session.editing + 2;   // 1-based number of the player taking over
-      this._setSession(advanceEditing(this.session));
-      this.toast(`PLAYER ${next - 1} READY — PLAYER ${next}, BUILD YOUR MECH`, UI.accent);
-      return;
-    }
-    Audio.ui('equip');
-    this.mech.repairAll();
-    saveAllMechs(this.allMechs);
-    // #349: which builds are ready to take the field, published so MissionSelectScene's
-    // launchMission (base/launchMission.js) can pick it up whenever a run actually launches —
-    // this scene no longer sets `arenaBiome`/`run`/`deepMission`/MECH_DEPLOYED itself, since it
-    // no longer starts ArenaScene.
-    this.registry.set('coopMechKeys', sessionMechKeys(this.session));
-    this.scene.start('BaseScene');
   }
 }

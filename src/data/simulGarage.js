@@ -1,21 +1,20 @@
-// The SIMULTANEOUS multi-player Garage flow — a PROTOTYPE Jackson asked to evaluate live
-// alongside the shipped SEQUENTIAL one (data/coopGarage.js). Where the sequential flow hands one
-// editing surface player-to-player ("P1 READY" → rebind → "P2 READY" → deploy), this one gives
-// every joined player their own column, editing at the same time — so there is no `editing`
-// cursor to move at all. The whole session is just "how many players are here" and "who has
-// declared themselves ready."
+// The SIMULTANEOUS multi-player Garage flow (#505) — GarageScene's one and only build session
+// model. Every joined player gets their own column, editing at the same time — so there is no
+// `editing` cursor to move at all, unlike the sequential handoff flow this replaced ("P1 READY" →
+// rebind → "P2 READY" → deploy, formerly data/coopGarage.js's `{count, editing}` state, removed
+// with #505 since GarageScene no longer uses it — see coopGarage.js's header). The whole session
+// is just "how many players are here" and "who has declared themselves ready."
 //
-// Kept as its own tiny module rather than folded into coopGarage.js so the prototype can be
-// deleted wholesale (this file + SimulGarageScene.js + the one entry point in GarageScene.js) if
-// Jackson doesn't like it, without touching the shipped flow at all. It deliberately reuses
-// coopGarage's own MAX_GARAGE_PLAYERS/PLAYER_MECH_KEYS/canJoin rather than duplicating them — both
-// flows seat the exact same four persistent build slots, they just differ in whether one editing
-// surface is handed around or four exist at once.
+// Kept as its own module (rather than folded into coopGarage.js) because it's genuinely a
+// different shape of state, not because it's provisional any more — #505 made this the shipped
+// flow, replacing the separate SimulGarageScene it used to back. It still reuses coopGarage's own
+// MAX_GARAGE_PLAYERS/PLAYER_MECH_KEYS/canJoin rather than duplicating them — both seat the same
+// four persistent build slots.
 //
-// Session shape: `{ count, ready }` — `count` is how many players have joined (1..MAX, same
-// meaning as the sequential session's `count`); `ready` is a per-player bool array, one entry per
-// joined player. Deploying is a per-player CHOICE (toggleReady) rather than a single last-player
-// action — the scene deploys the instant `allReady` goes true (see SimulGarageScene).
+// Session shape: `{ count, ready }` — `count` is how many players have joined (1..MAX); `ready` is
+// a per-player bool array, one entry per joined player. Deploying is a per-player CHOICE
+// (toggleReady) rather than a single last-player action — the scene deploys the instant
+// `allReady` goes true (see GarageScene#_deploy).
 import { MAX_GARAGE_PLAYERS } from './coopGarage.js';
 
 function clampInt(v, lo, hi) {

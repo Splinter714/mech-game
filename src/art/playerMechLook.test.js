@@ -122,15 +122,19 @@ describe('#404 the garage preview is the same render as the deployed mech', () =
 
   // ── the wiring ──────────────────────────────────────────────────────────────────────────
   it('the garage preview asks for the shared player look rather than writing its own', () => {
+    // #505: GarageScene's single `_previewArt()`/`this.session.editing` preview (one editing
+    // surface at a time) was replaced by a per-column `_artFor(col)`, keyed by that column's own
+    // player index — every joined player has their own live preview now, not just "whoever is
+    // currently editing."
     const src = read('..', 'scenes', 'GarageScene.js');
-    const body = src.match(/_previewArt\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
-    expect(body, 'expected a _previewArt() method').toBeTruthy();
-    expect(body).toContain('playerMechArt(this.session.editing');
+    const body = src.match(/_artFor\(col\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
+    expect(body, 'expected an _artFor(col) method').toBeTruthy();
+    expect(body).toContain('playerMechArt(col.index');
     expect(src).toMatch(/import \{[^}]*playerMechArt[^}]*\} from '\.\.\/art\/playerMechLook\.js'/);
-    // Every bake of the preview textures goes through it.
-    const bakes = src.match(/(?:buildMechTextures|reskinMech)\(this, 'garageMech'[^\n]*/g) ?? [];
+    // Every bake of a column's textures goes through it.
+    const bakes = src.match(/(?:buildMechTextures|reskinMech)\(this, col\.textureKey[^\n]*/g) ?? [];
     expect(bakes.length).toBeGreaterThan(0);
-    for (const call of bakes) expect(call).toContain('this._previewArt()');
+    for (const call of bakes) expect(call).toContain('this._artFor(col)');
   });
 
   it('the arena bakes the same player look — nobody hand-writes the options', () => {

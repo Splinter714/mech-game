@@ -93,7 +93,7 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
     // #523: PauseMenuScene joined the always-on array (it's a production feature, not a dev-only
     // authoring tool), and the array wrapped onto multiple lines — match loosely on the scene
     // names/order rather than exact whitespace.
-    expect(main).toMatch(/scene: \[\s*BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene,\s*PauseMenuScene,?\s*\]/);
+    expect(main).toMatch(/scene: \[\s*BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene,\s*PauseMenuScene,?\s*\]/);
   });
 
   it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {
@@ -117,8 +117,11 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
 // #470: the SFX-authoring surface used to live in the garage behind a #296 DEV gate, which meant
 // the mech lab LAID ITSELF OUT differently in dev (a 300px panel reserve) than in production. The
 // whole surface moved to the dev-only AUDIO tab (scenes/AudioScene.js), so the fix isn't a better
-// gate — it's that the garage has no sound surface to gate. These assertions are the inverse of
-// the ones they replaced: the references must be ABSENT, and the catalog region unconditional.
+// gate — it's that the garage has no sound surface to gate at all. #505 additionally replaced the
+// old full-width WeaponCardList catalog with a condensed per-column icon grid (see
+// GarageScene.abilityCore.guard.test.js), so the WeaponCardList-shaped assertions this block used
+// to make (`_topRegion`, `this.list.destroy()`, `onSelect`) no longer describe the scene at all —
+// only the SFX-surface-is-gone assertions still apply.
 describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-gated)', () => {
   it('never references the WeaponSfxPanel or any of its trigger rows', () => {
     for (const symbol of [
@@ -130,18 +133,8 @@ describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-ga
     }
   });
 
-  it('_topRegion is a single unconditional full-width catalog rect — no dev-vs-prod branch', () => {
-    const body = garage.match(/_topRegion\(top\)\s*\{[\s\S]*?\n {2}\}/)[0];
-    expect(body).toMatch(/return \{ list: \{ x: 20, y: top, w: this\.W - 40, h: bottom - top \} \};/);
-    expect(body).not.toContain('import.meta.env.DEV');
-  });
-
-  it('a catalog card click goes straight to the mount path (no panel detour)', () => {
-    expect(garage).toMatch(/onSelect: \(id\) => this\._pickItem\(id\)/);
-  });
-
-  it('shutdown just destroys the card list', () => {
-    expect(garage).toMatch(/this\.events\.once\('shutdown', \(\) => this\.list\.destroy\(\)\);/);
+  it('a catalog icon click goes straight to the mount path (no panel detour)', () => {
+    expect(garage).toMatch(/on\('pointerdown', \(\) => this\._clickCatalogItem\(col, id\)\)/);
   });
 
   it('#445: the run-stats overlay is constructed only under import.meta.env.DEV', () => {
@@ -149,8 +142,6 @@ describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-ga
   });
 
   it('#445: the STATS button is spread into the tab bar row only under import.meta.env.DEV', () => {
-    // #349's SIMUL entry point (the simultaneous-garage prototype) sits alongside STATS in the
-    // same `actions` array now, but STATS itself must still be behind its own DEV spread.
     expect(garage).toMatch(/actions: \[\s*\n\s*\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'STATS', onClick: \(\) => this\._statsOverlay\.open\(\) \}\] : \[\]\),/);
   });
 

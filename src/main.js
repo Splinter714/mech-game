@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import BootScene from './scenes/BootScene.js';
 import BaseScene from './scenes/BaseScene.js';
 import GarageScene from './scenes/GarageScene.js';
-import SimulGarageScene from './scenes/SimulGarageScene.js';
 import MissionSelectScene from './scenes/MissionSelectScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
@@ -60,12 +59,12 @@ const config = {
     height: window.innerHeight * getDpr(),
   },
   input: { gamepad: true },
-  // SimulGarageScene: the simultaneous-co-op-garage PROTOTYPE (see its own file header) sitting
-  // alongside the shipped sequential GarageScene, reachable from its 'SIMUL' tab-bar action.
+  // #505: GarageScene absorbed the simultaneous-co-op-garage build (formerly a separate
+  // SimulGarageScene) as its own single layout — there is no second garage scene to register.
   // #523: PauseMenuScene is last so it renders/receives input on top of every other scene it
   // might be launched over (Phaser draws later-registered scenes above earlier ones).
   scene: [
-    BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene,
+    BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene,
     PauseMenuScene,
   ],
 };
