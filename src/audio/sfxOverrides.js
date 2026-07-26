@@ -182,7 +182,7 @@ export async function removeOverrideVariant(weaponId, stage, index) {
 // standard WAV Blob — a well-understood, losslessly-round-trippable format for what's already
 // a decoded float buffer — so the seeded override flows through the EXACT same storeOverride/
 // IndexedDB/decode path as a file picked by hand, no special-casing anywhere else.
-import { getBaked } from './bakedSfx.js';
+import { getBaked, getBakedVariantCount } from './bakedSfx.js';
 
 function encodeWavBlob(buffer) {
   const numChannels = buffer.numberOfChannels ?? 1;
@@ -602,21 +602,45 @@ export async function clearOverride(weaponId, stage) {
 // setters (each of which already persists through `_persistParams`). The `processing` object is
 // copied as a full REPLACE, not a merge — any field a target had that variant 0 lacks is
 // explicitly cleared (via the `null` convention `setProcessing` already understands) so a stray
-// processing setting from a target's own past tuning doesn't survive alongside variant 0's. A
-// no-op if the pool has fewer than 2 variants (nothing else to sync onto).
+// processing setting from a target's own past tuning doesn't survive alongside variant 0's.
+//
+// #542 fix: the pool size used to sync onto was `getOverrideVariantCount` alone — the count of
+// variants that already have a LIVE (IndexedDB) override. A variant that's still playing straight
+// off a shipped BAKE (never individually loaded/edited through the panel — exactly legLift's
+// case, whose 6 variants are pure bakes) has no live override yet, so it was invisible to this
+// function entirely and never got a target write, no matter how many times an edit or the #542
+// self-heal call above ran. `_editOverride` (weaponSfxPanel.js) only ever seeds variant 0 (the
+// control being dragged lives on the base `stage` key), so slot 0 quietly became a live override
+// carrying the new tuning while slots 1..N-1 stayed baked and silently kept their old recipe —
+// this is why a dragged slider visibly "only affected the first variant." The fix: size the sync
+// loop off the same `getVariantSlotCount`-style max(live, baked) the panel itself uses to decide
+// how many variant rows exist, and seed each target from its own bake (seedOverrideFromBaked) the
+// first time it's touched here, exactly like `_editOverride` already does for variant 0 — after
+// that the ordinary setters below apply the shared tuning on top, same as always. A no-op only
+// when there's truly nothing else to sync onto (fewer than 2 variants either way).
 export async function syncTuningToVariants(weaponId, stage) {
-  const n = getOverrideVariantCount(weaponId, stage);
+  const overrideN = getOverrideVariantCount(weaponId, stage);
+  const bakedN = getBakedVariantCount(weaponId, stage);
+  const n = Math.max(overrideN, bakedN);
   if (n < 2) return;
-  const startMs = getStartMs(weaponId, stage);
-  const trimMs = getTrimMs(weaponId, stage);
-  const fadeOutMs = getFadeOutMs(weaponId, stage);
-  const volume = getVolume(weaponId, stage);
-  const loopStartMs = getLoopStartMs(weaponId, stage);
-  const retriggerMs = getRetriggerMs(weaponId, stage);
-  const processing = getProcessing(weaponId, stage) || {};
+  // Read variant 0's tuning via getSharedTuningSnapshot rather than the raw getters directly —
+  // when variant 0 ITSELF has no live override yet (e.g. this runs from the render-time #542
+  // self-heal call below, before any edit has seeded anything), the raw getters would silently
+  // read empty maps and report unity/default values, which would then get stamped onto every
+  // OTHER variant and clobber their real baked tuning with defaults. getSharedTuningSnapshot
+  // already falls back to the shipped bake's own recipe in that case (see its #486 note), so this
+  // always reads what's actually audible for variant 0 right now, live override or bake alike.
+  const shared = getSharedTuningSnapshot(weaponId, stage);
+  if (!shared) return; // nothing real to sync from (no live override AND no bake for variant 0)
+  const { startMs, trimMs, fadeOutMs, volume, loopStartMs, retriggerMs } = shared;
+  const processing = shared.processing || {};
 
   for (let i = 1; i < n; i++) {
     const targetStage = variantStage(stage, i);
+    // A target still riding purely on its shipped bake (no live override yet) has to be seeded
+    // into a real live override first — the setters below are meaningless without one to attach
+    // to (see _persistParams: "no active override to attach this to" => early-return no-op).
+    if (!hasOverride(weaponId, targetStage)) await seedOverrideFromBaked(weaponId, targetStage);
     await setStart(weaponId, targetStage, startMs);
     await setTrim(weaponId, targetStage, trimMs);
     await setFadeOut(weaponId, targetStage, fadeOutMs);
