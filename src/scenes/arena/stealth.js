@@ -38,21 +38,30 @@ export function isPlayerStealthed(scene, player) {
   return smokeBlocksPoint(scene.players, player.x, player.y);
 }
 
-// #507 (owner playtest: "looks horrible... it should be more like it launches puffs of smoke
-// truly obscuring stuff"): the old visual was ONE flat translucent circle with a hairline
-// stroke — unmistakably a UI radius indicator, not smoke. Now a scatter of several overlapping
-// discrete puff circles (denser near the middle, thinning toward the edge — a soft, ragged
-// silhouette instead of a hard-edged disc), each gently breathing size/alpha on its own
-// staggered loop so the cloud visibly billows rather than sitting there as a static sticker.
-// Same "simple procedural shapes, not a baked sprite" language the rest of this game's ambient
-// FX uses (ground fire decals, impact bursts) — just built from plain `add.circle`s rather than
-// a `gen()` texture bake, since the cloud is a live gameplay volume (its radius/position drive
-// the real LOS check above) rather than a fire-and-forget cosmetic.
-const SMOKE_PUFF_COUNT = 7;          // enough overlap to read as one billowing mass, not confetti
-const SMOKE_PUFF_MIN_FRAC = 0.32;    // smallest puff radius, as a fraction of the cloud's own radius
-const SMOKE_PUFF_MAX_FRAC = 0.58;
-const SMOKE_SCATTER_FRAC = 0.68;     // puff centres land within this fraction of the cloud radius
+// #507 second visual pass (owner playtest: "needs to still be way more smoke-like instead of
+// just a few simple circular-ish shapes" — the first pass's 7 discrete puff circles still read
+// as a handful of shapes, not smoke). This codebase has no true Phaser particle emitter
+// anywhere; the closest established convention for "irregular volumetric FX from plain shapes"
+// is combat.js's `_deathFx` fireball — several randomly-offset overlapping circle blobs instead
+// of one clean circle. This pass leans into that idea much harder: instead of 7 lone circles,
+// SMOKE_CLUSTER_COUNT loose "clusters" are scattered through the cloud (denser near the middle,
+// same sqrt-biased scatter as before), and each cluster is itself several overlapping sub-blobs
+// at randomized offsets/radii/alpha/tint — so the silhouette is ragged at every scale, not one
+// layer of circles. No stroke anywhere (a hairline edge is what made the old version read as a
+// UI shape rather than haze). Every sub-blob gets two independent, staggered, endlessly-
+// repeating tweens: a slow positional "drift" wander (so puffs visibly roil instead of
+// breathing in place) and a scale/alpha "breathe" cycle (the billowing read). Neither tween
+// ever touches `ox`/`oy`, which is only ever read at spawn time and has nothing to do with the
+// LOS/stand-in-cloud checks above (those key off `cloud.x/y/radius`, untouched by this pass).
+const SMOKE_CLUSTER_COUNT = 11;         // loose "clusters" scattered through the cloud
+const SMOKE_SUBBLOBS_MIN = 2;           // each cluster is 2-3 overlapping sub-blobs, not one circle
+const SMOKE_SUBBLOBS_MAX = 3;
+const SMOKE_PUFF_MIN_FRAC = 0.2;        // a cluster's own radius, as a fraction of the cloud's radius
+const SMOKE_PUFF_MAX_FRAC = 0.5;
+const SMOKE_SCATTER_FRAC = 0.7;         // cluster centres land within this fraction of the cloud radius
+const SMOKE_SUBBLOB_JITTER_FRAC = 0.4;  // sub-blob offset from its cluster centre, as a frac of cluster radius
 const SMOKE_COLOR = 0xc8d2dd;
+const SMOKE_COLOR_DARK = 0x9aa3ad;      // a second, slightly darker tint mixed in for shading/depth
 
 export const StealthMixin = {
   // #507: a static cloud at the player's CURRENT position when cast — deliberately doesn't
@@ -63,24 +72,48 @@ export const StealthMixin = {
   _spawnSmokeCloud(player, radius) {
     this._despawnSmokeCloud(player);
     const puffs = [];
-    for (let i = 0; i < SMOKE_PUFF_COUNT; i++) {
+    for (let ci = 0; ci < SMOKE_CLUSTER_COUNT; ci++) {
       // sqrt(random) biases toward the centre (uniform-AREA scatter, not uniform-radius, which
       // would over-cluster near the middle) while still thinning out toward the rim.
-      const a = Math.random() * Math.PI * 2;
-      const d = Math.sqrt(Math.random()) * radius * SMOKE_SCATTER_FRAC;
-      const ox = Math.cos(a) * d, oy = Math.sin(a) * d;
-      const r = radius * (SMOKE_PUFF_MIN_FRAC + Math.random() * (SMOKE_PUFF_MAX_FRAC - SMOKE_PUFF_MIN_FRAC));
-      const circle = this.add.circle(player.x + ox, player.y + oy, r, SMOKE_COLOR, 0.34)
-        .setStrokeStyle(1, SMOKE_COLOR, 0.16)
-        .setDepth(DEPTH.GROUND_FX);
-      puffs.push({ ox, oy, circle });
-      // A slow, per-puff-staggered breathing tween — the "billowing" read. Purely cosmetic
-      // (never touches ox/oy, which is what the LOS/stand-in-cloud checks care about).
-      this.tweens?.add({
-        targets: circle, scale: { from: 0.9, to: 1.18 }, alpha: { from: 0.36, to: 0.2 },
-        duration: 1300 + Math.random() * 900, delay: Math.random() * 500,
-        yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-      });
+      const ca = Math.random() * Math.PI * 2;
+      const cd = Math.sqrt(Math.random()) * radius * SMOKE_SCATTER_FRAC;
+      const cx = Math.cos(ca) * cd, cy = Math.sin(ca) * cd;
+      const clusterR = radius * (SMOKE_PUFF_MIN_FRAC + Math.random() * (SMOKE_PUFF_MAX_FRAC - SMOKE_PUFF_MIN_FRAC));
+      const subCount = SMOKE_SUBBLOBS_MIN + Math.floor(Math.random() * (SMOKE_SUBBLOBS_MAX - SMOKE_SUBBLOBS_MIN + 1));
+      for (let si = 0; si < subCount; si++) {
+        // Sub-blobs jitter off their cluster's own centre so they overlap raggedly instead of
+        // stacking exactly — that overlap-of-offset-circles is what breaks up the silhouette.
+        const sa = Math.random() * Math.PI * 2;
+        const sd = Math.random() * clusterR * SMOKE_SUBBLOB_JITTER_FRAC;
+        const ox = cx + Math.cos(sa) * sd, oy = cy + Math.sin(sa) * sd;
+        const r = clusterR * (0.45 + Math.random() * 0.6);
+        const color = Math.random() < 0.6 ? SMOKE_COLOR : SMOKE_COLOR_DARK;
+        const baseAlpha = 0.14 + Math.random() * 0.18;
+        const circle = this.add.circle(player.x + ox, player.y + oy, r, color, baseAlpha)
+          .setDepth(DEPTH.GROUND_FX);
+        puffs.push({ ox, oy, circle });
+
+        // Slow independent drift — wanders out and back over several seconds so the cloud
+        // visibly roils rather than reading as a scatter of circles glued in place. Purely
+        // cosmetic (never touches ox/oy, which is what the LOS/stand-in-cloud checks care about).
+        const driftDist = r * (0.5 + Math.random() * 0.6);
+        const driftAngle = Math.random() * Math.PI * 2;
+        this.tweens?.add({
+          targets: circle,
+          x: player.x + ox + Math.cos(driftAngle) * driftDist,
+          y: player.y + oy + Math.sin(driftAngle) * driftDist,
+          duration: 2200 + Math.random() * 2000, delay: Math.random() * 900,
+          yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+        });
+
+        // Staggered breathing size/alpha, independent per sub-blob — the "billowing" read.
+        this.tweens?.add({
+          targets: circle,
+          scale: { from: 0.8, to: 1.3 }, alpha: { from: baseAlpha, to: baseAlpha * 0.4 },
+          duration: 1000 + Math.random() * 1100, delay: Math.random() * 800,
+          yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+        });
+      }
     }
     player.smokeCloud = { x: player.x, y: player.y, radius, puffs };
   },
