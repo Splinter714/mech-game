@@ -25,7 +25,14 @@ export function claimOutpost(outposts, { id, type, coord, biomeId, baseId = null
   if (outposts.some((o) => o.id === id)) return outposts;
   return [
     ...outposts,
-    { id, type, coord, biomeId, baseId, upgradeLevel: 0, threatState: 'safe', deploysHeld: 0 },
+    // #512: `repairBuilt` starts false on every fresh claim — a claimed base is just held, it
+    // doesn't get repair function until the player opts in and spends scrap on it
+    // (data/repairOutposts.js `buildRepairOutpost`). Always present (never omitted) so callers
+    // can rely on the field rather than checking for `undefined`, same convention as
+    // baseCapture.js's `captured` flag.
+    {
+      id, type, coord, biomeId, baseId, upgradeLevel: 0, threatState: 'safe', deploysHeld: 0, repairBuilt: false,
+    },
   ];
 }
 

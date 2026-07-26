@@ -17,6 +17,7 @@ import { LocomotionMixin } from './arena/locomotion.js';
 import { PowerupsMixin } from './arena/powerups.js';
 import { MissionMixin } from './arena/mission.js';
 import { RunMixin } from './arena/run.js';
+import { RepairOutpostsMixin } from './arena/repairOutposts.js';
 import { BasesMixin } from './arena/bases.js';
 import { SalvageMixin } from './arena/salvage.js';
 import { VisibilityMixin } from './arena/visibility.js';
@@ -77,6 +78,8 @@ export default class ArenaScene extends Phaser.Scene {
     this._initMission();
     // #64: continue the in-progress run (set by a prior stage advance) or start a fresh one.
     this._initRun();
+    // #512: repair-outpost prompt/marker state — reset per deploy, same convention as `_initRun`.
+    this._initRepairOutposts();
     // Refs #281: reset the player-corpse flag fresh every deploy. Phaser reuses the SAME
     // ArenaScene instance across scene.start('ArenaScene') calls, so a `this.*` property set by
     // a previous sortie (here, combat.js `_damagePlayerAt` flipping this true on death) survives
@@ -425,6 +428,10 @@ export default class ArenaScene extends Phaser.Scene {
     // #64: real player-death signal now reachable (survivability buffer tuned down) — advance
     // the run on mission-complete, or end it on player destruction.
     this._updateRun();
+    // #512: repair-outpost proximity prompt + passive in-range healing — after `_updateRun` so
+    // this frame's #517 capture-choice state (if a base was just cleared) is already settled
+    // before deciding whether the repair-build prompt is allowed to show.
+    this._updateRepairOutposts(dt);
 
     // ── THE HUD'S VIEW OF THE WORLD IS PUBLISHED HERE, AFTER EVERY KILL PATH ────────────────
     // These are the only channels that describe ANOTHER OBJECT (the locked target) rather than
@@ -523,7 +530,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, RepairOutpostsMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.

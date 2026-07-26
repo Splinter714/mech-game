@@ -462,6 +462,51 @@ describe('Mech.repairArmor (#60 Armor Patch — whole-mech proportional armor re
   });
 });
 
+// #512: repair-outpost passive regen — continuous, dt-scaled, and covers BOTH armor and
+// structure (unlike repairArmor, which is instant/armor-only).
+describe('Mech.repairTick (#512 repair-outpost passive regen)', () => {
+  it('restores a dt*rate fraction of missing armor AND hp per location', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const ct = m.parts.leftTorso;
+    m.applyDamage('leftTorso', ct.maxArmor + 10);   // through armor and into structure
+    const missingArmor = ct.maxArmor - ct.armor;
+    const missingHp = ct.maxHp - ct.hp;
+    expect(missingArmor).toBeGreaterThan(0);
+    expect(missingHp).toBeGreaterThan(0);
+    const restored = m.repairTick(1, 0.1);   // 1 second at a 10%/s rate
+    expect(ct.armor).toBeCloseTo(ct.maxArmor - missingArmor + missingArmor * 0.1);
+    expect(ct.hp).toBeCloseTo(ct.maxHp - missingHp + missingHp * 0.1);
+    expect(restored).toBeGreaterThan(0);
+  });
+
+  it('is a no-op on a pristine mech and never exceeds max armor/hp', () => {
+    const m = new Mech({ chassisId: 'light' });
+    expect(m.repairTick(1, 0.5)).toBe(0);
+    for (const loc of Object.keys(m.parts)) {
+      expect(m.parts[loc].armor).toBeLessThanOrEqual(m.parts[loc].maxArmor);
+      expect(m.parts[loc].hp).toBeLessThanOrEqual(m.parts[loc].maxHp);
+    }
+  });
+
+  it('a large dt*rate still clamps at exactly full, never overshoots', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const ct = m.parts.leftTorso;
+    m.applyDamage('leftTorso', ct.maxArmor + ct.maxHp - 1);   // nearly destroyed
+    m.repairTick(100, 1);   // way more than enough to fully heal
+    expect(ct.armor).toBe(ct.maxArmor);
+    expect(ct.hp).toBe(ct.maxHp);
+  });
+
+  it('can bring a fully destroyed (0 hp) location back above zero — a real repair bay, not a field patch', () => {
+    const m = new Mech({ chassisId: 'medium' });
+    const ct = m.parts.leftTorso;
+    m.applyDamage('leftTorso', ct.maxArmor + ct.maxHp);   // fully destroyed
+    expect(ct.hp).toBe(0);
+    m.repairTick(1, 0.1);
+    expect(ct.hp).toBeGreaterThan(0);
+  });
+});
+
 // #401 follow-up: the reskin-after-repair predicate. Restoring armor must bring the clean plating
 // back (hide the torn-panel `exposedInternals`), but the damage reskin gate only fires when armor
 // BREAKS. `exposedArmorLocations()` is the pure snapshot the repair path diffs against to decide

@@ -532,6 +532,36 @@ export class Mech {
     return restored;
   }
 
+  // #512: passive repair-outpost regen — restores a FRACTION of each location's MISSING armor
+  // AND hp per SECOND (`dt`), for as long as the caller keeps ticking it (scenes/arena/
+  // repairOutposts.js calls this every frame a player sits inside a built outpost's radius).
+  // Unlike `repairArmor` (instant, armor-only, the Armor Patch pickup), this is continuous and
+  // covers structure too — a proper repair bay, not a field patch — so it can, given enough
+  // time, bring a location back from 0 hp (a "destroyed"/stump part) rather than only topping up
+  // armor on a location that's still standing. Returns the total (armor+hp) restored, for
+  // feedback. `dt` is in seconds, same convention as `regenAmmo`.
+  repairTick(dt, ratePerSec) {
+    let restored = 0;
+    const frac = Math.min(1, Math.max(0, ratePerSec * dt));
+    if (frac <= 0) return 0;
+    for (const loc of LOCATIONS) {
+      const p = this.parts[loc];
+      const missingArmor = p.maxArmor - p.armor;
+      if (missingArmor > 0) {
+        const add = missingArmor * frac;
+        p.armor = Math.min(p.maxArmor, p.armor + add);
+        restored += add;
+      }
+      const missingHp = p.maxHp - p.hp;
+      if (missingHp > 0) {
+        const add = missingHp * frac;
+        p.hp = Math.min(p.maxHp, p.hp + add);
+        restored += add;
+      }
+    }
+    return restored;
+  }
+
   // Restore a mech to pristine condition (used when deploying a fresh build): full
   // health, full shield (any lingering #381 temporary pool from a prior sortie is cleared first so
   // it can't leak across a redeploy), and full magazines.
