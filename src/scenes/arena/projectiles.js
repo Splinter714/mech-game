@@ -627,7 +627,10 @@ export const ProjectilesMixin = {
   _plantHazard(p) {
     const h = p.hazard;
     this.hazards.push({
-      x: p.x, y: p.y, owner: p.owner, shooter: p.shooter, kind: h.kind,
+      // #491: `caster` — the actual firing entity (an enemy handle for an enemy-owned round,
+      // `p.shooter` again for a player-owned one) — so the field's pull loop can exclude the
+      // unit that planted it from being dragged toward its own hazard.
+      x: p.x, y: p.y, owner: p.owner, shooter: p.shooter, caster: p.caster ?? p.shooter ?? null, kind: h.kind,
       radius: h.radius, color: p.color, weaponId: p.weaponId,
       armIn: h.armDelay ?? 0.25, life: h.life ?? 6,
       damage: h.damage ?? p.damage,
@@ -667,9 +670,12 @@ export const ProjectilesMixin = {
             for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, groundEnemies)) {
               this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, hz.color, false, { weaponId: hz.weaponId });
             }
-            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, otherLivePlayers(this, hz.shooter))) {
-              this._damagePlayerAt(hit.amount, hit.target, { weaponId: hz.weaponId });
-            }
+            // #488: a player-owned mine is TEAM-exempt, not just placer-exempt — a co-op
+            // teammate walking near a mine their partner planted must not eat its blast, so
+            // unlike every other player-fired hazard/splash in this file (which only excludes
+            // the shooter via otherLivePlayers), a mine excludes every live player outright.
+            // (Formerly: for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage,
+            // otherLivePlayers(this, hz.shooter))) this._damagePlayerAt(...) — deliberately removed.)
           }
           this._impactFx(hz.x, hz.y, hz.color, 'plasma', hz.radius, hz.weaponId);
           continue;
@@ -687,6 +693,12 @@ export const ProjectilesMixin = {
           // `_tickTravelForce` above; a turret/wallTurret takes the field's damage/status like
           // anything else, it just never gets dragged.
           if (!isMobileEnemy(e)) continue;
+          // #491 follow-up (Jackson found live): an enemy mech mounted with Gravity Well pulled
+          // ITSELF — the caster is a living, mobile enemy sitting in this same `this.enemies`
+          // list its own field pulls, so without this it dragged itself toward its own hazard's
+          // centre. Exclude the hazard's own caster from the pull, same as the stationary-unit
+          // exclusion just above.
+          if (hz.caster && e === hz.caster) continue;
           const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt);
           e.x += dx; e.y += dy;
         }
@@ -710,9 +722,14 @@ export const ProjectilesMixin = {
     const g = this.groundFx;
     const now = this.time.now;
     if (hz.kind === 'mine') {
+      // #488: player-placed mines keep the original warm orange-red warning-light color;
+      // an enemy-placed mine (none exist yet, but the branch already reasons about
+      // `hz.owner === 'enemy'` elsewhere in this file) gets a distinct cold cyan-teal so the
+      // two are never confusable at a glance, in the same "warning light" idiom.
+      const mineColor = hz.owner === 'enemy' ? 0x33e6ff : 0xff5533;
       const pulse = 0.5 + 0.5 * Math.sin(now / 160);
-      g.lineStyle(2, 0xff5533, 0.3 + pulse * 0.5).strokeCircle(hz.x, hz.y, hz.radius * 0.28 + pulse * 2);
-      g.fillStyle(0xff5533, 0.85).fillCircle(hz.x, hz.y, 3.5);
+      g.lineStyle(2, mineColor, 0.3 + pulse * 0.5).strokeCircle(hz.x, hz.y, hz.radius * 0.28 + pulse * 2);
+      g.fillStyle(mineColor, 0.85).fillCircle(hz.x, hz.y, 3.5);
     } else if (hz.kind === 'field') {
       const t = now / 1000;
       // Playtest pass: the drawn orb uses `visualRadius` (defaults to the real pull `radius` for
