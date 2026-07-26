@@ -11,6 +11,45 @@ import { damageInRadius } from '../../data/aoe.js';
 import { otherLivePlayers } from './players.js';
 import { Audio } from '../../audio/index.js';
 
+// The six mech part-sprite names on a mech view (locomotion.js `_makeMechView`) — mirrors
+// shieldOutline.js's own `SHIELD_MECH_PART_KEYS` (same list), kept as a separate local constant
+// rather than importing it: shieldOutline.js pulls in the real `phaser` package at module scope,
+// and this file is imported by several ability unit tests (stealth.test.js, abilityTrigger.test.js,
+// this file's own test) that run under vitest's plain node environment with no Phaser mock —
+// importing shieldOutline.js here would break all of them the same way enemies.js's own
+// `import Phaser` already requires a stub in carrierDeploy.test.js/dormantWake.test.js.
+const MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
+
+// #500 (owner playtest: "should be more greyscale/phantom-esque" — a flat alpha fade alone
+// didn't read as a stealth effect, just a faded-out mech). A near-neutral, cool-toned grey TINT
+// on every part sprite desaturates the mech's own palette toward grey (Phaser `setTint`
+// multiplies each pixel's colour, so a saturated body panel reads flat and washed-out under it)
+// while the container alpha keeps it translucent — together that's the "ghostly, drained of
+// colour" read instead of just "the same mech, fainter." Deliberately NOT a WebGL-only postFX
+// grayscale pipeline: this repo's smoke/test harness can force the Canvas renderer (`?canvas`),
+// where postFX doesn't run at all (see shieldOutline.js's header for the same constraint) — tint
+// is a basic texture op supported by both renderers, so this works everywhere the game does.
+export const CLOAK_TINT = 0xaab4bd;   // pale steel-blue-grey — desaturates without going pitch dark
+export const CLOAK_ALPHA = 0.45;      // up from the old flat 0.35: dim enough to read as translucent,
+                                       // bright enough that the tint (the actual "greyscale" cue) is visible
+
+// Apply/clear Cloak's visual on a player's mech view: a grey tint on every part sprite (the
+// container itself has no paintable pixels of its own to tint) plus the container's own alpha for
+// translucency. `active` false restores the mech to its normal colours/opacity. Guarded per-part
+// (`?.`) so a hand-rolled test double's partial view (or a torso/arm currently missing after part
+// loss — see anatomy.js) never throws.
+function setCloakVisual(player, active) {
+  const view = player.view;
+  if (!view) return;
+  view.setAlpha?.(active ? CLOAK_ALPHA : 1);
+  for (const part of MECH_PART_KEYS) {
+    const sprite = view[part];
+    if (!sprite) continue;
+    if (active) sprite.setTint?.(CLOAK_TINT);
+    else sprite.clearTint?.();
+  }
+}
+
 // A fresh `{ [slot]: abilityState }` map for a newly-created player.
 export function initAbilityStates() {
   const states = {};
@@ -66,10 +105,17 @@ export function updateAbilities(scene, intent, delta, player) {
       // #498: the movement burst itself rides activeSpeedMult (locomotion.js) exactly like
       // Dash; the blast fires on the OPPOSITE edge — active→inactive, i.e. once the burst has
       // actually carried the player to wherever they land, not at the moment of the press.
+      // Both edges now play `_aoeBlastFx` (combat.js) — a radius-sized shockwave + camera shake
+      // — so BOTH halves have a real "you felt that" beat instead of a silent speed change: a
+      // smaller cool-toned pop at launch (telegraphs the leap), a full-radius warm-toned blast
+      // at landing (the actual damage). Guarded with `?.` so the pure state-machine tests in
+      // abilityEffects.test.js (whose fake scene has no combat/camera stack) stay unaffected.
       if (next.active && !wasActive) {
+        scene._aoeBlastFx?.(player.x, player.y, def.radius * 0.55, 0xbfe8ff);
         Audio.ui('sprintOn');
       } else if (!next.active && wasActive) {
         burstAoeAt(scene, player, player.x, player.y, def.radius, def.damage);
+        scene._aoeBlastFx?.(player.x, player.y, def.radius, 0xffcf8a);
         Audio.ui('sprintOff');
       }
     } else if (def.effect === 'droneLauncher') {
@@ -84,14 +130,14 @@ export function updateAbilities(scene, intent, delta, player) {
         Audio.ui('sprintOff');
       }
     } else if (def.effect === 'cloak') {
-      // #500: purely a visual fade on the edges — `isPlayerStealthed` (scenes/arena/stealth.js)
+      // #500: purely a visual on the edges — `isPlayerStealthed` (scenes/arena/stealth.js)
       // is what actually suppresses noise-aggro while `next.active` is true; nothing to spawn or
-      // tick here.
+      // tick here. `setCloakVisual` (above) is the greyscale/phantom tint + translucency.
       if (next.active && !wasActive) {
-        player.view?.setAlpha?.(0.35);
+        setCloakVisual(player, true);
         Audio.ui('sprintOn');
       } else if (!next.active && wasActive) {
-        player.view?.setAlpha?.(1);
+        setCloakVisual(player, false);
         Audio.ui('sprintOff');
       }
     } else if (def.effect === 'smokeScreen') {

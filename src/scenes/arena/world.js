@@ -1266,7 +1266,15 @@ export const WorldMixin = {
     let lastQ = null, lastR = null;
     for (let t = 8; t < maxT; t += 8) {
       if (t >= tw) break;
-      const h = pixelToHex(x0 + cx * t, y0 + cy * t);
+      const px = x0 + cx * t, py = y0 + cy * t;
+      // #507: Smoke Screen blocks sight exactly like a wall/hard-cover hex does — checked at the
+      // full 8px sample resolution (NOT gated behind the same-hex skip below), since a cloud's
+      // circular edge doesn't align to the hex grid the way terrain cover does; coarsening it to
+      // "once per hex crossed" would visibly misplace where the cloud actually starts/stops
+      // blocking. `_smokeBlocksSight` (stealth.js) is optional-chained so a hand-rolled scene
+      // double without StealthMixin (most of this file's own tests) is unaffected.
+      if (this._smokeBlocksSight?.(px, py)) return t;
+      const h = pixelToHex(px, py);
       if (h.q === lastQ && h.r === lastR) continue;   // same hex as last step ⇒ wall-ness unchanged
       lastQ = h.q; lastR = h.r;
       const id = this.terrain.get(axialKey(h.q, h.r));

@@ -22,6 +22,25 @@ export const DASH_BURST_DURATION = 0.25;
 // again within a single engagement.
 export const DASH_COOLDOWN = 4;
 
+// #498 (owner playtest, "no good... both / the whole thing reads as nothing" — neither the
+// movement nor the landing blast registered). Two independent fixes:
+//  1. The burst itself was actually SHORTER than Dash's own (2.2x/0.2s ≈ 86px at medium
+//     chassis base speed vs Dash's 3.0x/0.25s ≈ 146px) despite being framed as the bigger,
+//     more decisive "jump" of the two — it read as a weak dash, not a jump. Bumped clearly past
+//     Dash's own distance (3.2x/0.3s ≈ 187px at the same base speed) so covering ground here
+//     unmistakably reads as a bigger leap.
+//  2. The blast radius/damage were well under Shield Burst's (#490 — 90/30) despite Jump Blast
+//     costing real repositioning risk to land, so a "worse Shield Burst" is exactly how it read.
+//     Bumped to sit slightly ABOVE Shield Burst's numbers, and (scenes/arena/abilities.js) it
+//     now plays a radius-sized shockwave burst + camera shake on both the launch and the
+//     landing (`_aoeBlastFx`, combat.js) instead of relying on incidental per-target impact
+//     circles that only show up if something happened to be standing in the blast.
+// PLAYTEST DIAL — every value below is tunable, not locked.
+export const JUMP_BLAST_SPEED_MULT = 3.2;
+export const JUMP_BLAST_BURST_DURATION = 0.3;
+export const JUMP_BLAST_RADIUS = 85;
+export const JUMP_BLAST_DAMAGE = 32;
+
 export const ABILITIES = {
   dash: {
     name: 'Dash',
@@ -48,10 +67,10 @@ export const ABILITIES = {
     name: 'Jump Blast',
     effect: 'jumpBlast',
     cooldown: 6,
-    duration: 0.2,
-    speedMult: 2.2,
-    radius: 70,
-    damage: 25,
+    duration: JUMP_BLAST_BURST_DURATION,
+    speedMult: JUMP_BLAST_SPEED_MULT,
+    radius: JUMP_BLAST_RADIUS,
+    damage: JUMP_BLAST_DAMAGE,
   },
   // #497: summons a lightweight friendly drone that orbits the player and auto-fires at nearby
   // enemies for the ability's `duration`, then despawns. `duration` doubles as the drone's

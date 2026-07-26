@@ -72,3 +72,31 @@ export function haloPoly(sg, pts) {
 export function accentGlow(accent) {
   return { core: accent, hot: 0xffe6c0, halo: accent };
 }
+
+// #497: a DARK, player-owned variant of the vehicle palette, mirroring the exact split
+// mechPrims.js already draws between the player's dark-gunmetal mech theme and the enemy's pale
+// ceramic one (THEMES.player vs THEMES.enemy). A player-SUMMONED unit built from this vehicle
+// art (the Drone Launcher's friendly drone, #497) borrows the enemy kind's own silhouette but
+// reads as "one of ours" the same way a player mech does — dark body/shadow tones, with the rim
+// highlight left for the caller to recolour to the owner's own accent, same "recolour just the
+// rim" trick mechPrims.js's `themeFor` uses for co-op player identification.
+const VEHICLE_DARK_BASE = {
+  outline: 0x0b0e14,      // matches mechPrims THEMES.player.outline (near-black edge)
+  halo: 0xfbfdff,         // legibility halo stays the same fixed bright ring on every terrain
+  deep: 0x10131a,         // shadow / underside — matches THEMES.player.ao
+  bodyDk: 0x252c38,       // lower panel — matches THEMES.player.lower
+  body: 0x2e3543,         // main panel — matches THEMES.player.faceMid
+  bodyHi: 0x3a4250,       // upper/highlight panel — matches THEMES.player.face
+  rim: 0x4b5666,          // overwritten by vehicleDarkPalette(accent) below
+  rimHi: 0x566273,        // overwritten by vehicleDarkPalette(accent) below
+  tread: 0x181d27,        // dark mechanical bits — matches THEMES.player.joint
+  treadHi: 0x4b5666,      // highlighted metal — matches THEMES.player.rim
+  glass: 0x14181f,        // cockpit glass, dark
+};
+
+// A dark vehicle palette tinted with `accent` on its rim tones — the owner's player colour
+// (data/players.js PLAYER_COLORS), so two player-summoned drones of different owners are told
+// apart exactly like two player mechs are.
+export function vehicleDarkPalette(accent) {
+  return { ...VEHICLE_DARK_BASE, rim: accent ?? VEHICLE_DARK_BASE.rim, rimHi: accent ?? VEHICLE_DARK_BASE.rimHi };
+}

@@ -1,14 +1,20 @@
-// #500 Cloak / #507 Smoke Screen — the shared `isPlayerStealthed` predicate plus the smoke
-// cloud spawn/despawn lifecycle. Mirrors friendlyDrones.test.js's pattern.
+// #500 Cloak / #507 Smoke Screen — the shared `isPlayerStealthed` predicate, the LOS-blocking
+// `smokeBlocksPoint` (#507 follow-up — the cloud now actually blocks the per-enemy firing-lane
+// raycast, not just noise-aggro), and the smoke cloud (multi-puff) spawn/despawn lifecycle.
+// Mirrors friendlyDrones.test.js's pattern.
 import { describe, it, expect, vi } from 'vitest';
-import { StealthMixin, isPlayerStealthed } from './stealth.js';
+import { StealthMixin, isPlayerStealthed, smokeBlocksPoint } from './stealth.js';
 
 function fakeView() {
   return { setStrokeStyle() { return this; }, setDepth() { return this; }, destroy: vi.fn() };
 }
 
 function makeScene() {
-  const scene = { players: [], add: { circle: vi.fn(() => fakeView()) } };
+  const scene = {
+    players: [],
+    add: { circle: vi.fn(() => fakeView()) },
+    tweens: { add: vi.fn(), killTweensOf: vi.fn() },
+  };
   return Object.assign(scene, StealthMixin);
 }
 
@@ -35,31 +41,60 @@ describe('isPlayerStealthed', () => {
   });
 });
 
+describe('#507 smokeBlocksPoint — the LOS-blocking predicate world.js\'s raycast consumes', () => {
+  it('true for a point inside a live cloud', () => {
+    const players = [{ smokeCloud: { x: 0, y: 0, radius: 50 } }];
+    expect(smokeBlocksPoint(players, 10, 10)).toBe(true);
+  });
+
+  it('false for a point outside every cloud, and with no players/clouds at all', () => {
+    const players = [{ smokeCloud: { x: 0, y: 0, radius: 50 } }];
+    expect(smokeBlocksPoint(players, 500, 500)).toBe(false);
+    expect(smokeBlocksPoint([], 0, 0)).toBe(false);
+    expect(smokeBlocksPoint(undefined, 0, 0)).toBe(false);
+  });
+
+  it('true if ANY player\'s cloud covers the point, not just the first', () => {
+    const players = [{ smokeCloud: null }, { smokeCloud: { x: 200, y: 200, radius: 40 } }];
+    expect(smokeBlocksPoint(players, 210, 200)).toBe(true);
+  });
+});
+
 describe('#507 _spawnSmokeCloud / _despawnSmokeCloud', () => {
-  it('creates a cloud at the player\'s current position with the given radius', () => {
+  it('creates a cloud at the player\'s current position with the given radius, as several puffs', () => {
     const scene = makeScene();
     const player = { x: 30, y: 40 };
     scene._spawnSmokeCloud(player, 100);
     expect(player.smokeCloud).toMatchObject({ x: 30, y: 40, radius: 100 });
-    expect(scene.add.circle).toHaveBeenCalledWith(30, 40, 100, 0xc8d2dd, 0.28);
+    expect(player.smokeCloud.puffs.length).toBeGreaterThan(1);   // #507: several discrete puffs, not one circle
+    expect(scene.add.circle).toHaveBeenCalledTimes(player.smokeCloud.puffs.length);
+    // Every puff lands within the cloud's own radius of the cast position.
+    for (const p of player.smokeCloud.puffs) {
+      expect(Math.hypot(p.ox, p.oy)).toBeLessThanOrEqual(100);
+    }
   });
 
-  it('re-casting replaces the caster\'s own cloud rather than leaking a view', () => {
+  it('re-casting replaces the caster\'s own cloud rather than leaking views', () => {
     const scene = makeScene();
     const player = { x: 0, y: 0 };
     scene._spawnSmokeCloud(player, 100);
-    const firstView = player.smokeCloud.view;
+    const firstPuffs = player.smokeCloud.puffs.map((p) => p.circle);
     scene._spawnSmokeCloud(player, 100);
-    expect(firstView.destroy).toHaveBeenCalledTimes(1);
+    for (const c of firstPuffs) expect(c.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('despawn destroys the view and clears the slot', () => {
+  it('despawn destroys every puff and clears the slot', () => {
     const scene = makeScene();
     const player = { x: 0, y: 0 };
     scene._spawnSmokeCloud(player, 100);
-    const view = player.smokeCloud.view;
+    const puffs = player.smokeCloud.puffs.map((p) => p.circle);
     scene._despawnSmokeCloud(player);
-    expect(view.destroy).toHaveBeenCalledTimes(1);
+    for (const c of puffs) expect(c.destroy).toHaveBeenCalledTimes(1);
     expect(player.smokeCloud).toBe(null);
+  });
+
+  it('despawning with no cloud out is a safe no-op', () => {
+    const scene = makeScene();
+    expect(() => scene._despawnSmokeCloud({ x: 0, y: 0 })).not.toThrow();
   });
 });

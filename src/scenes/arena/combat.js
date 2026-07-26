@@ -288,6 +288,29 @@ export const CombatMixin = {
     this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
   },
 
+  // #498: a big, radius-SIZED "you felt that" AoE blast — a bright core flash plus a shockwave
+  // ring that visibly grows to the ability's ACTUAL radius, plus an afterglow fill so the
+  // affected area itself reads for a beat. Unlike `_impactFx` (which only fires per struck
+  // target, so an AoE that whiffs every enemy shows nothing at all), this always plays on
+  // activation regardless of whether anything was standing in it — the blast itself is the
+  // feedback, not a side effect of a hit landing. Reuses the same pooled `_burst` circle
+  // primitive `_impactFx`/`_deathFx` already use. Finishes with a short, punchy camera shake
+  // (guarded — headless/test scenes without a real camera just skip it) clearly stronger than
+  // the continuous per-footstep tremble in locomotion.js's `_footShake`, since this is a
+  // discrete one-off impact, not a movement cue. Shared by any ability effect that wants a real
+  // "landed" beat — currently scenes/arena/abilities.js's `jumpBlast` (launch pop + landing
+  // blast, at two different radii/tints).
+  _aoeBlastFx(x, y, radius, color = 0xffcf8a) {
+    this._burst(x, y, radius * 0.15, radius * 0.6, 0xffffff, 0.95, 140, false);   // core flash
+    this._burst(x, y, radius * 0.3, radius * 1.05, color, 0.85, 260, true);       // shockwave ring
+    this._burst(x, y, radius * 0.2, radius * 0.8, color, 0.35, 320, false);       // afterglow fill
+    const cam = this.cameras?.main;
+    if (cam?.shake) {
+      const px = Math.min(8, radius * 0.09);   // scales with radius, capped well under a jarring shake
+      cam.shake(180, px / Math.max(1, cam.height), true);
+    }
+  },
+
   // Apply `damage` to enemy `e`'s part nearest the world point (x, y). Works for BOTH a mech
   // (parts positioned via mechLayout, re-skinned to show damage) and a non-mech HpBody unit
   // (#68: parts carry their own {x,y}; single-pool, so the nearest part only decides where the
