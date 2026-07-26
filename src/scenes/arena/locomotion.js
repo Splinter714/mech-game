@@ -15,6 +15,7 @@ import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
 import { activeSpeedMult } from './abilities.js';
+import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/mediumPlayer.js';
 
 // #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
 // symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
@@ -50,30 +51,19 @@ const GAIT_YAW = 0.023;
 // not sluggish, not springy.
 const TILT_SMOOTH_K = 12;
 
-// #154 experiment: try an instant-turning control feel — the PLAYER's body/leg facing and
-// turret snap immediately to their target angle every frame, bypassing the chassis'
-// `turnRate`/`turretSlew` rate limits entirely. This is a trivially-reversible toggle, not a
-// committed design change (same pattern as #144's aim-line disable flag): flip back to false
-// to restore the exact previous rate-limited feel. Only affects the player's _drive() below —
-// enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is separate and untouched.
-//
-// #501 re-experiment: flipped back to false to bring back rate-limited "twist slew" turning
-// (paired with a much slower player top speed, mediumPlayer.js) — a deliberate revisit of the
-// pre-#154 feel, not a bug. Flip back to true to restore the instant-snap feel.
-const INSTANT_TURNING = false;
+// #154/#159 history: this used to be a compile-time INSTANT_TURNING/INSTANT_VELOCITY pair of
+// consts — an instant-snap control feel (player body/leg facing AND turret snap immediately to
+// target, velocity snaps straight to commanded speed, bypassing the chassis' turnRate/
+// turretSlew/accel/decel rate limits entirely). #501 re-experimented with flipping both back
+// off (rate-limited "twist slew" turning + accel/decel ramp, paired with a much slower player
+// top speed in mediumPlayer.js) and wanted a LIVE toggle to A/B the two feels without a
+// redeploy — so this is now `player.legacyMovement` (per-player runtime state, toggled by
+// D-pad down, edge-detected in Controls.js as `movementTogglePressed` and applied below),
+// defaulting to false (the #501 slower/twist-slew feel — the current shipped default). `true`
+// restores the exact pre-#501/#154 instant-snap feel AND the original speed/turn numbers
+// (`LEGACY_MOVEMENT_OVERRIDE`, mediumPlayer.js). Only affects the player's _drive()/_stepGait()
+// below — enemy turn-rate/turret-slew logic (enemies.js / enemyBehaviors.js) is untouched.
 
-// #159 follow-up to #154/#156: INSTANT_TURNING only snapped the player's FACING to input —
-// the underlying VELOCITY still eased toward the commanded speed via the accel/decel
-// weight-inertia model below (`approach(this.vx, tx, ...)`), so the mech still visibly
-// ramped up/down rather than moving at full commanded speed immediately. This flag, same
-// trivially-reversible pattern as INSTANT_TURNING, snaps vx/vy directly to the target (tx/ty)
-// each frame instead of easing when true. Per-chassis accel/decel become moot while this is
-// on (left in the chassis data, just bypassed). Flip back to false to restore the exact
-// previous accel/decel behavior.
-//
-// #501: flipped back to false alongside INSTANT_TURNING — the slower/weightier re-experiment
-// wants the accel/decel ramp back too, not just a slower top speed with an instant-snap start.
-const INSTANT_VELOCITY = false;
 
 // #159 follow-up (collision-tunneling fix): `_blocked` is a single-POINT check — it only tests
 // the mech's post-move endpoint each frame, not the path swept to get there. That was safe as
@@ -213,9 +203,18 @@ export const LocomotionMixin = {
   //
   // #348 did exactly what that note said: `sprint`/`dash`/`fireCooldowns` now live on the
   // PLAYER, alongside its own `intent` from its own controller.
+  // #501: `player.legacyMovement` toggled live by D-pad down (`intent.movementTogglePressed`,
+  // edge-detected once per player in Controls.js so a held button can't repeat-toggle every
+  // frame). `undefined` on a fresh player defaults to false — the shipped slower/twist-slew
+  // feel — same as if the field had never existed before this toggle was added.
+  _movementFor(player) {
+    return player.legacyMovement ? { ...player.mech.movement, ...LEGACY_MOVEMENT_OVERRIDE } : player.mech.movement;
+  },
+
   _drive(intent, dt, player = primaryPlayerOf(this)) {
     const p = player;
-    const mv = p.mech.movement;
+    if (intent.movementTogglePressed) p.legacyMovement = !p.legacyMovement;
+    const mv = this._movementFor(p);
     const legF = p.mech.legFactor();
 
     // #399 (owner decision): the PLAYER moves at full forward speed in EVERY direction — the old
@@ -245,8 +244,8 @@ export const LocomotionMixin = {
     const tx = intent.move.x * maxSp, ty = intent.move.y * maxSp;
     const rampX = (tx !== 0 && Math.sign(tx) === Math.sign(p.vx) && Math.abs(tx) > Math.abs(p.vx));
     const rampY = (ty !== 0 && Math.sign(ty) === Math.sign(p.vy) && Math.abs(ty) > Math.abs(p.vy));
-    p.vx = INSTANT_VELOCITY ? tx : approach(p.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
-    p.vy = INSTANT_VELOCITY ? ty : approach(p.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
+    p.vx = p.legacyMovement ? tx : approach(p.vx, tx, (rampX ? mv.accel : mv.decel) * dt);
+    p.vy = p.legacyMovement ? ty : approach(p.vy, ty, (rampY ? mv.accel : mv.decel) * dt);
     // Move with wall/boundary collision, sliding along blocked axes. #92: a living GROUND enemy
     // (mech/tank/turret — flyers narratively fly over ground obstacles, see
     // `_blockedByGroundEnemy`) blocks the player the same way impassable terrain does.
@@ -317,14 +316,14 @@ export const LocomotionMixin = {
 
     // Legs turn to face the direction of travel (so the walk reads), at the chassis turn
     // rate — heavier mechs pivot their stance more slowly.
-    // #156: under INSTANT_TURNING the target facing must come from the RAW INPUT direction
+    // #156: under legacyMovement the target facing must come from the RAW INPUT direction
     // (intent.move), not from velocity — this.vx/this.vy still ease toward the commanded
     // direction via the accel/decel weight-inertia model above, so snapping `this.angle` to
     // atan2(vy, vx) would still visibly lag the player's actual input while velocity ramps up.
     // Gate on input magnitude (not mech speed, which is meaningless for this path) and hold the
     // last facing when the stick/keys are centred, mirroring how aim holds its last angle.
     // The non-instant path is completely unchanged: it still derives moveAng from velocity.
-    if (INSTANT_TURNING) {
+    if (p.legacyMovement) {
       const inputMag = Math.hypot(intent.move.x, intent.move.y);
       if (inputMag > STICK_DEADZONE) {
         p.angle = Math.atan2(intent.move.y, intent.move.x);
@@ -344,7 +343,7 @@ export const LocomotionMixin = {
     const aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
     // #189: turret slew no longer has a buff multiplier — Overclock's old slewMult was
     // removed along with moveMult when it was redesigned to force-activate Sprint instead.
-    p.turretAngle = INSTANT_TURNING
+    p.turretAngle = p.legacyMovement
       ? aim
       : rotateToward(p.turretAngle, aim, mv.turretSlew, dt);
     // #348: the HUD's input-mode hint belongs to the LOCAL player's device.
@@ -355,7 +354,7 @@ export const LocomotionMixin = {
   // on each plant, and apply the per-step body bob. Then pin the view to the mech.
   _stepGait(dt, player = primaryPlayerOf(this)) {
     const p = player;
-    const mv = p.mech.movement;
+    const mv = this._movementFor(p);
     const legF = p.mech.legFactor();
     let bob = 0;
     let yaw = 0;
@@ -518,7 +517,7 @@ export const LocomotionMixin = {
     const SHAKE_MS = 260;     // long, low tremble rather than a discrete per-step tick (was 150,
                                // originally 60); still shorter than the ~500ms between footfalls
     const cam = this.cameras.main;
-    const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / player.mech.movement.maxSpeed, 0, 1);
+    const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / this._movementFor(player).maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
     const intensity = px / Math.max(1, cam.height);
     cam.shake(SHAKE_MS, intensity, true);   // force=true so a new step overrides the tail of the last

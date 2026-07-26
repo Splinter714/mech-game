@@ -36,12 +36,21 @@ describe('CHASSIS — weight-class movement stats', () => {
   it('#299: mediumPlayer is a stat variant of medium, not a new weight class', () => {
     expect(CHASSIS.mediumPlayer.weightClass).toBe('medium');
     // #403: the player's step cadence is quicker than the shared medium (its stepInterval was
-    // tuned before #159 doubled maxSpeed) — the ONLY movement field allowed to diverge.
-    const { stepInterval: pStep, ...pRest } = CHASSIS.mediumPlayer.movement;
-    const { stepInterval: mStep, ...mRest } = CHASSIS.medium.movement;
+    // tuned before #159 doubled maxSpeed).
+    // #501: the re-experiment additionally diverges maxSpeed/accel/decel/turnRate (much slower,
+    // paired with the live D-pad-down twist-slew toggle in arena/locomotion.js) — turretSlew/
+    // turretArc/stepBob/footShake are the fields still required to match the shared medium.
+    const { stepInterval: pStep, maxSpeed: pSpeed, accel: pAccel, decel: pDecel, turnRate: pTurn, ...pRest } = CHASSIS.mediumPlayer.movement;
+    const { stepInterval: mStep, maxSpeed: mSpeed, accel: mAccel, decel: mDecel, turnRate: mTurn, ...mRest } = CHASSIS.medium.movement;
     expect(pRest).toEqual(mRest);
     expect(pStep).toBe(215);   // #438 playtest follow-up: 250 → 215, "slightly faster"
     expect(pStep).toBeLessThan(mStep);
+    // #501: player is slower/turns tighter than the shared medium baseline (LEGACY_MOVEMENT_OVERRIDE
+    // in mediumPlayer.js restores exactly these medium numbers when the legacy toggle is on).
+    expect(pSpeed).toBeLessThan(mSpeed);
+    expect(pAccel).toBeLessThan(mAccel);
+    expect(pDecel).toBeLessThan(mDecel);
+    expect(pTurn).toBeLessThan(mTurn);
   });
 
   it('#438: the player\'s legs are wide-set, thickened again, and reach FORWARD', () => {

@@ -172,6 +172,10 @@ export class Controls {
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
     this._padReloadDown = false;   // previous frame's raw B state, for edge-detecting reload
     this._kbReloadDown = false;    // previous frame's raw F state, for edge-detecting reload
+    // #501: previous frame's raw D-pad-down state, for edge-detecting the movement-feel toggle
+    // (pad only — this is a live A/B comparison aid for the re-experiment, not a bound feature
+    // that needs a keyboard equivalent).
+    this._padDpadDownDown = false;
     // #506: previous frame's raw per-slot ability button state, one pair per device, for
     // edge-detecting each ability's press exactly like dash/reload above.
     this._padAbilityDown = {}; this._kbAbilityDown = {};
@@ -281,6 +285,7 @@ export class Controls {
         mode: 'touch',
         ability: this._noAbilityPressed(),
         reloadPressed: false,   // #402: touch reports no reload, same as no fire/dash/ability
+        movementTogglePressed: false, // #501: pad-only toggle, nothing to report on touch
       };
     }
 
@@ -296,6 +301,7 @@ export class Controls {
         mode: 'pad',
         ability: this._noAbilityPressed(),
         reloadPressed: false,   // #402: no pad, no reload edge to report
+        movementTogglePressed: false, // #501: no pad, no toggle edge to report
       };
     }
 
@@ -367,7 +373,14 @@ export class Controls {
       ability[slot] = padMode ? padPressed : kbPressed;
     }
 
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', ability, reloadPressed };
+    // #501: D-pad down live-toggles the player's movement-feel profile (twist-slew re-experiment
+    // vs. the pre-#501 legacy feel) for A/B comparison in play — pad only, edge-detected the same
+    // way as reload/ability above so a held button can't repeat-toggle every frame.
+    const padDpadDown = !!(pad && pad.buttons[PAD.DPAD_DOWN] && pad.buttons[PAD.DPAD_DOWN].pressed);
+    const movementTogglePressed = padMode && padDpadDown && !this._padDpadDownDown;
+    this._padDpadDownDown = padDpadDown;
+
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', ability, reloadPressed, movementTogglePressed };
   }
 
   // A neutral "nothing pressed" ability map, for the early-return branches (touch, pad-only

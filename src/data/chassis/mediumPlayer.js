@@ -84,3 +84,13 @@ export const MEDIUM_PLAYER_CONFIG = {
     maxSpeed: 100, accel: 130, decel: 90, turnRate: 0.9,
   },
 };
+
+// #501: live A/B toggle (D-pad down, arena/locomotion.js) between the re-experiment above and
+// the exact pre-#501 feel, so the owner can compare in play without a redeploy. These are
+// MEDIUM_CONFIG's original numbers verbatim — what mediumPlayer.js's `movement.maxSpeed` etc.
+// were before this experiment overrode them. Only the 4 fields the experiment touches; turret
+// slew/arc, step cadence, etc. are unaffected by the toggle either way.
+export const LEGACY_MOVEMENT_OVERRIDE = {
+  maxSpeed: MEDIUM_CONFIG.movement.maxSpeed, accel: MEDIUM_CONFIG.movement.accel,
+  decel: MEDIUM_CONFIG.movement.decel, turnRate: MEDIUM_CONFIG.movement.turnRate,
+};
