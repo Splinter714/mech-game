@@ -30,6 +30,9 @@
 import { DEPTH, ARENA_MECH_SCALE } from './shared.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { getWeapon } from '../../data/weapons.js';
+import { planEmissions } from '../../data/delivery.js';
+import { scheduleFireCues } from '../../audio/fireCues.js';
+import { listenerOf } from './players.js';
 import { buildVehicleTextures } from '../../art/index.js';
 import { vehicleDarkPalette } from '../../art/vehicles/palette.js';
 import { randomDroneCount, stepFriendlyDroneOrbit, pickFriendlyDroneTarget } from '../../data/friendlyDroneAI.js';
@@ -38,7 +41,6 @@ import { randomDroneCount, stepFriendlyDroneOrbit, pickFriendlyDroneTarget } fro
 // Drone's own weapon/range/cadence straight from its data entry rather than ad hoc constants, so
 // retuning the enemy drone's loadout retunes the friendly one too.
 const DRONE_WEAPON = getWeapon(ENEMY_KINDS.drone.weaponId);       // Plasma Lance, same as the enemy
-const DRONE_DAMAGE = DRONE_WEAPON.damage;                          // identical per-bolt damage
 const DRONE_CYCLE = (ENEMY_KINDS.drone.burstRestMs ?? 400) / 1000; // mirrors the enemy's own burst-rest cadence between bolts
 export const DRONE_RANGE = ENEMY_KINDS.drone.fireRange;            // same engagement range as the enemy Recon Drone
 
@@ -151,7 +153,25 @@ export const FriendlyDronesMixin = {
         if (d.fireCd > 0) continue;
         const target = pickFriendlyDroneTarget(d.x, d.y, DRONE_RANGE, enemies, lockedTarget);
         if (!target) continue;
-        this._damageEnemyAt(target, target.x, target.y, DRONE_DAMAGE, 0x5ec8e0, false, {});
+        // #530 fix: this used to call `_damageEnemyAt` directly — an instant, invisible zap with
+        // no travelling bolt, no muzzle flash, and no fire sound, so despite the AI actually
+        // picking a target and ticking its cooldown correctly, nothing ever looked or sounded like
+        // the drone had fired (Jackson's playtest report: "doesn't seem like it"). The enemy Recon
+        // Drone this borrows its loadout from instead spawns a genuine travelling Plasma Lance
+        // bolt via `_spawnProjectile` (enemies.js `_fireVehicleWeapon`) — same weapon, so the same
+        // bolt art/color, but flagged `owner: 'enemy'` so it damages players. A friendly drone
+        // needs the mirror image: the same real projectile, but `owner: 'player'` so it damages
+        // enemies on arrival instead (projectiles.js's owner check is what decides which side a
+        // round can hit). `seekOverride: target` pins the bolt's homing directly at THIS drone's
+        // own picked target regardless of the owning player's own separate lock-on, and `shooter:
+        // player` supplies the owner identity `_spawnProjectile` needs for hex-origin/cover-
+        // exemption bookkeeping. `scheduleFireCues` adds the same fire-cue sound cue every other
+        // weapon fire gets, positioned at the drone's own muzzle rather than the player's.
+        const w = { weapon: DRONE_WEAPON, location: 'friendlyDrone', index: 0 };
+        const angle = Math.atan2(target.y - d.y, target.x - d.x);
+        const plan = planEmissions(DRONE_WEAPON);
+        scheduleFireCues(this, DRONE_WEAPON, plan, true, 1, { x: d.x, y: d.y, ...listenerOf(this) });
+        this._spawnProjectile(w, d.x, d.y, angle, 'player', 0, target, angle, player, { statKind: 'friendlyDrone' });
         d.fireCd = DRONE_CYCLE;
       }
     }

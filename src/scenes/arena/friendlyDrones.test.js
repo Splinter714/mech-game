@@ -12,11 +12,18 @@
 // call carrierDeploy.test.js makes about `_spawnKind`), so the fake scene's `textures.exists`
 // always reports true — the build branch is skipped and never exercised here; only the pure
 // position/targeting/lifecycle logic is under test.
+// #530: spy on the shared fire-cue scheduler the same way vehicleFire.test.js does for the enemy
+// Recon Drone's own fire path — proves the friendly drone now plays a real fire cue on each shot
+// instead of firing silently (the root cause of "doesn't seem like it" — see friendlyDrones.js's
+// own #530 comment at the call site).
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../../audio/fireCues.js', () => ({ scheduleFireCues: vi.fn() }));
+
 import { FriendlyDronesMixin, DRONE_HP, DRONE_RANGE, DRONE_LEASH_RADIUS } from './friendlyDrones.js';
 import { ENEMY_KINDS } from '../../data/enemyKinds.js';
 import { getWeapon } from '../../data/weapons.js';
 import { DRONE_COUNT_MIN, DRONE_COUNT_MAX } from '../../data/friendlyDroneAI.js';
+import { scheduleFireCues } from '../../audio/fireCues.js';
 
 function fakeSprite() {
   return { rotation: 0, setScale: vi.fn(function () { return this; }) };
@@ -46,7 +53,10 @@ function makeScene(enemies = []) {
       sprite: vi.fn(() => fakeSprite()),
       container: vi.fn((x, y) => fakeContainer(x, y)),
     },
-    _damageEnemyAt: vi.fn(),
+    // #530: the drone now fires through the real projectile pipeline (`_spawnProjectile`) rather
+    // than calling `_damageEnemyAt` directly — see friendlyDrones.js's own comment at the call
+    // site for the root cause this replaced.
+    _spawnProjectile: vi.fn(),
   };
   return Object.assign(scene, FriendlyDronesMixin);
 }
@@ -112,10 +122,13 @@ describe('#497 friendly drone weapon (same as the enemy Recon Drone)', () => {
 
     scene._updateFriendlyDrones(0.1);
 
-    expect(scene._damageEnemyAt).toHaveBeenCalledTimes(1);
-    const [target, , , amount] = scene._damageEnemyAt.mock.calls[0];
-    expect(target).toBe(near);
-    expect(amount).toBe(getWeapon(ENEMY_KINDS.drone.weaponId).damage);
+    expect(scene._spawnProjectile).toHaveBeenCalledTimes(1);
+    const [w, , , , owner, , seekOverride] = scene._spawnProjectile.mock.calls[0];
+    expect(w.weapon).toBe(getWeapon(ENEMY_KINDS.drone.weaponId));
+    expect(owner).toBe('player');   // damages enemies, not players — see #530 comment
+    expect(seekOverride).toBe(near);
+    // A real fire cue plays too (previously silent — the actual #530 bug).
+    expect(scheduleFireCues).toHaveBeenCalledTimes(1);
   });
 
   it('shares the enemy Recon Drone\'s own engagement range', () => {
@@ -135,8 +148,8 @@ describe('#497 _updateFriendlyDrones', () => {
 
     scene._updateFriendlyDrones(0.1);
 
-    expect(scene._damageEnemyAt).toHaveBeenCalledTimes(1);
-    expect(scene._damageEnemyAt.mock.calls[0][0]).toBe(near);
+    expect(scene._spawnProjectile).toHaveBeenCalledTimes(1);
+    expect(scene._spawnProjectile.mock.calls[0][6]).toBe(near);   // seekOverride — the picked target
   });
 
   it('does not fire again until its cadence cooldown clears', () => {
@@ -151,7 +164,7 @@ describe('#497 _updateFriendlyDrones', () => {
     scene._updateFriendlyDrones(0.1);
     scene._updateFriendlyDrones(0.1);   // well under the enemy drone's own burst-rest cadence
 
-    expect(scene._damageEnemyAt).toHaveBeenCalledTimes(1);
+    expect(scene._spawnProjectile).toHaveBeenCalledTimes(1);
   });
 
   it('prefers the player\'s own locked target over a nearer enemy', () => {
@@ -166,8 +179,8 @@ describe('#497 _updateFriendlyDrones', () => {
 
     scene._updateFriendlyDrones(0.1);
 
-    expect(scene._damageEnemyAt).toHaveBeenCalledTimes(1);
-    expect(scene._damageEnemyAt.mock.calls[0][0]).toBe(locked);
+    expect(scene._spawnProjectile).toHaveBeenCalledTimes(1);
+    expect(scene._spawnProjectile.mock.calls[0][6]).toBe(locked);   // seekOverride
   });
 
   it('falls back to the nearest enemy when the player has no locked target', () => {
@@ -182,7 +195,7 @@ describe('#497 _updateFriendlyDrones', () => {
 
     scene._updateFriendlyDrones(0.1);
 
-    expect(scene._damageEnemyAt.mock.calls[0][0]).toBe(near);
+    expect(scene._spawnProjectile.mock.calls[0][6]).toBe(near);   // seekOverride
   });
 
   it('ignores a locked target that is no longer in the live-enemy list (e.g. died this frame)', () => {
@@ -197,7 +210,7 @@ describe('#497 _updateFriendlyDrones', () => {
 
     scene._updateFriendlyDrones(0.1);
 
-    expect(scene._damageEnemyAt.mock.calls[0][0]).toBe(near);
+    expect(scene._spawnProjectile.mock.calls[0][6]).toBe(near);   // seekOverride
   });
 
   it('despawns the whole squad the instant its owner dies, rather than hovering over a corpse', () => {
