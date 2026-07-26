@@ -77,7 +77,7 @@ export const BaseLocomotionMixin = {
       if (beat !== p._gaitBeat) {
         p._gaitBeat = beat;
         this._footImpactFx(beat, mv.stepBob, p);
-        this._footShake(mv.footShake, p);
+        this._footShake(mv.footShake, mv.maxSpeed, p);
         Audio.footstep(beat);
       }
 

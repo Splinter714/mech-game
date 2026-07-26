@@ -384,7 +384,7 @@ export const LocomotionMixin = {
       if (beat !== p._gaitBeat) {
         p._gaitBeat = beat;
         this._footImpactFx(beat, mv.stepBob, p);
-        this._footShake(mv.footShake, p);
+        this._footShake(mv.footShake, mv.maxSpeed, p);
         Audio.footstep(beat);
       }
 
@@ -519,14 +519,22 @@ export const LocomotionMixin = {
   // one pixel (2 × SHAKE_GAIN), i.e. SHAKE_MAX_PX never binds for the player and the camera is not
   // where the per-step punch is coming from — that's the body squash in `_footImpactFx`. Kept as a
   // low continuous ground-tremble cue; push SHAKE_GAIN if the world should move more.
-  _footShake(powerPx, player = primaryPlayerOf(this)) {
+  // `maxSpeed` is passed in by the caller (the `mv` it already resolved for this frame's drive/
+  // gait step) rather than re-derived here via `_movementFor` — that helper lives on
+  // LocomotionMixin/ArenaScene only (it reads the #501 legacy-movement A/B toggle), but
+  // `_footShake` itself is one of the five gait helpers BaseScene/base/locomotion.js reuses
+  // directly (see BaseScene.js's `LocomotionMixin` destructure) without the rest of the mixin.
+  // Calling `this._movementFor` from here threw on BaseScene ("this._movementFor is not a
+  // function"), which killed BaseScene's whole `update()` loop — including input — the moment
+  // the mech took its first step (#522).
+  _footShake(powerPx, maxSpeed, player = primaryPlayerOf(this)) {
     if (!powerPx) return;
     const SHAKE_GAIN = 0.18;  // fraction of the chassis footShake px that reaches the camera
     const SHAKE_MAX_PX = 2.5; // hard cap on camera offset (was 4) — softer ceiling
     const SHAKE_MS = 260;     // long, low tremble rather than a discrete per-step tick (was 150,
                                // originally 60); still shorter than the ~500ms between footfalls
     const cam = this.cameras.main;
-    const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / this._movementFor(player).maxSpeed, 0, 1);
+    const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
     const intensity = px / Math.max(1, cam.height);
     cam.shake(SHAKE_MS, intensity, true);   // force=true so a new step overrides the tail of the last
