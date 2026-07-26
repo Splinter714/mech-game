@@ -49,6 +49,15 @@ export const ProjectilesMixin = {
     // enemy. `nearest(x,y)` returns the EXACT same enemy the old full `_nearestEnemy` scan would.
     const enemyIndex = this._buildEnemyIndex();
     for (const p of this.projectiles) {
+      // #527: a round can already be `dead` walking INTO this loop — currently only the
+      // Anti-Missile interceptor pass above does this, marking a round shot down before it's
+      // ever moved/hit-tested this frame. Without this guard, nothing here reads `p.dead` at
+      // entry (only a few narrow spots deeper down check it defensively), so an "intercepted"
+      // round still fully advanced, could still detonate against its target, and still got
+      // drawn as a normal in-flight round — only vanishing on the *next* frame's end-of-loop
+      // filter. That's the bug behind #527 ("not seeing it happening") — the round visibly
+      // kept flying (and could still hurt you) the very frame it was supposedly shot down.
+      if (p.dead) continue;
       // Hit detection normally chases the nearest living enemy (enemy rounds always chase the
       // player, the one and only target they can have), so a dumbfire round detonates on
       // whatever it reaches. A round with a LIVE LOCKED target is different (#77 follow-up bug:
@@ -556,7 +565,10 @@ export const ProjectilesMixin = {
       if (!target) continue;
       target.dead = true;
       target.stopTrajectorySfx?.();
-      this._impactFx(target.x, target.y, 0x5ec8e0, target.kind, 8, target.weaponId);
+      // #527: its own dedicated FX (combat.js `_interceptFx`), not `_impactFx` — see that
+      // method's own comment for why reusing the generic per-weapon impact spark was the
+      // reason this read as "nothing visibly happening" in the original #494 build.
+      this._interceptFx(pl.x, pl.y, target.x, target.y);
       pl.mech.triggerIntercept(item.cooldown);
     }
   },

@@ -288,6 +288,33 @@ export const CombatMixin = {
     this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
   },
 
+  // #494/#527: Anti-Missile Defense's own dedicated "shot down" feedback — deliberately NOT a
+  // reuse of `_impactFx` above. Reusing it (the original #494 implementation) read as an
+  // ordinary ballistic spark tinted a slightly different color — indistinguishable from the
+  // dozens of near-identical stray-hit sparks already on screen during any real firefight, which
+  // is exactly why #527 reported "not seeing it obviously happening visually at all." This is
+  // bigger, holds longer, ALWAYS cyan regardless of the intercepted round's own kind/color, and
+  // adds a quick one-frame "zap" bolt from the defending mech to the intercept point (drawn into
+  // `projFx`, already cleared+repainted every frame — same one-frame-only convention
+  // `_drawAoeTendril` uses) so it visibly reads as *the mech itself* doing something, not a
+  // random spark in open air. Its SFX is its own cue (`Audio.ui('antiMissile')`), not
+  // `Audio.impact(weaponId)` — playing the enemy weapon's own impact sound here would
+  // misleadingly suggest THEIR shot connected.
+  _interceptFx(px, py, x, y) {
+    const g = this.projFx;
+    if (g && g.lineStyle) {
+      g.lineStyle(2, 0xbdf3ff, 0.85);
+      g.beginPath();
+      g.moveTo(px, py);
+      g.lineTo(x, y);
+      g.strokePath();
+    }
+    this._burst(x, y, 4, 16, 0xffffff, 1, 100, false);     // bright core flash
+    this._burst(x, y, 6, 32, 0x5ec8e0, 0.9, 280, true);    // cyan shockwave ring — bigger/longer than a normal spark
+    this._burst(x, y, 4, 20, 0x5ec8e0, 0.5, 220, false);   // cyan afterglow fill
+    Audio.ui('antiMissile');
+  },
+
   // #498: a big, radius-SIZED "you felt that" AoE blast — a bright core flash plus a shockwave
   // ring that visibly grows to the ability's ACTUAL radius, plus an afterglow fill so the
   // affected area itself reads for a beat. Unlike `_impactFx` (which only fires per struck
