@@ -522,6 +522,15 @@ function mechDestroyedCue(e) {                               // severe/final cat
 // #210: neutral "returning home" transition beat — a gentle settling descent (falling pitch,
 // soft landing) rather than a defeat drone or a rising launch whoosh, since it fires for a
 // win just as much as a loss.
+// #494/#527: Anti-Missile Defense's own point-defense zap — a bright, quick laser-ping, sharply
+// distinct in CHARACTER (not just pitch) from `partDestroyedCue`'s metallic break-off crack or
+// any weapon's own impact thump, so it reads unmistakably as "your own system just fired,"
+// never as an ordinary hit landing.
+function antiMissileCue(e) {
+  e.tone(e.sfx, { type: 'square', freq: 1700, freqEnd: 480, dur: 0.09, gain: 0.18, attack: 0.001 });
+  e.tone(e.sfx, { type: 'sine', freq: 2400, freqEnd: 1100, dur: 0.05, gain: 0.10, attack: 0.001 });
+  e.noise(e.sfx, { dur: 0.04, gain: 0.08, type: 'highpass', freq: 2200, attack: 0.001 });
+}
 function returnToGarageCue(e) {
   e.noise(e.sfx, { dur: 0.24, gain: 0.10, type: 'lowpass', freq: 900, freqEnd: 300, attack: 0.01 });
   e.tone(e.sfx, { type: 'sine', freq: 340, freqEnd: 220, dur: 0.28, gain: 0.13, attack: 0.01 });
@@ -561,6 +570,7 @@ export const UI_CUES = {
   sprintOff: sprintOffCue,
   partDestroyed: partDestroyedCue,
   mechDestroyed: mechDestroyedCue,
+  antiMissile: antiMissileCue,
 };
 
 // Generic (id, stage) UI/pickup sound dispatch — file override/bake takes precedence (same
