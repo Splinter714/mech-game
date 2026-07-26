@@ -14,7 +14,7 @@ import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 import { primaryPlayerOf } from './players.js';
 import { SPRINT_SPEED_MULT } from '../../data/sprint.js';
-import { activeSpeedMult } from './abilities.js';
+import { activeSpeedMult, hasActiveEffect } from './abilities.js';
 
 // #435: how sharply the per-step body bob skews toward the front of the stride. 1 = a pure
 // symmetric sine (smooth rise/fall); higher values bias the drop toward a hard punchy settle
@@ -441,7 +441,15 @@ export const LocomotionMixin = {
           Math.floor((p.stepMs / cycleMs) * PLAYER_HULL_FRAMES));
       }
     }
-    p.view.hull.setTexture(`${p.textureKey ?? 'playerMech'}_hull_${p.hullFrame}`);
+    // #500 (Cloak follow-up): while Cloak is active this player's hull points at the pre-baked
+    // GREY variant of the current walk-cycle frame instead of the normal one — the hull is
+    // damage-independent (see art/mechArt.js buildMechTextures' skipHull note) so `_grey` frames,
+    // once baked (coop.js `_makePlayerAt`, only for a build that actually mounts Cloak), never go
+    // stale and need no per-frame rebake here. setCloakVisual (abilities.js) deliberately leaves
+    // the hull's texture alone for exactly this reason — this is the one place that owns it, so
+    // there's a single source of truth for "which hull texture is showing right now."
+    const hullKey = `${p.textureKey ?? 'playerMech'}_hull_${p.hullFrame}`;
+    p.view.hull.setTexture(hasActiveEffect(p, 'cloak') ? `${hullKey}_grey` : hullKey);
     p.view.hull.rotation = p.angle + Math.PI / 2 + yaw;
     p.view.turret.rotation = p.turretAngle + Math.PI / 2;
     // Ease each pivoting part toward its convergence tilt (smoothing kills the lock-engage snap).
