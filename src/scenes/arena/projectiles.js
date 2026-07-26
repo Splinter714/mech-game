@@ -615,9 +615,13 @@ export const ProjectilesMixin = {
       hz.life -= dt;
       if (hz.life <= 0) { hz.dead = true; continue; }
       if (hz.kind === 'mine') {
-        const candidates = hz.owner === 'enemy'
-          ? livePlayersOf(this)
-          : this.enemies.filter((e) => !e.mech.isDestroyed());
+        // Polish pass: a flying unit (drone/helicopter — `e.flying`, data/enemyKinds.js, the
+        // same convention world.js/bases.js use for "ignores ground stuff") is airborne above a
+        // ground-planted mine, so it neither triggers one nor takes its blast. Players have no
+        // flying state today, so only the enemy side needs the filter — computed once and reused
+        // for both the trigger check and the actual damage below.
+        const groundEnemies = this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
+        const candidates = hz.owner === 'enemy' ? livePlayersOf(this) : groundEnemies;
         const triggered = candidates.some((c) => Math.hypot(c.x - hz.x, c.y - hz.y) < hz.radius);
         if (triggered) {
           hz.dead = true;
@@ -626,8 +630,7 @@ export const ProjectilesMixin = {
               this._damagePlayerAt(hit.amount, hit.target, { weaponId: hz.weaponId });
             }
           } else {
-            const enemies = this.enemies.filter((e) => !e.mech.isDestroyed());
-            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, enemies)) {
+            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, groundEnemies)) {
               this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, hz.color, false, { weaponId: hz.weaponId });
             }
             for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, otherLivePlayers(this, hz.shooter))) {

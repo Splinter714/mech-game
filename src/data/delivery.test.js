@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, scatterMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -665,6 +665,30 @@ describe('give-up bookkeeping: orbit / fuel / the eased hand-off (#418)', () => 
     beginHomingGiveUp(p, 'targetLost');
     for (let i = 0; i < 40; i++) stepHomingGiveUp(p, 1 / 60);
     expect(p.angle).toBe(1.1);
+  });
+});
+
+describe('scatterMaxDist (Proximity Mines polish pass — per-shot landing-distance jitter)', () => {
+  it('is a no-op with a falsy jitter fraction', () => {
+    expect(scatterMaxDist(150, 0)).toBe(150);
+    expect(scatterMaxDist(150, undefined)).toBe(150);
+    expect(scatterMaxDist(150, null)).toBe(150);
+  });
+
+  it('varies the distance within ±jitterFrac of the original', () => {
+    const maxDist = 150, jitterFrac = 0.35;
+    const runs = Array.from({ length: 200 }, () => scatterMaxDist(maxDist, jitterFrac));
+    for (const r of runs) {
+      expect(r).toBeGreaterThanOrEqual(maxDist * (1 - jitterFrac) - 1e-9);
+      expect(r).toBeLessThanOrEqual(maxDist * (1 + jitterFrac) + 1e-9);
+    }
+    // Genuinely random, not a constant — spans a real range across repeated calls.
+    expect(Math.max(...runs) - Math.min(...runs)).toBeGreaterThan(maxDist * jitterFrac * 0.5);
+  });
+
+  it('never returns a negative distance even with an extreme jitter fraction', () => {
+    const runs = Array.from({ length: 100 }, () => scatterMaxDist(10, 5));
+    expect(runs.every((r) => r >= 0)).toBe(true);
   });
 });
 

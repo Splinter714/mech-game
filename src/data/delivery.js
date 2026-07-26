@@ -161,6 +161,22 @@ export function arcMaxDist(x, y, aimAngle, tgt, maxRange, opt) {
   return (fwd > 0 && fwd < maxRange && perp < ARC_PERP_GATE) ? fwd : opt;
 }
 
+// ── Landing-distance scatter (Proximity Mines polish pass) ──────────────────────────────
+// `spreadJitter` (planEmissions above) only randomizes a fanned shot's LAUNCH ANGLE —
+// arcMaxDist computes ONE travel budget per volley (keyed to the shared centre bearing +
+// target), so every shot in a spread has always landed at the exact same distance from the
+// muzzle. No weapon needed per-shot distance variance before Proximity Mines, so there was no
+// existing hook for it. `delivery.scatterJitter` (0..1, opt-in) lets an arcing spread weapon
+// randomize each shot's OWN travel distance by up to this fraction either way, so a scatter of
+// rounds reads as thrown by hand rather than a fan stamped at one fixed radius.
+// scenes/arena/firing.js `_spawnProjectile` applies this AFTER arcMaxDist/fixedRange resolve
+// the shared travel budget, so weapons that don't opt in (jitterFrac 0/undefined) are untouched.
+export function scatterMaxDist(maxDist, jitterFrac) {
+  if (!jitterFrac) return maxDist;
+  const mult = 1 - jitterFrac + Math.random() * 2 * jitterFrac;
+  return Math.max(0, maxDist * mult);
+}
+
 // ── Arcing homing blend (#57) ────────────────────────────────────────────────────────────
 // The seeker on an arcing homing round doesn't engage until the round is past apex and
 // descending — like a real missile leaving the tube mostly ballistic, then curving in on its

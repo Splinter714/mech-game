@@ -292,3 +292,27 @@ describe('#408 pulseLaser/railLance cadence under the 2s reload', () => {
     expect((w.damage / (w.cycleTime / 1000))).toBeCloseTo(31.515, 3);
   });
 });
+
+describe('Proximity Mines (timedCharge) polish pass', () => {
+  it('reads as a mine, not a grenade, while keeping the stable id (#118 rule)', () => {
+    expect(WEAPONS.timedCharge.id).toBe('timedCharge');
+    expect(WEAPONS.timedCharge.name).toBe('Proximity Mines');
+  });
+
+  it('lobs with a more pronounced arc than the shared default', () => {
+    // ARC_LOFT_BUMP (delivery.js) is the shared default of 0.6 every plain arcing lob gets.
+    expect(WEAPONS.timedCharge.delivery.arcBump).toBeGreaterThan(0.6);
+  });
+
+  it('opts into both angle jitter (spreadJitter) and the new landing-distance jitter (scatterJitter)', () => {
+    const { spreadJitter, scatterJitter, count } = WEAPONS.timedCharge.delivery;
+    expect(count).toBe(5);
+    expect(spreadJitter).toBeGreaterThan(0);
+    expect(scatterJitter).toBeGreaterThan(0);
+    expect(scatterJitter).toBeLessThan(1);
+  });
+
+  it('still plants a mine hazard, unaffected by the jitter additions', () => {
+    expect(WEAPONS.timedCharge.delivery.hazard).toMatchObject({ kind: 'mine', radius: 55, damage: 30 });
+  });
+});
