@@ -180,15 +180,19 @@ export class WeaponCardList {
   }
 
   // ── Pad focus cursor (#70) — optional; only the garage drives it. ──────────────────────
-  // setFocus(i) highlights card i (null/-1 clears) and auto-scrolls it into view; moveFocus
-  // steps it (clamped, no wrap — it's a scrolling list); focusedId() is what A / a slot bind
-  // acts on. setIds() clears the focus, so a refilter needs a fresh setFocus.
+  // setFocus(i) highlights card i (null/-1 clears) and, by default, auto-scrolls it into view;
+  // moveFocus steps it (clamped, no wrap — it's a scrolling list); focusedId() is what A / a
+  // slot bind acts on. setIds() clears the focus, so a refilter needs a fresh setFocus.
+  // #541: `{ scroll: false }` moves the focus cursor (and its highlight) WITHOUT touching
+  // scroll — the garage uses this when re-seeding focus on the still-mounted item after a slot
+  // switch that didn't change the underlying id list, so browsing position is never disturbed
+  // just because the pad-nav cursor needs to agree with what's mounted.
 
-  setFocus(i) {
+  setFocus(i, { scroll = true } = {}) {
     this._focus = (i == null || i < 0 || !this.cards.length)
       ? -1 : Math.min(this.cards.length - 1, i);
     for (const c of this.cards) this._paintSelection(c);
-    if (this._focus >= 0) {
+    if (scroll && this._focus >= 0) {
       const top = this._focus * (this.cardH + this.cardGap);
       this._setScroll(scrollToShow(this._scrollY, top, this.cardH, this.region.h, this._maxScroll));
     }
@@ -203,6 +207,15 @@ export class WeaponCardList {
   focusedId() { return this.cards[this._focus]?.id ?? null; }
 
   indexOfId(id) { return this.cards.findIndex((c) => c.id === id); }
+
+  // #541: true when `ids` (pre lock-sort, the same shape setIds() takes) is identical — same
+  // length, same order — to the canonical id list this list was last built from. Lets a caller
+  // skip a setIds() rebuild (and the scroll-to-top/lost-focus it causes) when a refilter
+  // produces the exact same eligible set it already has, e.g. switching between two ordinary
+  // weapon slots that share the same eligibility.
+  sameIds(ids) {
+    return !!this._ids && this._ids.length === ids.length && this._ids.every((id, i) => id === ids[i]);
+  }
 
   // Rebuild the card set (e.g. filtered to a slot's eligible items). Reuses nothing — cards
   // are cheap and this only fires on a slot change, not per frame. The given order is the

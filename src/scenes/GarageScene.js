@@ -709,21 +709,32 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Refilter the column's catalog to the currently-selected slot's eligible items and highlight
-  // whatever's mounted there — called on a slot change and after any mount/unmount. The list's
-  // own scroll/lock overlay/live-fire state is otherwise untouched (setIds rebuilds cards;
-  // WeaponCardList.setIds resets scroll to the top, matching the old single-editor garage).
+  // whatever's mounted there — called on a slot change (mouse or pad/keyboard), a tab switch,
+  // and after any mount/unmount.
+  // #541: only actually REBUILDS the card list (setIds — which resets scroll to the top) when
+  // the eligible set genuinely changed content (e.g. crossing from a melee-only arm slot into a
+  // non-melee slot, or switching tabs entirely — weapon/ability/core catalogs are disjoint id
+  // sets). Switching between two slots that share the same eligible catalog (the common case:
+  // two ordinary weapon slots, or the two ability slots) is the SAME list, just a different
+  // "what's mounted here" highlight — so it now only repaints the selection/focus highlight in
+  // place, leaving scroll exactly where the player left it. A genuine list-content change still
+  // resets scroll to the top; that's a materially different list, not a browsing position worth
+  // preserving.
   _refreshCatalogList(col) {
-    col.catalogList.setIds(this._eligibleIds(col.selectedSlot));
+    const ids = this._eligibleIds(col.selectedSlot);
+    const changed = !col.catalogList.sameIds(ids);
+    if (changed) col.catalogList.setIds(ids);
     const mountedId = this._mountedIn(col, col.selectedSlot);
     col.catalogList.setSelected(mountedId);
     // #533: seed the pad-nav focus cursor on whatever's currently mounted (or the first row, if
     // the slot's empty) so the very first D-pad/arrow-key A-press has a real row to act on
-    // without requiring an up/down press first. setIds() above always resets focus to -1;
-    // WeaponCardList's own moveFocus() would otherwise lazily default to row 0 on first use, but
-    // seeding it here means the highlighted card and the pad cursor agree from the moment the
-    // tab/slot context changes, not just after the player has already pressed a direction.
+    // without requiring an up/down press first. When the list was just rebuilt (setIds always
+    // resets focus to -1), seed it WITH the normal auto-scroll-into-view so the newly-shown list
+    // opens on the mounted item. When it wasn't rebuilt, seed it WITHOUT scrolling (#541) — the
+    // player is still looking at the same list, and re-seeding focus for pad-nav purposes is not
+    // itself a reason to move their scroll position.
     const idx = col.catalogList.indexOfId(mountedId);
-    col.catalogList.setFocus(idx >= 0 ? idx : 0);
+    col.catalogList.setFocus(idx >= 0 ? idx : 0, { scroll: changed });
   }
 
   // #529: a tile click also flips the column's active tab to whichever tab that slot's kind
