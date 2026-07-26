@@ -728,13 +728,15 @@ export default class GarageScene extends Phaser.Scene {
     col.catalogList.setSelected(mountedId);
     // #533: seed the pad-nav focus cursor on whatever's currently mounted (or the first row, if
     // the slot's empty) so the very first D-pad/arrow-key A-press has a real row to act on
-    // without requiring an up/down press first. When the list was just rebuilt (setIds always
-    // resets focus to -1), seed it WITH the normal auto-scroll-into-view so the newly-shown list
-    // opens on the mounted item. When it wasn't rebuilt, seed it WITHOUT scrolling (#541) — the
-    // player is still looking at the same list, and re-seeding focus for pad-nav purposes is not
-    // itself a reason to move their scroll position.
-    const idx = col.catalogList.indexOfId(mountedId);
-    col.catalogList.setFocus(idx >= 0 ? idx : 0, { scroll: changed });
+    // without requiring an up/down press first. Only do this when the list was actually rebuilt
+    // (setIds always resets focus to -1) — when it wasn't, the player is still looking at the
+    // same list at the same scroll position, and a slot switch is not itself a reason to also
+    // relocate their focus cursor onto whatever happens to be mounted in the new slot (#541
+    // follow-up: this used to still snap the cursor even after scroll-snapping was fixed).
+    if (changed) {
+      const idx = col.catalogList.indexOfId(mountedId);
+      col.catalogList.setFocus(idx >= 0 ? idx : 0);
+    }
   }
 
   // #529: a tile click also flips the column's active tab to whichever tab that slot's kind
