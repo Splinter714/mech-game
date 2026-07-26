@@ -6,6 +6,9 @@ import {
 import {
   RUN_CURRENCY_KEY, OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY, REGIONAL_BASES_KEY,
 } from '../data/events.js';
+import {
+  loadShowVersion, loadShowPerf, loadShowControlMethod, loadShowAiDebug,
+} from '../data/pauseSettings.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
 import { loadAllOverrides } from '../audio/sfxOverrides.js';
@@ -31,6 +34,13 @@ export default class BootScene extends Phaser.Scene {
     this.registry.set(DEEP_MISSIONS_WON_KEY, loadDeepMissionsWon());
     // #517: the biome → regional-base pointer, same persist-across-reloads treatment.
     this.registry.set(REGIONAL_BASES_KEY, loadRegionalBases());
+    // #523: the pause menu's four persisted show/hide toggles, seeded into the registry once
+    // here — HudScene reads these live channels every frame (cheap Map lookup) rather than
+    // hitting localStorage itself, and PauseMenuScene keeps both in sync when a toggle flips.
+    this.registry.set('showVersion', loadShowVersion());
+    this.registry.set('showPerf', loadShowPerf());
+    this.registry.set('showControlMethod', loadShowControlMethod());
+    this.registry.set('showAiDebug', loadShowAiDebug());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).

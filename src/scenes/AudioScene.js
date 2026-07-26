@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
+import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 import { Slider } from '../ui/slider.js';
 import { GROUPS, TRACK_OF, WAVE_PARAM, WAVES, WAVE_ABBR } from '../ui/musicTunerSpec.js';
 import { WeaponSfxPanel } from '../ui/weaponSfxPanel.js';
@@ -72,7 +73,8 @@ export default class AudioScene extends Phaser.Scene {
     const mech = this.allMechs?.[ACTIVE_MECH_KEY];
     const canDeploy = mech instanceof Mech ? mech.isComplete() : false;
     buildTabBar(this, { active: 'AudioScene', canDeploy, onDeploy: () => this._deploy() });
-    attachPadTabCycle(this, 'AudioScene');   // SELECT cycles the top tabs (#70)
+    // #523: SELECT used to cycle the top tabs (attachPadTabCycle, #70) — it's now claimed
+    // globally by the shared pause menu instead (wirePauseMenu, below).
 
     Slider.attachDrag(this);
     this.body = this.add.container(0, 0);
@@ -85,7 +87,9 @@ export default class AudioScene extends Phaser.Scene {
     this.selectedSfxId = null;   // the id currently loaded into the tuner panel
     this._build();
 
-    this.input.keyboard.on('keydown-ESC', () => this.scene.start('GarageScene'));
+    // #523: ESC used to return straight to the garage — it now always opens the shared pause
+    // menu instead, per the issue's confirmed design.
+    wirePauseMenu(this);
     this.events.once('shutdown', () => this._destroyPanel());
   }
 

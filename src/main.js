@@ -6,6 +6,7 @@ import SimulGarageScene from './scenes/SimulGarageScene.js';
 import MissionSelectScene from './scenes/MissionSelectScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
+import PauseMenuScene from './scenes/PauseMenuScene.js';
 
 // `?canvas` forces Phaser's Canvas renderer. Headless browsers (the smoke test)
 // often lack WebGL framebuffers, and the game logic we verify there is
@@ -61,7 +62,12 @@ const config = {
   input: { gamepad: true },
   // SimulGarageScene: the simultaneous-co-op-garage PROTOTYPE (see its own file header) sitting
   // alongside the shipped sequential GarageScene, reachable from its 'SIMUL' tab-bar action.
-  scene: [BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene],
+  // #523: PauseMenuScene is last so it renders/receives input on top of every other scene it
+  // might be launched over (Phaser draws later-registered scenes above earlier ones).
+  scene: [
+    BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene,
+    PauseMenuScene,
+  ],
 };
 
 const game = new Phaser.Game(config);

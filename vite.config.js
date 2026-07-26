@@ -36,6 +36,13 @@ export default defineConfig(({ command }) => {
   const base = command === 'serve' ? '/' : '/mech-game/';
   return {
     base,
+    // #523: a build-time stamp for the pause menu's version-number readout (data/version.js).
+    // Computed once per `vite build`/`vite dev` invocation — for `npm run deploy` that's the
+    // moment right before publishing to gh-pages, the closest thing this project has to a real
+    // "deploy timestamp".
+    define: {
+      __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    },
     plugins: [
       VitePWA({
         registerType: 'autoUpdate',
