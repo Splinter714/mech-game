@@ -17,12 +17,13 @@ import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 // this is now four weapon slots only. Still what the Garage's paper-doll tile row uses.
 export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 
-// #506 rework (playtest): the arena HUD's tile row, not the Garage's. Jackson: "the two active
-// skills X/Y should be represented as the same size as weapons, and should be the middle two of
-// 6 buttons" — every combat-bound button the arena shows at once, one row, same tile size
-// throughout: the four weapon slots flanking the two mountable abilities in the middle. The
-// passive core slot is deliberately NOT in this list at all — see HudScene.js's `_makePanel`.
-export const HUD_TILE_ORDER = ['leftArm', 'leftTorso', ...ABILITY_SLOTS, 'rightTorso', 'rightArm'];
+// #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick. Jackson: "move x/y
+// abilities in weapon HUD to double-wide half-height buttons (as compared to the weapon buttons)
+// that sit in a single row above the 4 weapon buttons; so the X ability sits above the left sided
+// weapons and the Y ability above the right sided weapons." X is therefore first (left) here, Y
+// second (right) — see `weaponAbilityRows` below, which is what actually places them. The passive
+// core slot is still deliberately NOT in this list — see HudScene.js's `_makePanel`.
+export const HUD_ABILITY_ORDER = ['abilityX', 'abilityY'];
 
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
@@ -72,14 +73,44 @@ export function paintTilePlate(g, rect, { selected = false } = {}) {
 
 // A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`. `order`
 // is the location/slot id list to draw from — defaults to the Garage's plain weapon-only
-// TILE_ORDER; the arena HUD passes HUD_TILE_ORDER (#506 rework) to get all six combat-bound
-// buttons in one row instead.
+// TILE_ORDER.
 export function tileRow(x, w, { y, bottom, order = TILE_ORDER, n = order.length, gap = 12, maxSize = 132 } = {}) {
   const size = Math.min(maxSize, Math.floor((w - gap * (n - 1)) / n));
   const totalW = size * n + gap * (n - 1);
   const x0 = Math.round(x + (w - totalW) / 2);
   const top = bottom != null ? bottom - size : y;
   return order.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
+}
+
+// #506 SECOND rework: the arena HUD's tile block, not the Garage's — TWO rows instead of the
+// first rework's single row of six. The bottom row is `tileRow`'s normal 4 weapon tiles,
+// unchanged in size/position. The top row is exactly 2 ability tiles, each spanning the same
+// horizontal run as the weapon PAIR below it (so X's width matches leftArm+leftTorso combined,
+// Y's matches rightTorso+rightArm combined) and half a weapon tile's height, separated from the
+// weapon row by `rowGap`. Built ON TOP of `tileRow`'s own output rather than duplicating its
+// centring math, so the two rows can never drift apart horizontally.
+export function weaponAbilityRows(x, w, {
+  bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER,
+  gap = 12, rowGap = 12, maxSize = 132,
+} = {}) {
+  const weapons = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
+  if (!weapons.length) return { weapons, abilities: [], top: bottom };
+  const half = Math.floor(weapons.length / 2);
+  const leftPair = weapons.slice(0, half);
+  const rightPair = weapons.slice(half);
+  const abilityH = Math.round(weapons[0].h / 2);
+  const abilityTop = weapons[0].y - rowGap - abilityH;
+  const spanOf = (pair) => {
+    const last = pair[pair.length - 1];
+    return { x: pair[0].x, w: last.x + last.w - pair[0].x };
+  };
+  const leftSpan = spanOf(leftPair);
+  const rightSpan = spanOf(rightPair);
+  const abilities = [
+    { loc: abilityOrder[0], x: leftSpan.x, y: abilityTop, w: leftSpan.w, h: abilityH },
+    { loc: abilityOrder[1], x: rightSpan.x, y: abilityTop, w: rightSpan.w, h: abilityH },
+  ];
+  return { weapons, abilities, top: abilityTop };
 }
 
 // Places every ABILITY_SLOTS entry around (cx, cy), using ABILITY_SLOT_LAYOUT's unit dx/dy

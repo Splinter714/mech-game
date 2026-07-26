@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { LOCATION_INFO, ABILITY_SLOTS, slotKind } from '../data/anatomy.js';
-import { TILE_ORDER, HUD_TILE_ORDER, tileRow, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
+import { LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
+import { TILE_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
 import { getItem } from '../data/items.js';
 import { ABILITY_BINDS, INTERACT_BIND } from '../input/Controls.js';
 import { InkCache, fitScale } from '../art/inkBounds.js';
@@ -759,12 +759,17 @@ export default class HudScene extends Phaser.Scene {
     // then this player's tile row immediately to its right — rather than each hugging a screen
     // edge with the leftovers in between. Nothing here has to negotiate for room any more: the
     // band already sized the group, so the block is laid out at full size (`availW: 0`).
-    // #506 rework (playtest): the row is now every combat-bound button the arena shows at once —
-    // the four weapon slots flanking the two mountable abilities in the middle two seats (Jackson:
-    // "the two active skills X/Y should be represented as the same size as weapons, and should be
-    // the middle two of 6 buttons"). HUD_TILE_ORDER (ui/skillTiles.js) is that arrangement;
-    // CONSOLE_TILES.n (hudLayout.js, now 6) is what sizes the tile budget for it.
-    const tiles = tileRow(group.tilesX, group.tilesW, { bottom: this.H - 10, order: HUD_TILE_ORDER, maxSize: CONSOLE_TILES.max });
+    // #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick — Jackson wants
+    // TWO rows instead: the four weapon tiles at their normal size on the bottom, and the two
+    // mountable abilities (X left, Y right) as double-wide/half-height tiles riding directly above
+    // their matching weapon pair ("move x/y abilities in weapon HUD to double-wide half-height
+    // buttons ... that sit in a single row above the 4 weapon buttons; so the X ability sits above
+    // the left sided weapons and the Y ability above the right sided weapons").
+    // `weaponAbilityRows` (ui/skillTiles.js) computes both rows off ONE shared width so they can
+    // never drift apart horizontally; CONSOLE_TILES.n is back to 4 (hudLayout.js) since the
+    // ability row rides within the weapon row's own span rather than adding to it.
+    const { weapons: tiles, abilities: abilityTiles } =
+      weaponAbilityRows(group.tilesX, group.tilesW, { bottom: this.H - 10, maxSize: CONSOLE_TILES.max });
     const last = tiles[tiles.length - 1];
     // #448: whichever of the three readouts is switched on. Same shape either way, so everything
     // below this line — header, labels, downed line, console bay — is mode-agnostic.
@@ -827,33 +832,35 @@ export default class HudScene extends Phaser.Scene {
     // Only built for the mode that needs it, same as `fusedGfx` below.
     panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
-    // Skill tiles for THIS player's own mech: ONE row holding every combat-bound button — the
-    // four weapon slots and the two mountable abilities, same tile size throughout, abilities
-    // riding the middle two seats (see the HUD_TILE_ORDER note above). The passive core slot
-    // deliberately gets no tile here at all (Jackson, playtest: "the passive slot doesn't need to
-    // be represented during an actual deployment") — it stays Garage-only chrome; GarageScene and
-    // SimulGarageScene still draw it via the original diamondLayout/coreTileRect, untouched by
-    // this rework.
+    // Skill tiles for THIS player's own mech: the bottom row is the four weapon slots (unchanged
+    // size/position from before either rework); the top row is the two mountable abilities in
+    // their own double-wide/half-height tiles, X over the left weapon pair and Y over the right
+    // (see the `weaponAbilityRows` note above). The passive core slot deliberately gets no tile
+    // here at all (Jackson, playtest: "the passive slot doesn't need to be represented during an
+    // actual deployment") — it stays Garage-only chrome; GarageScene and SimulGarageScene still
+    // draw it via the original diamondLayout/coreTileRect, untouched by this rework.
     const mode = this._panelMode(panel);
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
-      if (slotKind(r.loc) === 'ability') {
-        const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
-        panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
-          loc: r.loc, itemId: id, mode,
-          bindGlyph: mode === 'pad' ? ABILITY_BINDS[r.loc].pad : ABILITY_BINDS[r.loc].key,
-          emptyLabel: 'ability',
-        });
-      } else {
-        const id = snapshot?.mech?.mounts?.[r.loc]?.[0] ?? null;
-        panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
-      }
+      const id = snapshot?.mech?.mounts?.[r.loc]?.[0] ?? null;
+      panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
+    }
+    for (const r of abilityTiles) {
+      const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
+      panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
+        loc: r.loc, itemId: id, mode,
+        bindGlyph: mode === 'pad' ? ABILITY_BINDS[r.loc].pad : ABILITY_BINDS[r.loc].key,
+        emptyLabel: 'ability',
+      });
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
-    panel.tileTop = rowTop;
-    // The row's outer box, so the console can recess one bay behind the whole six-tile row.
+    // The block's outer TOP is the ability row's top edge — it sits above the weapon row, so it's
+    // the taller of the two (mirrors the pre-#506 diamond-above-row shape, just with a flat
+    // double-wide pair instead of a diamond+core cluster).
+    panel.tileTop = abilityTiles.length ? abilityTiles[0].y : rowTop;
+    // The block's outer box, so the console can recess one bay behind BOTH rows.
     panel.tileBox = tiles.length
-      ? { x: tiles[0].x, y: rowTop, w: last.x + last.w - tiles[0].x, h: last.h }
+      ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: (rowTop + last.h) - panel.tileTop }
       : null;
     // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
     // structure WASH and shield BRACKET that fuse onto/around the tiles themselves. Armor moved
