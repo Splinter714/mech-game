@@ -21,11 +21,12 @@ import { WEAPON_SLOTS, MELEE_LOCATIONS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD, SKILL_BINDS, ABILITY_BINDS } from '../input/Controls.js';
 import { TILE_ORDER, tileRow, drawSkillTile, TILE_UI, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
-import { buildTabBar, attachPadTabCycle, TAB_BAR_H } from '../ui/tabBar.js';
+import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 import { DirRepeater, dominantDir, slotBindAction } from '../ui/padNav.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 
 // The mech lab. The build is four weapon skill slots (#188: the old fifth "ability" slot —
 // centerTorso, jumpJet/bubbleShield — is gone; #261: L3/Space is a hardcoded Dash, never
@@ -182,7 +183,10 @@ export default class GarageScene extends Phaser.Scene {
     this.inputMode = 'kbm';       // which scheme the tile bind labels reflect (#26)
     this.padActive = false;       // pad in use → show the catalog cursor + legend
     this.dirRepeat = new DirRepeater();   // shared d-pad/stick step auto-repeat
-    attachPadTabCycle(this, 'GarageScene');   // SELECT cycles the top tabs
+    // #523: SELECT used to cycle the top tabs (attachPadTabCycle) — it's now claimed globally by
+    // the shared pause menu instead (wirePauseMenu, below), per the issue's confirmed "ESC or
+    // gamepad SELECT/BACK" design. The tabs stay mouse-clickable; there's no pad equivalent for
+    // cycling them any more.
     // The pad button legend, along the very bottom under the tile row. Text set per-zone.
     this.legend = this.add.text(this.dollX + this.dollW / 2, this.H - 11, '', {
       fontFamily: 'monospace', fontSize: '10px', color: '#7c8794',
@@ -196,9 +200,13 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-B', () => this.scene.start('BaseScene'));
     // #248: the keyboard 'C' cycle-chassis shortcut is disabled along with the rest of the
     // chassis switcher (see cycleChassis + _buildPreview below) — light/heavy are off for now.
-    this.input.keyboard.on('keydown-ESC', () => this._selectSlot(null));
+    // #523: ESC used to deselect the current slot — it now always opens the shared pause menu
+    // instead (wirePauseMenu, below), per the issue's confirmed design ("ESC now always opens
+    // the pause menu instead, in every scene"). There's no keyboard shortcut for deselecting a
+    // slot any more; clicking the slot (or another slot) still works.
+    wirePauseMenu(this);
     // #487 (second pass): '.'/',' cycle the mech colour forward/back — the < > keys, so they line
-    // up with the on-screen ‹ › arrows. Free keys (the D/ESC binds above are the only garage keys).
+    // up with the on-screen ‹ › arrows. Free keys (the D binds above are the only garage keys).
     this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(+1));
     this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(-1));
     // PROTOTYPE: 'P' jumps to the simultaneous co-op garage (SimulGarageScene) — see its file
@@ -422,10 +430,10 @@ export default class GarageScene extends Phaser.Scene {
   // Per-frame: tick the live catalog previews, then handle the gamepad (#70, catalog-first).
   // D-pad/left-stick up-down browse the full catalog with auto-scroll. A slot's own fire bind
   // (RT/LT/RB/LB) ASSIGNS the highlighted item into that slot, or CLEARS it if the slot
-  // already holds exactly that item; a locked item routes to purchase instead. Start deploys,
-  // Select cycles tabs (attachPadTabCycle). (#248: the X/Y chassis-cycle shortcut is disabled
-  // for now — see cycleChassis.) The first pad press of a session just wakes the cursor
-  // (reveals it at the top of the catalog).
+  // already holds exactly that item; a locked item routes to purchase instead. Start deploys;
+  // Select opens the pause menu (#523, wirePauseMenu) rather than cycling tabs any more. (#248:
+  // the X/Y chassis-cycle shortcut is disabled for now — see cycleChassis.) The first pad press
+  // of a session just wakes the cursor (reveals it at the top of the catalog).
   update(time, delta) {
     this.list.update(time, delta);
 

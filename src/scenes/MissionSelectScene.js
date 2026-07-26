@@ -7,6 +7,7 @@ import { saveOutposts } from '../data/save.js';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { DirRepeater, dominantDir } from '../ui/padNav.js';
 import { launchMission } from './base/launchMission.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 
 // #510: reached by walking onto the base's scanner hex. Presents a small set of candidate runs
 // (data/missions.js `offerMissions`) — pick a card (click, or d-pad/stick + A on a controller),
@@ -91,7 +92,9 @@ export default class MissionSelectScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this._refreshFooterHint();
 
-    this.input.keyboard.on('keydown-ESC', () => this.scene.start('BaseScene'));
+    // #523: ESC used to return straight to base — it now always opens the shared pause menu
+    // instead, per the issue's confirmed design. B (pad) still returns to base directly, below.
+    wirePauseMenu(this);
     this.input.keyboard.on('keydown-D', () => this._deploy());
 
     this.padEdges = new PadEdges(this, 0);

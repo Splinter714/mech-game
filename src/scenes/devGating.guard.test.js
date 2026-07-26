@@ -19,40 +19,51 @@ const garage = read('GarageScene.js');
 const tabBar = read('../ui/tabBar.js');
 const main = read('../main.js');
 
-describe('#449 HudScene: the performance readout is dev-gated again (stripped from production)', () => {
-  // #296 gated the FPS counter dev-only; #334 reversed that so Jackson could diagnose a Windows/Edge
-  // frame-rate problem on the live build; #449 puts it BACK behind DEV ("remove FPS data from
-  // production") now that diagnostic run is over. The assertions below are #334's, inverted.
-  it('the performance readout is created only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text/);
+describe('#523 HudScene: perf/control-method/AI/version readouts moved from DEV-gated to toggle-gated', () => {
+  // #296 gated the FPS counter dev-only; #334 reversed that so Jackson could diagnose a Windows/
+  // Edge frame-rate problem on the live build; #449 put it BACK behind DEV. #523 supersedes all
+  // of that: none of these five overlays (fpsText/versionText/modeText/aiText/devPanelGfx) are
+  // gated by `import.meta.env.DEV` any more — HudScene.js has NO live DEV guard left at all. Each
+  // is created unconditionally and gated per-frame by its own persisted pause-menu toggle
+  // (data/pauseSettings.js, registry channels `showPerf`/`showVersion`/`showControlMethod`/
+  // `showAiDebug`) instead.
+  it('HudScene.js contains no live `if (import.meta.env.DEV)` guard any more', () => {
+    expect(hud).not.toMatch(/if \(import\.meta\.env\.DEV\)/);
   });
 
-  it('the performance readout is updated only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText\.setText\(perfLines\(\{/);
+  it('the five overlay objects are created unconditionally in create()', () => {
+    expect(hud).toMatch(/this\.devPanelGfx = this\.add\.graphics\(\)\.setDepth\(30\);/);
+    expect(hud).toMatch(/this\.versionText = this\.add\.text/);
+    expect(hud).toMatch(/this\.modeText = this\.add\.text/);
+    expect(hud).toMatch(/this\.aiText = this\.add\.text/);
+    expect(hud).toMatch(/this\.fpsText = this\.add\.text/);
   });
 
-  it('the one-off renderer/GPU probes are inside the same guard (no probe in production)', () => {
-    // Anchored on the fpsText guard itself, so the probes have to sit in THAT block — not merely
-    // somewhere after some earlier DEV guard.
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.fpsText = this\.add\.text[\s\S]*?this\._perfRenderer = rendererLabel[\s\S]*?this\._perfGpu = gpuRendererString/);
+  it('the one-off renderer/GPU probes run unconditionally too', () => {
+    expect(hud).toMatch(/this\._perfRenderer = rendererLabel\(this\.game\.renderer\?\.type, Phaser\.WEBGL, Phaser\.CANVAS\);/);
+    expect(hud).toMatch(/this\._perfGpu = gpuRendererString\(/);
+  });
+
+  it('the perf readout text is only ever set to real content behind the `showPerf` registry toggle', () => {
+    expect(hud).toMatch(/const showPerf = this\.registry\.get\('showPerf'\) === true;\s*\n\s*if \(showPerf\) \{\s*\n\s*this\.fpsText\.setText\(perfLines\(\{/);
+  });
+
+  it('the version readout is only ever set to real content behind the `showVersion` registry toggle', () => {
+    expect(hud).toMatch(/const showVersion = this\.registry\.get\('showVersion'\) === true;/);
+    expect(hud).toMatch(/this\.versionText\.setText\(showVersion \? `BUILD \$\{formatBuildTime\(BUILD_TIME\)\}` : ''\)\.setVisible\(showVersion\);/);
+  });
+
+  it('the control-method readout is only ever set to real content behind the `showControlMethod` registry toggle', () => {
+    expect(hud).toMatch(/const showControlMethod = this\.registry\.get\('showControlMethod'\) === true;/);
+    expect(hud).toMatch(/this\.modeText\.setText\(showControlMethod \? this\._inputModeLabel\(\) : ''\)\.setVisible\(showControlMethod\);/);
+  });
+
+  it('the AI debug readout is only ever set to real content behind the `showAiDebug` registry toggle', () => {
+    expect(hud).toMatch(/const showAiDebug = this\.registry\.get\('showAiDebug'\) === true;/);
   });
 
   it('reads the renderer type LIVE off the game rather than inferring it from config', () => {
     expect(hud).toMatch(/rendererLabel\(this\.game\.renderer\?\.type, Phaser\.WEBGL, Phaser\.CANVAS\)/);
-  });
-});
-
-describe('#296 HudScene: control hints / control-method / AI readouts stay dev-gated', () => {
-  it('the control-method (modeText) + AI (aiText) overlays are created only under import.meta.env.DEV', () => {
-    // #452 follow-up: the cluster's backing plate (`devPanelGfx`) was created inside this same
-    // guard, so the assertion allows lines between the guard and `modeText` — what it pins is
-    // that BOTH overlays (and the plate that backs them) are inside a DEV block, not their order.
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?this\.modeText = this\.add\.text[\s\S]*?this\.aiText = this\.add\.text/);
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?this\.devPanelGfx = this\.add\.graphics/);
-  });
-
-  it('the control-method + AI overlays are updated only under import.meta.env.DEV', () => {
-    expect(hud).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{\s*\n\s*this\.modeText\.setText[\s\S]*?this\.aiText\.setText/);
   });
 
   // #467: the control-hints + debug d-pad cheat-sheet assertion was DELETED here rather than
@@ -60,12 +71,13 @@ describe('#296 HudScene: control hints / control-method / AI readouts stay dev-g
   // help text on top left should also be removed"), so there is no longer any line for a
   // dev-gate guard to guard — the per-slot skill tiles carry the binds now.
 
-  it('MOUSE + KB (a control-method-only string) is never emitted outside a DEV guard', () => {
-    // Belt-and-braces: the only occurrence of the literal sits inside the gated update() block.
+  it('MOUSE + KB (a control-method-only string) is never emitted behind a live DEV guard', () => {
+    // Belt-and-braces, inverse of the old DEV-guard pin: the literal must exist, and no `if
+    // (import.meta.env.DEV)` guard (as opposed to a comment merely mentioning the flag — several
+    // still do, explaining the #523 change) precedes it.
     const idx = hud.indexOf("'MOUSE + KB'");
     expect(idx).toBeGreaterThan(-1);
-    const guardIdx = hud.lastIndexOf('import.meta.env.DEV', idx);
-    expect(guardIdx).toBeGreaterThan(-1);
+    expect(hud.lastIndexOf('if (import.meta.env.DEV)', idx)).toBe(-1);
   });
 });
 
@@ -78,7 +90,10 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
     expect(main).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?import\('\.\/scenes\/AudioScene\.js'\)/);
     // ...and NOT statically imported / listed in the always-on scene array.
     expect(main).not.toMatch(/^import AudioScene from/m);
-    expect(main).toMatch(/scene: \[BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene\],/);
+    // #523: PauseMenuScene joined the always-on array (it's a production feature, not a dev-only
+    // authoring tool), and the array wrapped onto multiple lines — match loosely on the scene
+    // names/order rather than exact whitespace.
+    expect(main).toMatch(/scene: \[\s*BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene,\s*PauseMenuScene,?\s*\]/);
   });
 
   it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {

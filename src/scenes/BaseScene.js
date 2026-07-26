@@ -12,6 +12,7 @@ import { LocomotionMixin } from './arena/locomotion.js';
 import { BaseWorldMixin } from './base/world.js';
 import { BaseLocomotionMixin } from './base/locomotion.js';
 import { BASE_TRIGGERS } from './base/layout.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 
 // #509/#510: the central base — a small, physical hex space the player walks their mech
 // around, replacing GarageScene as the game's entry point. Different hexes trigger different
@@ -64,6 +65,9 @@ export default class BaseScene extends Phaser.Scene {
     this._lastTriggerHex = null;
 
     this.input.keyboard.on('keydown-G', () => this.scene.start('GarageScene'));
+    // #523: the shared pause menu. BaseScene has one player and no overlay scene to pause
+    // alongside it.
+    wirePauseMenu(this, { getPlayers: () => [this.player] });
 
     this._buildOutpostReadout();
   }

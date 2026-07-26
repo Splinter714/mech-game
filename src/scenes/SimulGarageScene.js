@@ -17,6 +17,7 @@ import { stepIndex, cycleListId } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { Audio } from '../audio/index.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 
 // PROTOTYPE (Jackson wants to evaluate this live, not a locked spec): the SIMULTANEOUS co-op
 // garage. The shipped flow (GarageScene.js + data/coopGarage.js) is SEQUENTIAL — one editing
@@ -101,6 +102,10 @@ export default class SimulGarageScene extends Phaser.Scene {
     for (let i = 0; i < MAX_GARAGE_PLAYERS; i++) this.padEdges[i] = new PadEdges(this, i);
 
     this.input.keyboard.on('keydown-S', () => this.scene.start('GarageScene'));
+    // #523: the shared pause menu. This prototype has no single "the player" — it builds up to
+    // MAX_GARAGE_PLAYERS mechs at once — so it's wired with no `getPlayers`, which reads as "no
+    // live mech to toggle" and just disables the MOVEMENT row.
+    wirePauseMenu(this);
   }
 
   // ── Scene chrome ──────────────────────────────────────────────────────────────────────────

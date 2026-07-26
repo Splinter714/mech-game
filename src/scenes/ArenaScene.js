@@ -27,10 +27,11 @@ import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { FriendlyDronesMixin } from './arena/friendlyDrones.js';
 import { StealthMixin } from './arena/stealth.js';
-import { primaryPlayerOf, tickPlayerResources } from './arena/players.js';
+import { primaryPlayerOf, playersOf, tickPlayerResources } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
+import { wirePauseMenu } from './PauseMenuScene.js';
 
 // #246: the player's full-mech shield — a real trait present from the start of every sortie IF
 // equipped (most enemy mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy
@@ -226,6 +227,13 @@ export default class ArenaScene extends Phaser.Scene {
     // the post-clear base-capture choice. One-shot, same pattern as every other scene-level key
     // above; the pad side is polled via `this.padEdges` in update() below.
     this.input.keyboard.on(`keydown-${INTERACT_BIND.key}`, () => this._onInteractPressed?.());
+    // #523: the shared pause menu — ESC or gamepad SELECT, from anywhere. HudScene is a
+    // permanently-launched overlay alongside this scene (see the `scene.launch('HudScene')`
+    // below), so it's paused/resumed right along with the arena rather than left running
+    // underneath the menu. The MOVEMENT row flips EVERY live player's legacyMovement together
+    // (not just the one who opened the menu) — a co-op nuance the issue didn't specify, called
+    // here for simplicity/symmetry with it being a shared menu, not a per-player one.
+    wirePauseMenu(this, { pauseAlso: ['HudScene'], getPlayers: () => playersOf(this) });
     // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
@@ -360,12 +368,16 @@ export default class ArenaScene extends Phaser.Scene {
     // #348: the hard-stop leash + the shared camera anchor, applied AFTER everyone has moved.
     this._updateCoopCamera();
 
-    // ── One-shot pad buttons (#28 AI toggles, #29 return to garage). #252: the manual R3/T
-    // drop-lock action is retired — the lock has no maintained state to escape any more, it
-    // simply follows convergence's live pick every frame, so there's nothing left to "drop." ──
-    // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js);
-    // SELECT is the sole pad return-to-garage button (the G key path is unchanged).
-    if (this.padEdges.pressed(PAD.SELECT)) this.toGarage();
+    // ── One-shot pad buttons (#28 AI toggles). #252: the manual R3/T drop-lock action is
+    // retired — the lock has no maintained state to escape any more, it simply follows
+    // convergence's live pick every frame, so there's nothing left to "drop." ──
+    // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js).
+    // #523: SELECT used to be the sole pad return-to-garage button — it's now claimed globally by
+    // the pause menu (`wirePauseMenu` in create()) instead, since the issue's confirmed design is
+    // "ESC or gamepad SELECT/BACK" with no exception carved out for this scene. A pad-only player
+    // loses the one-button quick-return this had; the G key (keyboard) path is unchanged, and
+    // there's no in-menu equivalent yet — flagged in the PR as a regression worth a follow-up if
+    // Jackson wants one back.
     if (this.padEdges.pressed(PAD.A)) this._onInteractPressed?.();   // #517: pad A's interact bind
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)

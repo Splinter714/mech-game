@@ -17,6 +17,10 @@
 //
 // Controller (#70): attachPadTabCycle(scene, active) — call ONCE per scene create() (not per
 // buildTabBar; the garage rebuilds its bar every refresh) — makes SELECT cycle to the next tab.
+// #523: no longer called anywhere — SELECT is now claimed globally by the shared pause menu
+// (scenes/PauseMenuScene.js `wirePauseMenu`) in every scene that used this, including the three
+// lab scenes. Left intact/retrievable rather than deleted, same as this codebase's other
+// superseded-but-kept controls (e.g. Controls.js's TOUCH_STICKS_ENABLED).
 
 import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';

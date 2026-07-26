@@ -12,6 +12,7 @@ import { miniProjector, clampToBox } from '../data/minimap.js';
 import { UI_HIGHLIGHT_COLOR } from './arena/shared.js';
 import { CORRIDOR_HALF_WIDTH_PX } from '../data/worldgen.js';
 import { rendererLabel, gpuRendererString, probeGl, perfLines, devClusterLayout } from '../data/perfReadout.js';
+import { formatBuildTime, BUILD_TIME } from '../data/version.js';
 import {
   hudLayout, panelLabel, panelStatusText, panelsNeedRebuild, BUFF_RING_R,
   integrityLayout, INTEGRITY_ORDER,
@@ -335,9 +336,13 @@ export default class HudScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '22px', color: '#d9a441', fontStyle: 'bold', align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
-    // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
-    // readout are dev-only overlays — created only under `import.meta.env.DEV` and updated behind
-    // the same guard below, so they're absent from a production build entirely.
+    // #296: the control-method indicator (CONTROLLER / MOUSE + KB), the AI move/fire debug
+    // readout, the perf readout and the version-number readout all used to be dev-only overlays
+    // — created only under `import.meta.env.DEV`, entirely absent from a production build.
+    // #523 moves them to production too, each gated by its OWN persisted pause-menu toggle
+    // instead (data/pauseSettings.js, registry channels seeded by BootScene) — so the objects
+    // below are now created UNCONDITIONALLY; update() decides per-frame whether each one shows
+    // real content or stays blank/invisible, off its own toggle.
     // #452 (style pass): the dev overlays used to sit in opposite bottom corners — the perf block
     // bottom-LEFT and these two bottom-RIGHT — where the now-centred console could run under them.
     // Jackson: the FPS counter and the control-mode indicator must sit NEXT TO EACH OTHER.
@@ -345,34 +350,35 @@ export default class HudScene extends Phaser.Scene {
     // is readable against any terrain — the console is centred and content-width, so the corner is
     // free. Laid out together in `_placeDevReadouts` (geometry: perfReadout.js `devClusterLayout`).
     // Their text COLOURS are deliberately unchanged.
-    if (import.meta.env.DEV) {
-      // Behind its own text but ABOVE the console shell — a wide co-op band could otherwise reach
-      // the corner and paint over a debug overlay that is supposed to be readable at all times.
-      this.devPanelGfx = this.add.graphics().setDepth(30);
-      this.modeText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(0, 1).setDepth(31);
-      this.aiText = this.add.text(16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1).setDepth(31);
-    }
+    // Behind its own text but ABOVE the console shell — a wide co-op band could otherwise reach
+    // the corner and paint over a debug overlay that is supposed to be readable at all times.
+    this.devPanelGfx = this.add.graphics().setDepth(30);
+    // #523: the version-number readout — clustered with the perf/control-method group per the
+    // issue's confirmed design, so it shares this same cluster/backing rather than a spot of
+    // its own.
+    this.versionText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1).setDepth(31);
+    this.modeText = this.add.text(16, this.H - 24, '', { fontFamily: 'monospace', fontSize: '12px', color: C.warn }).setOrigin(0, 1).setDepth(31);
+    this.aiText = this.add.text(16, this.H - 40, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 1).setDepth(31);
 
     // #142: performance readout, bottom-left. Phaser's own `game.loop.actualFps` is already an EMA
     // (25% new / 75% old, see TimeStep.js) refreshed once a second — plenty stable frame-to-frame
     // on its own, so no extra rolling-average layer is needed on top of it.
     // #296 gated this dev-only; #334 put it BACK in production to diagnose a Windows/Edge frame-rate
-    // problem, widened into FPS + renderer/GPU/resolution facts. #449 gates it dev-only AGAIN
-    // (Jackson: "remove FPS data from production") — that diagnostic run is over and it is debug
-    // chrome on a shipped HUD. It keeps every field; it just no longer ships. Same
-    // `import.meta.env.DEV` treatment as the hints/AI overlays above (Vite strips it from the
-    // production bundle), so the per-frame update below is gated too and `fpsText` simply doesn't
-    // exist in production. See src/data/perfReadout.js for why each field is a suspect.
-    if (import.meta.env.DEV) {
-      this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 0).setDepth(31);
-      // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
-      // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
-      // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing.
-      this._perfRenderer = rendererLabel(this.game.renderer?.type, Phaser.WEBGL, Phaser.CANVAS);
-      this._perfGpu = gpuRendererString(
-        probeGl(this.game.renderer?.gl, () => document.createElement('canvas')),
-      );
-    }
+    // problem, widened into FPS + renderer/GPU/resolution facts. #449 gated it dev-only AGAIN
+    // (Jackson: "remove FPS data from production"). #523 supersedes that: the readout is created
+    // unconditionally again, but only ever shows real numbers when the pause menu's PERF toggle
+    // is on (default OFF) — so a fresh install still ships with nothing extra on screen by
+    // default, opt-in instead of build-time-stripped. See src/data/perfReadout.js for why each
+    // field is a suspect.
+    this.fpsText = this.add.text(16, this.H - 16, '', { fontFamily: 'monospace', fontSize: '11px', color: C.dim }).setOrigin(0, 0).setDepth(31);
+    // Renderer type and GPU are fixed for the life of the page, so they're probed once here. The
+    // renderer type is read LIVE off the game (Phaser falls back to Canvas2D silently, so the
+    // config can't be trusted); the GPU probe degrades to 'unavailable' rather than throwing —
+    // safe to run unconditionally now that this ships in production too.
+    this._perfRenderer = rendererLabel(this.game.renderer?.type, Phaser.WEBGL, Phaser.CANVAS);
+    this._perfGpu = gpuRendererString(
+      probeGl(this.game.renderer?.gl, () => document.createElement('canvas')),
+    );
 
     // #60: active timed-buff readout, top-right under the objective line. One radial "cooldown-pie"
     // per active buff — a ring tinted the buff colour that drains clockwise as it runs out, with
@@ -1230,12 +1236,16 @@ export default class HudScene extends Phaser.Scene {
 
   // #452 (style pass): the dev overlays as ONE cluster, sitting on the console's top edge rather
   // than in the bottom corners the console now reaches into. Laid out left-to-right — the perf
-  // block, then the control-method indicator, then the AI debug line — off each object's measured
-  // width, so a longer GPU string pushes its neighbours along instead of drawing over them. No-op
-  // in production, where none of these objects exist.
+  // block, the version number, the control-method indicator, then the AI debug line — off each
+  // object's measured width, so a longer GPU string pushes its neighbours along instead of
+  // drawing over them.
+  // #523: these objects always EXIST now (no longer dev-gated), but each is only counted here
+  // when its own pause-menu toggle is on — update() sets `.setVisible()` per toggle before
+  // calling this, so a toggle that's off contributes no gap/space to the cluster at all (an
+  // empty-text object would still be 0-width but still occupy a `gap`).
   _placeDevReadouts() {
-    const objs = [this.fpsText, this.modeText, this.aiText].filter(Boolean);
-    if (!objs.length) return;
+    const objs = [this.fpsText, this.versionText, this.modeText, this.aiText].filter((o) => o && o.visible);
+    if (!objs.length) { this.devPanelGfx?.clear(); return; }
     const { panel, positions } = devClusterLayout(
       this.W, this.H, objs.map((o) => ({ w: o.width || 0, h: o.height || 0 })),
     );
@@ -1268,14 +1278,25 @@ export default class HudScene extends Phaser.Scene {
     const mech = snapshots[0]?.mech;
     if (!mech) return;
 
-    // #296: dev-only overlays — the objects only exist under DEV (see create()), so their
-    // per-frame updates are gated behind the same flag (stripped from the production build).
-    if (import.meta.env.DEV) {
-      this.modeText.setText(this._inputModeLabel());
+    // #523: these overlays used to be dev-build-only; now each is gated by its own persisted
+    // pause-menu toggle (registry channels seeded by BootScene, flipped live by
+    // PauseMenuScene) instead of `import.meta.env.DEV`. The objects always exist (see create());
+    // this just decides whether each shows real content or stays blank/invisible.
+    const showVersion = this.registry.get('showVersion') === true;
+    this.versionText.setText(showVersion ? `BUILD ${formatBuildTime(BUILD_TIME)}` : '').setVisible(showVersion);
+
+    const showControlMethod = this.registry.get('showControlMethod') === true;
+    this.modeText.setText(showControlMethod ? this._inputModeLabel() : '').setVisible(showControlMethod);
+
+    const showAiDebug = this.registry.get('showAiDebug') === true;
+    if (showAiDebug) {
       const aiMove = this.registry.get('aiMove') !== false;
       const aiFire = this.registry.get('aiFire') !== false;
       this.aiText.setText((aiMove && aiFire) ? '' : `AI  move:${aiMove ? 'on' : 'OFF'}  fire:${aiFire ? 'on' : 'OFF'}`);
+    } else {
+      this.aiText.setText('');
     }
+    this.aiText.setVisible(showAiDebug);
 
     // #366: one pass per PANEL — its own tiles/ammo, its own integrity bars, its own shield row,
     // its own downed-and-waiting line. Solo runs this exactly once, over the
@@ -1358,11 +1379,12 @@ export default class HudScene extends Phaser.Scene {
     this._updateMinimap();
 
     // #142: reads Phaser's own smoothed fps tracker directly (see the create()-time note above).
-    // #449: dev-only again — the object itself only exists under DEV, so its per-frame update sits
-    // behind the same flag and the whole readout is stripped from the production bundle.
+    // #523: gated by the persisted PERF pause-menu toggle instead of `import.meta.env.DEV` — the
+    // object always exists now (see create()), production ships it opt-in.
     // Resolution/DPR are re-read every frame (a window move between displays changes DPR live, and
     // main.js resizes the backing store to match); renderer/GPU were probed once in create().
-    if (import.meta.env.DEV) {
+    const showPerf = this.registry.get('showPerf') === true;
+    if (showPerf) {
       this.fpsText.setText(perfLines({
         fps: this.game.loop.actualFps,
         renderer: this._perfRenderer,
@@ -1371,11 +1393,15 @@ export default class HudScene extends Phaser.Scene {
         height: this.scale.height,
         dpr: this.registry.get('dpr') || window.devicePixelRatio || 1,
       }));
-      // #449: the plate is measured off the line, so it is repainted with it.
-      this._paintObjectivePanel();
-      // Re-flow the cluster now every line's text (and so its width) is current.
-      this._placeDevReadouts();
+    } else {
+      this.fpsText.setText('');
     }
+    this.fpsText.setVisible(showPerf);
+    // Re-flow the cluster now every line's text (and so its width, and so its visibility set
+    // above) is current. Unconditional now — `_placeDevReadouts` itself no-ops (and clears the
+    // backing plate) when every toggle is off. (The objective panel's own repaint stays where it
+    // always was, in the mission block above — it was never actually about the FPS line.)
+    this._placeDevReadouts();
   }
 
   // #80: point at the current objective whenever it's off-camera. Reads the SAME live source
