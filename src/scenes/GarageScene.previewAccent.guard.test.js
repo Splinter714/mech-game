@@ -1,40 +1,26 @@
-// #404 follow-up (playtest): the lab preview mech was still UNTINTED grey while the very same
-// build deployed into the arena wearing the player's colour — because the garage baked
-// 'garageMech' with no art opts at all, so mechArt fell back to the base player palette.
-//
-// The fix is a single seam: GarageScene#_previewArt() hands every bake of the preview the rim
-// accent of whoever is BUILDING RIGHT NOW, drawn from the same PLAYER_ACCENTS table the arena
-// uses. Two things are worth pinning, and this file does both:
-//   1. the accent SOURCE — it must be players.js, so the lab and the arena can never disagree;
-//   2. the accent SUBJECT — `session.editing`, not a hardcoded player 1, so the co-op handoff
-//      re-tints the preview to player 2.
+// #404 / #505: every joined player's column preview wears THEIR OWN colour (rim accent), not a
+// single "whoever is currently editing" colour — #505 removed the old sequential single-editor
+// model entirely, so there is no longer one "current builder" to key a lone preview off. Each
+// column now bakes its own textures from its own player index, via `_artFor(col)`.
 //
 // GarageScene is Phaser-API-heavy and isn't instantiable under Vitest (see the sibling
-// repairOnEntry guard for the full argument), so the wiring is checked as source text and the
-// per-player logic is exercised for real against the pure modules it is built from.
+// repairOnEntry guard for the full argument), so the wiring is checked as source text; the
+// underlying colour-resolution math (mechColorFor/cycleSwatch distinctness) is exercised for real
+// in mechColors.test.js, not re-proven here.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { PLAYER_ACCENTS, playerAccent } from '../data/players.js';
-import { makeGarageSession, advanceEditing, joinPlayer } from '../data/coopGarage.js';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(DIR, 'GarageScene.js'), 'utf8');
 
-// The scene's own one-liner, replayed here so the assertions below run the real rule.
-const previewAccent = (session) => playerAccent(makeGarageSession(session).editing);
-
-describe('#404 the garage preview mech wears the building player’s colour', () => {
-  // #404 third pass: _previewArt() no longer writes the option object at all — it asks
-  // art/playerMechLook.js for the shared PLAYER LOOK (which is where `theme`/`accent` and, the
-  // thing that was still missing, the powerup `statusSpot` now live). The subject it keys on —
-  // whoever is editing — is still this scene's own decision, and is what the rest of this file
-  // exercises for real. The full lab-vs-arena parity is pinned in art/playerMechLook.test.js.
-  it('_previewArt() asks for the shared player look, keyed by who is editing', () => {
-    const body = src.match(/_previewArt\(\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
-    expect(body, 'expected a _previewArt() method').toBeTruthy();
-    expect(body).toContain('playerMechArt(this.session.editing');
+describe('#505 every Garage column wears its own player colour', () => {
+  it('_artFor(col) keys the shared player look off the COLUMN’s own index', () => {
+    const body = src.match(/_artFor\(col\)\s*\{[\s\S]*?\n {2}\}/)?.[0];
+    expect(body, 'expected an _artFor(col) method').toBeTruthy();
+    expect(body).toContain('playerMechArt(col.index');
+    expect(body).toMatch(/mechColorFor\(col\.mech, col\.index\)/);
   });
 
   it('the accent comes from the shared look (and so from data/players.js), not a garage-local list', () => {
@@ -43,40 +29,13 @@ describe('#404 the garage preview mech wears the building player’s colour', ()
     expect(look).toMatch(/import \{[^}]*playerAccent[^}]*\} from '\.\.\/data\/players\.js'/);
   });
 
-  it('every bake of the garageMech textures passes the preview art opts', () => {
-    const bakes = src.match(/(?:buildMechTextures|reskinMech)\(this, 'garageMech'[^\n]*/g) ?? [];
+  it('every bake of a column’s textures passes that column’s own art opts', () => {
+    const bakes = src.match(/(?:buildMechTextures|reskinMech)\(this, col\.textureKey[^\n]*/g) ?? [];
     expect(bakes.length).toBeGreaterThan(0);
-    for (const call of bakes) expect(call).toContain('this._previewArt()');
+    for (const call of bakes) expect(call).toContain('this._artFor(col)');
   });
 
-  it('single-player shows player 1’s colour', () => {
-    expect(previewAccent({ count: 1, editing: 0 })).toBe(PLAYER_ACCENTS[0]);
-  });
-
-  it('the co-op handoff re-tints the preview to the next builder', () => {
-    let session = joinPlayer(makeGarageSession({ count: 1 }));   // P2 joins, P1 still building
-    expect(previewAccent(session)).toBe(PLAYER_ACCENTS[0]);
-    session = advanceEditing(session);                            // P1 READY → P2 builds
-    expect(previewAccent(session)).toBe(PLAYER_ACCENTS[1]);
-    expect(PLAYER_ACCENTS[1]).not.toBe(PLAYER_ACCENTS[0]);
-  });
-
-  it('a mere JOIN does not steal the tint from the player mid-build', () => {
-    const session = joinPlayer(joinPlayer(makeGarageSession({ count: 1 })));
-    expect(session.count).toBe(3);
-    expect(previewAccent(session)).toBe(PLAYER_ACCENTS[0]);
-  });
-
-  it('every seatable builder has a distinct accent to be shown in', () => {
-    let session = makeGarageSession({ count: 1 });
-    const seen = [previewAccent(session)];
-    while (session.editing < session.count - 1 || seen.length < PLAYER_ACCENTS.length) {
-      const grown = joinPlayer(session);
-      if (grown.count === session.count) break;
-      session = advanceEditing(grown);
-      seen.push(previewAccent(session));
-    }
-    expect(seen.length).toBe(PLAYER_ACCENTS.length);
-    expect(new Set(seen).size).toBe(seen.length);
+  it('each column bakes into its OWN texture key, keyed by player index — no shared texture', () => {
+    expect(src).toMatch(/col\.textureKey = `garageMech\$\{i\}`;/);
   });
 });

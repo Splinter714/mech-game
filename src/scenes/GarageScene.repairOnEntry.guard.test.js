@@ -1,15 +1,16 @@
 // #249 (playtest: "the player mech icon bottom right in garage stays destroyed after a round;
 // it should refresh when coming back to the garage"). Root cause: `repairAll()` only ran at the
-// START of the NEXT deploy (see deploy() below), not when the player actually returns to the
-// Garage — so a run that ended in death left `this.mech` (and the textures baked from it) with
-// destroyed-part damage for the whole time the player was back in the Garage. ArenaScene#toGarage
-// is the single funnel every return-to-garage path goes through (manual G key, Select/B pad
-// exit, the RUN_OVER_DELAY delayedCall — see sfxCallSites.guard.test.js for that same funnel
-// argument), and it always ends in `this.scene.start('GarageScene')`, which re-runs
-// GarageScene#create() from scratch. So repairing unconditionally at the top of create() — before
-// `buildMechTextures` bakes the preview/paper-doll sprites — covers every entry path (fresh boot,
-// ESC from the Music tab, and the bug's post-run return) with one idempotent call, no new state
-// or flag needed.
+// START of the NEXT deploy, not when the player actually returns to the Garage — so a run that
+// ended in death left a destroyed-looking preview for the whole time the player was back in the
+// Garage. ArenaScene#toGarage is the single funnel every return-to-garage path goes through, and
+// it always ends in `this.scene.start('GarageScene')`, which re-runs GarageScene#create() from
+// scratch. So repairing unconditionally at the top of create() — before any column bakes its
+// preview/tile textures — covers every entry path with one idempotent call, no new state needed.
+//
+// #349/#505: the repair covers EVERY player build slot, not just the one(s) on screen — a column
+// only gets rendered once its player has joined, but its mech must already be healthy the instant
+// that happens (there's no per-join repair step any more, since #505 removed the sequential
+// handoff GarageScene used to rebind a single editing surface through).
 //
 // GarageScene extends Phaser.Scene and its create() is Phaser-API-heavy (this.add.*, cameras,
 // tweens, ...), so standing up a real instance isn't practical in Vitest — this repo's test
@@ -30,51 +31,38 @@ function bodyOf(methodPattern) {
   return match[0];
 }
 
-describe('#249 Garage repairs the mech on every scene entry, not just on next deploy', () => {
-  // #349: the repair now covers EVERY player build slot, not just the one on screen. Player 2's
-  // mech comes back from a co-op run damaged too and must be healthy the instant the handoff
-  // swaps it in — there is no second create() to heal it at that point.
+describe('#249/#505 Garage repairs every player slot on every scene entry', () => {
   const REPAIR_ALL_SLOTS = 'for (const key of PLAYER_MECH_KEYS) this.allMechs[key]?.repairAll();';
 
-  it('create() repairs the mech being edited unconditionally', () => {
-    const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
-    expect(create).toMatch(/this\.mech = this\.allMechs\[this\.mechKey\];[\s\S]*?PLAYER_MECH_KEYS\) this\.allMechs\[key\]\?\.repairAll\(\);/);
-  });
-
-  it('create() repairs EVERY player slot, so the handed-off player 2 mech is healthy too (#349)', () => {
+  it('create() repairs every persistent build slot unconditionally', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
     expect(create).toContain(REPAIR_ALL_SLOTS);
   });
 
-  it('create() repairs BEFORE building the preview/paper-doll textures from this.mech', () => {
+  it('create() repairs BEFORE any column bakes its textures from that slot', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
     const repairIdx = create.indexOf(REPAIR_ALL_SLOTS);
-    const textureIdx = create.indexOf("buildMechTextures(this, 'garageMech', this.mech");
+    // create() doesn't bake textures directly any more (that moved into _buildColumn, called via
+    // _relayoutColumns) — the ordering guarantee is that the repair loop precedes that call.
+    const relayoutIdx = create.indexOf('this._relayoutColumns();');
     expect(repairIdx).toBeGreaterThan(-1);
-    expect(textureIdx).toBeGreaterThan(-1);
-    expect(repairIdx).toBeLessThan(textureIdx);
+    expect(relayoutIdx).toBeGreaterThan(-1);
+    expect(repairIdx).toBeLessThan(relayoutIdx);
   });
 
-  it('create() persists the repair so localStorage does not disagree with the on-screen mech', () => {
+  it('create() persists the repair so localStorage does not disagree with the on-screen mechs', () => {
     const create = bodyOf(/create\(\)\s*\{[\s\S]*?\n {2}\}/);
     expect(create).toMatch(/repairAll\(\);\s*\n\s*saveAllMechs\(this\.allMechs\);/);
   });
 
-  // #349: the handoff swaps `this.mech` to the other player's slot mid-scene, so that path needs
-  // the same repair guarantee the entry path has.
-  // #404 follow-up: the rebake is a FULL buildMechTextures here rather than a reskin, because the
-  // handoff also changes the player ACCENT and the rim tint runs over the hull, which a reskin
-  // skips. The ordering guarantee this test exists for is unchanged.
-  it('_setSession() repairs the incoming player mech before rebaking the preview from it', () => {
-    const body = bodyOf(/_setSession\(next\)\s*\{[\s\S]*?\n {2}\}/);
-    const repairIdx = body.indexOf('this.mech.repairAll();');
-    const bakeIdx = body.indexOf("buildMechTextures(this, 'garageMech', this.mech");
-    expect(repairIdx).toBeGreaterThan(-1);
-    expect(bakeIdx).toBeGreaterThan(-1);
-    expect(repairIdx).toBeLessThan(bakeIdx);
+  it('_buildColumn(i) bakes a column’s textures only after the entry-repair has already run (it never repairs itself)', () => {
+    const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
+    expect(body).not.toContain('repairAll');
+    expect(body).toContain("buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));");
   });
 
-  it('deploy() still repairs too (belt-and-braces; harmless no-op once create() already healed it)', () => {
-    expect(garageScene).toMatch(/deploy\(\)\s*\{[\s\S]*?this\.mech\.repairAll\(\);/);
+  it('_deploy() still repairs the joined players too (belt-and-braces; harmless no-op once create() already healed them)', () => {
+    const body = bodyOf(/_deploy\(\)\s*\{[\s\S]*?\n {2}\}/);
+    expect(body).toMatch(/this\.allMechs\[PLAYER_MECH_KEYS\[i\]\]\?\.repairAll\(\);/);
   });
 });
