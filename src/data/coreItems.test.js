@@ -13,6 +13,36 @@ describe('core items registry', () => {
   });
 });
 
+// #526-followup: each item's own `meterFrac(mech)` — the generic reading fed into the fused HUD's
+// shield-line bracket (healthReadout.js `coreMeter`) so that visual isn't hardcoded to literal
+// shield HP.
+describe('meterFrac', () => {
+  it('shield reads its own HP fraction, including a grown temp pool', () => {
+    const mech = {
+      hasShield: () => true,
+      shieldTotalHp: () => 60, shieldTotalMax: () => 120,
+    };
+    expect(CORE_ITEMS.shield.meterFrac(mech)).toBeCloseTo(0.5, 5);
+  });
+
+  it('shield reads null (no meter) when the mech has none', () => {
+    expect(CORE_ITEMS.shield.meterFrac({ hasShield: () => false })).toBeNull();
+  });
+
+  it('antiMissile reads RECHARGE progress — 0 the instant it fires, 1 once ready', () => {
+    const justFired = { _interceptorCooldown: CORE_ITEMS.antiMissile.cooldown };
+    const ready = { _interceptorCooldown: 0 };
+    const halfway = { _interceptorCooldown: CORE_ITEMS.antiMissile.cooldown / 2 };
+    expect(CORE_ITEMS.antiMissile.meterFrac(justFired)).toBeCloseTo(0, 5);
+    expect(CORE_ITEMS.antiMissile.meterFrac(ready)).toBeCloseTo(1, 5);
+    expect(CORE_ITEMS.antiMissile.meterFrac(halfway)).toBeCloseTo(0.5, 5);
+  });
+
+  it('antiMissile treats a missing cooldown counter as fully recharged', () => {
+    expect(CORE_ITEMS.antiMissile.meterFrac({})).toBeCloseTo(1, 5);
+  });
+});
+
 describe('shieldConfigFor', () => {
   it('resolves the mounted item\'s shield config', () => {
     expect(shieldConfigFor({ core: 'shield' })).toEqual({ max: 100 });

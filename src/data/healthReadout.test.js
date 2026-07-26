@@ -5,6 +5,7 @@ import {
   mechPools, noneLayout,
   structureColor, hslToInt, STRUCTURE_RAMP,
   fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC, armorDrainRect, bracketOutline,
+  coreMeter,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
@@ -113,8 +114,17 @@ describe('#495 fused layout', () => {
     expect(b.groups[0].tilesX).toBe(b.x + CONSOLE.padX);
   });
 
-  it('FUSED_DOME_RISE clears the shield dome\'s own rise, with room to spare for its glow', () => {
-    expect(FUSED_DOME_RISE).toBeGreaterThan(SHIELD_ARC.rise);
+  // #526-followup (point 1/6): FUSED_DOME_RISE is the headroom the console shell reserves ABOVE
+  // the ability row's own top edge, measured off `rowsTop` (see HudScene.js's `_makePanel`) — sized
+  // so the shell's own top edge (contentTop - CONSOLE.padTop) lands EXACTLY on the notch's own peak
+  // (rowsTop - SHIELD_ARC.rise), no rim and no overflow either way. That only holds if
+  // `FUSED_DOME_RISE === SHIELD_ARC.rise - CONSOLE.padTop` exactly.
+  it('is sized so the console shell\'s own top lands exactly on the notch\'s peak — no rim, no overflow', () => {
+    expect(FUSED_DOME_RISE).toBe(Math.max(0, SHIELD_ARC.rise - CONSOLE.padTop));
+    const rowsTop = 500;
+    const shellTop = (rowsTop - FUSED_DOME_RISE) - CONSOLE.padTop;
+    const notchTop = rowsTop - SHIELD_ARC.rise;
+    expect(shellTop).toBe(notchTop);
   });
 });
 
@@ -572,6 +582,82 @@ describe('#495 shield arc (fused)', () => {
       const outer = full.left[0];
       const nearOuter = full.left[1];
       expect(Math.abs(nearOuter.x - outer.x)).toBeLessThan(SHIELD_ARC.corner);
+    });
+
+    // #526-followup (point 6, playtest: "the bend/corner doesn't track the panel's angled corners
+    // correctly while depleting — the bend position is computed relative to the current fill
+    // level instead of the panel's fixed geometry"). This pins the actual invariant that has to
+    // hold for that NOT to be true: the bend/corner's own position (found here at a fixed distance
+    // along the path from the outer stub — squarely inside the rounded-corner piece, per the
+    // `corner`-radius test above) is IDENTICAL for any two fractions, at a given `pad` — only how
+    // much of the path is LIT varies. `shieldArcLayout(rect, frac, pad)`'s `left`/`right` arrays are
+    // walked over `[0, frac]`, so comparing the point at the SAME absolute `u` position (not the
+    // same array index, which would differ in length) is the fair comparison: sample the full
+    // (frac=1) path once, and confirm a PARTIAL path at any smaller frac exactly reproduces the
+    // same points, up to its own shorter length — the geometry was never re-derived per frac, it's
+    // only ever a shorter or longer SLICE of the same fixed curve.
+    it('the bend/corner position never depends on the live fraction — only how much of the path is lit', () => {
+      // `left`/`right` are sampled over `[0, frac]`, so a partial path's own points don't land at
+      // the same ARRAY index as the full path's (different spacing) — compare by absolute `u`
+      // instead, using fractions that land exactly on the full path's own step boundaries
+      // (`k / steps`) so the comparison point is unambiguous.
+      const full = shieldArcLayout(rect, 1);
+      const steps = SHIELD_ARC.steps;
+      for (const k of [2, 5, 8]) {
+        const frac = k / steps;
+        const partial = shieldArcLayout(rect, frac);
+        const partialEnd = partial.left[partial.left.length - 1];   // u === frac exactly
+        const fullAtSameU = full.left[k];                            // u === k/steps === frac
+        expect(partialEnd.x).toBeCloseTo(fullAtSameU.x, 6);
+        expect(partialEnd.y).toBeCloseTo(fullAtSameU.y, 6);
+      }
+    });
+
+    it('the bend/corner position is identical across every gradient pad layer too — only `pad` (not `frac`) moves it', () => {
+      const steps = SHIELD_ARC.steps;
+      for (const pad of [0, 3, 7]) {
+        const fullAtPad = shieldArcLayout(rect, 1, pad);
+        for (const k of [3, 6]) {
+          const frac = k / steps;
+          const partial = shieldArcLayout(rect, frac, pad);
+          const partialEnd = partial.left[partial.left.length - 1];
+          const fullAtSameU = fullAtPad.left[k];
+          expect(partialEnd.x).toBeCloseTo(fullAtSameU.x, 6);
+          expect(partialEnd.y).toBeCloseTo(fullAtSameU.y, 6);
+        }
+      }
+    });
+  });
+
+  // #526-followup: the fused shield-line bracket generalised from literal shield HP to whatever
+  // the core slot's own mounted item supplies (its `meterFrac`, coreItems.js) — this is the
+  // dispatcher `_paintFusedReadout` (HudScene.js) reads instead of `mechPools().shield` directly.
+  describe('coreMeter', () => {
+    it('reads the shield core item\'s own fraction', () => {
+      const mech = {
+        coreMounts: { core: 'shield' },
+        hasShield: () => true, shieldTotalHp: () => 40, shieldTotalMax: () => 100,
+      };
+      expect(coreMeter(mech)).toEqual({ has: true, frac: 0.4 });
+    });
+
+    it('reads the antiMissile core item\'s recharge progress', () => {
+      const mech = { coreMounts: { core: 'antiMissile' }, _interceptorCooldown: 0 };
+      expect(coreMeter(mech)).toEqual({ has: true, frac: 1 });
+    });
+
+    it('has no meter at all for an empty core slot', () => {
+      expect(coreMeter({ coreMounts: { core: null } })).toEqual({ has: false, frac: 0 });
+    });
+
+    it('has no meter for an unknown/stale mounted id, or a missing mech entirely', () => {
+      expect(coreMeter({ coreMounts: { core: 'not-a-real-item' } })).toEqual({ has: false, frac: 0 });
+      expect(coreMeter(undefined)).toEqual({ has: false, frac: 0 });
+    });
+
+    it('clamps a meterFrac that somehow lands outside 0..1', () => {
+      const mech = { coreMounts: { core: 'shield' }, hasShield: () => true, shieldTotalHp: () => 999, shieldTotalMax: () => 100 };
+      expect(coreMeter(mech)).toEqual({ has: true, frac: 1 });
     });
   });
 });

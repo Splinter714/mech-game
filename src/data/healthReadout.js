@@ -47,7 +47,8 @@
 // segments, shieldLabel }` — because the console shell (#452) frames whatever the panel laid out,
 // and a mode swap must not need the shell to know which mode it is framing.
 
-import { INTEGRITY_BARS } from './hudLayout.js';
+import { INTEGRITY_BARS, CONSOLE, ARMOR_PEEK_PAD } from './hudLayout.js';
+import { getCoreItem } from './coreItems.js';
 
 // The cycle order. 'fused' is FIRST because it is the default. 'none' held that spot through the
 // #448 experiment ("a fresh run starts with no integrity display at all, does the mech's own art
@@ -326,13 +327,30 @@ export function armorDrainRect(rect, frac) {
 // math (each side retracts from its own OUTER end toward the shared apex as the fraction drops)
 // is untouched: the first round's center-out depletion direction was already confirmed correct.
 export const SHIELD_ARC = {
-  overhang: 16,   // how far past the row's own left/right edges the bracket's sides sit
+  // #526-followup (point 1/2): the ability row's own OUTER edge (X's left / Y's right — see
+  // ui/skillTiles.js `weaponAbilityRows`) is the BARE weapon row's own span (Jackson's explicit
+  // "1.5+1+1.5=4 weapon-tile-widths, matching the weapon row below it" sizing — no armor pad in
+  // that count). The notch/bracket, though, is measured off `HudScene`'s `panel.tileBox`, which
+  // IS widened by the armor backing's own peek pad (point 2) so the console/shield floor clears
+  // the wider armor footprint. For the ability row to still get an EQUAL margin against the notch
+  // on every side (point 1's "uniform padding all around"), `overhang` has to make up exactly the
+  // difference: `16 - ARMOR_PEEK_PAD` nets out to the same 16px gap the vertical `rise` below
+  // uses, once you add back the armor pad tileBox already carries (`ARMOR_PEEK_PAD + overhang ===
+  // 16` always, however big the armor pad is) — see `CONSOLE.padX` (hudLayout.js) for the other
+  // half of that same cancellation (the console shell's own edge nets out to the same 16 too).
+  overhang: 16 - ARMOR_PEEK_PAD,
   // #495 playtest (Jackson: "the shield arc should wrap the row of four ability buttons"): the
   // ends land at the row's own BOTTOM edge (1.0 = full row height) rather than ~55% down it, so
   // each side genuinely wraps the tiles' full height instead of just arching over their tops — a
   // capsule/bracket enclosing the row, not a partial droop. Untouched by the 2nd round's rewrite.
   sideDrop: 1.0,
-  rise: 26,       // how far above the row's own top edge the bracket's top rail sits
+  // #526-followup (new playtest pass, point 1: "the trapezoidal top cut can be pulled down lower
+  // — a shallower/shorter slice"): was 26. Now equal to `overhang` on purpose — see
+  // `FUSED_DOME_RISE` below and HudScene's ability-row placement, where making this match
+  // `overhang` (and the console's own `padTop`-derived clearance) is what gives the ability tiles
+  // EQUAL margin on every side (left/right/top) against the notch, instead of a taller vertical
+  // gap that didn't match the horizontal one.
+  rise: 16,       // how far above the row's own top edge the bracket's top rail sits
   // #495 2nd round: a SMALL rounding where a vertical side meets the top rail — enough to read as
   // this game's plated-console aesthetic (tile corners round at 9px, the console shell's own
   // corner at 14px) without reading as circular/elliptical at a glance. `bracketGeometry` clamps
@@ -467,7 +485,15 @@ export function shieldArcLayout(rect, frac, pad = 0) {
 // HudScene still reserves a header-line's worth of room above the row — pulled up by
 // `FUSED_DOME_RISE` — so the console shell's own height leaves room for the shield dome to arc
 // into instead of clipping it against the plate's top edge.
-export const FUSED_DOME_RISE = SHIELD_ARC.rise + 8;   // the dome's own rise + clearance for its glow
+// #526-followup (point 1): headroom the console shell has to reserve ABOVE the ability row so the
+// notch's own peak (`SHIELD_ARC.rise` above the row) doesn't poke out past the shell's flat top —
+// exactly `SHIELD_ARC.rise` minus the shell's own `CONSOLE.padTop` (the generic "breathing room"
+// every mode already reserves above its header line), so the shell's top edge lands EXACTLY on
+// the notch's peak with no extra rim and no overflow either way. Was a flat `rise + 8` measured
+// off the WEAPON row (before the ability row existed above it) — stale once the ability row moved
+// above the weapons, which is what let the notch's peak poke out past the shell (the bug behind
+// point 6's "bend doesn't track the panel" report — see HudScene's `_makePanel`).
+export const FUSED_DOME_RISE = Math.max(0, SHIELD_ARC.rise - CONSOLE.padTop);
 
 export function fusedLayout({ anchorX = 0, bottomY = 0 } = {}) {
   return {
@@ -506,4 +532,32 @@ export function mechPools(mech, locs) {
     shield: hasShield && shieldMax > 0 ? Math.min(1, shieldHp / shieldMax) : 0,
     hasShield,
   };
+}
+
+// ── CORE METER (fused shield line, generalised) ────────────────────────────────────────────────
+//
+// New playtest ask (alongside points 6/7's shield bend/gradient fix): the fused readout's whole-
+// row bracket used to be hardcoded to shield HP. Passive/core items other than Shield (#494's
+// Anti-Missile Defense today, whatever else lands in `coreItems.js` later) also want to ride that
+// same visual — AMS as its own recharge progress, e.g. — so this reads whichever value makes
+// sense for whatever is actually mounted in the core slot, rather than always asking for shield.
+//
+// Deliberately MINIMAL plumbing: each `CORE_ITEMS` entry that wants a meter owns a pure
+// `meterFrac(mech)` function (see coreItems.js) — this is just the dispatcher that looks up the
+// mounted item and calls it, degrading to "no meter" (`has: false`) for an empty slot, an unknown/
+// stale mount, or an item with no `meterFrac` of its own. `_paintFusedReadout` (HudScene.js) feeds
+// the returned `frac` into the exact same `shieldArcLayout`/`bracketOutline` geometry a literal
+// shield used to — the bracket itself has never cared what the fraction MEANS, only that it's a
+// 0..1 number, so no change was needed there at all.
+//
+// Not attempted here (flagged as follow-up rather than guessed at): a fully generic (value, max)
+// pair with its own formatting/label per item, multiple simultaneous core meters, or retrofitting
+// every OTHER readout mode (bars/paperdoll/target-disc rings) off literal `mechPools().shield` —
+// this pass only generalises the ONE call site (the fused bracket) that was asked about.
+export function coreMeter(mech) {
+  const id = mech?.coreMounts?.core ?? null;
+  const item = id ? getCoreItem(id) : null;
+  if (!item?.meterFrac) return { has: false, frac: 0 };
+  const frac = item.meterFrac(mech);
+  return frac == null ? { has: false, frac: 0 } : { has: true, frac: Math.max(0, Math.min(1, frac)) };
 }

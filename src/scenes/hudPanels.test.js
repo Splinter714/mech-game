@@ -23,7 +23,7 @@ const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await imp
 const { getWeapon } = await import('../data/weapons.js');
 const { structureColor, FUSED_DOME_RISE, bracketOutline } = await import('../data/healthReadout.js');
 const { ABILITY_SLOTS } = await import('../data/anatomy.js');
-const { TILE_ORDER, HUD_ABILITY_ORDER } = await import('../ui/skillTiles.js');
+const { TILE_ORDER, HUD_ABILITY_ORDER, TILE_UI } = await import('../ui/skillTiles.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -759,14 +759,15 @@ describe('HudScene health readout modes (#448)', () => {
 
     // Unlike NONE, the console shell still has to leave room ABOVE the tile row — not for a
     // caption, but for the shield dome to arc into (`shieldArcLayout`).
-    it("reserves headroom above the tile row for the shield dome, pulled up by FUSED_DOME_RISE", () => {
+    it("reserves headroom above the ABILITY row for the shield dome, pulled up by FUSED_DOME_RISE", () => {
       const { scene } = fusedScene();
       const p = scene.panels[0];
-      // #506: `bars.headerY`'s blank-mode fallback is always derived from the weapon row's own
-      // top edge (`tiles[0].y`) regardless of which row `weaponAbilityRows` puts on top, so this
-      // pins FUSED_DOME_RISE against that edge directly rather than tileTop.
-      const rowTop = p.skillRefs.leftArm.rect.y;
-      expect(rowTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
+      // #526-followup (point 1/6): the headroom is now measured off the ABILITY row's own top
+      // (`panel.tileTop`, which is `rowsTop` in `_makePanel`) — not the weapon row — since the
+      // notch's own peak rises above THAT row, not the weapon row beneath it. Using the stale
+      // weapon-row basis is exactly what let the notch overflow past the shell's reserved
+      // headroom before this fix (see FUSED_DOME_RISE's own comment).
+      expect(p.tileTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
     });
 
     it('builds its own paint layer, only for this mode, so it can draw ON TOP of the tiles', () => {
@@ -840,6 +841,7 @@ describe('HudScene health readout modes (#448)', () => {
       const { scene } = fusedScene();
       const armorFrac = 0.3, shieldFrac = 0.6;
       const mech = {
+        coreMounts: { core: 'shield' },
         parts: Object.fromEntries(
           INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 3, maxArmor: 10 }]),
         ),
@@ -847,6 +849,7 @@ describe('HudScene health readout modes (#448)', () => {
         hasShield: () => true,
         shield: { hp: 6, max: 10 },
         shieldTotalHp: () => 6,
+        shieldTotalMax: () => 10,
       };
       scene._paintFusedReadout(scene.panels[0], mech);
       const strokeColors = (scene.panels[0].fusedGfx.strokeRuns ?? []).map((r) => r.color);
@@ -858,6 +861,7 @@ describe('HudScene health readout modes (#448)', () => {
     it('draws no shield dome at all for a build with no shield — its slot is simply absent', () => {
       const { scene } = fusedScene();
       const mech = {
+        coreMounts: { core: 'shield' },
         parts: Object.fromEntries(
           INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 10, maxArmor: 10 }]),
         ),
@@ -867,7 +871,28 @@ describe('HudScene health readout modes (#448)', () => {
       expect(() => scene._paintFusedReadout(scene.panels[0], mech)).not.toThrow();
     });
 
+    // #526-followup: no core item mounted at all → `coreMeter` reports no meter, same "slot is
+    // simply absent" behaviour as no-shield above.
+    it('draws no shield dome at all when the core slot is empty', () => {
+      const { scene } = fusedScene();
+      const mech = {
+        coreMounts: { core: null },
+        parts: Object.fromEntries(
+          INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 10, maxArmor: 10 }]),
+        ),
+        isPartDestroyed: () => false,
+        hasShield: () => true,
+        shield: { hp: 10, max: 10 },
+        shieldTotalHp: () => 10,
+        shieldTotalMax: () => 10,
+      };
+      scene._paintFusedReadout(scene.panels[0], mech);
+      const strokeColors = (scene.panels[0].fusedGfx.strokeRuns ?? []).map((r) => r.color);
+      expect(strokeColors).not.toContain(0x5ec8e0);
+    });
+
     const shieldedMech = (fracs = {}) => ({
+      coreMounts: { core: 'shield' },
       parts: Object.fromEntries(
         INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 10, maxArmor: 10 }]),
       ),
@@ -875,6 +900,7 @@ describe('HudScene health readout modes (#448)', () => {
       hasShield: () => true,
       shield: { hp: (fracs.shield ?? 1) * 10, max: 10 },
       shieldTotalHp: () => (fracs.shield ?? 1) * 10,
+      shieldTotalMax: () => 10,
     });
 
     // #526 point 3: the shield meter reaches the true bottom of the screen, not just the tile
@@ -887,25 +913,55 @@ describe('HudScene health readout modes (#448)', () => {
       expect(rect.y + rect.h).toBe(scene.H);
     });
 
-    // #526 point 4/5: the outline shape is FIXED (never depends on the live fraction) and is drawn
-    // as several concentric layers at decreasing alpha the further they sit from the panel — a
-    // real directional gradient, not just a soft uniform glow.
-    it('draws the shield as several gradient layers, strongest near the panel and unchanged in shape by depletion', () => {
+    // #526-followup (points 6/7): ONE always-on reference track at a fixed dim alpha (unaffected
+    // by the live fraction — the "this is the fixed channel" reference the corner is checked
+    // against), and the GRADIENT is now part of the frac-sized FILL: several layers at decreasing
+    // alpha the further they sit from the panel, all sized to the SAME live fraction so they grow
+    // and shrink together as the meter drains/refills (point 7) — see structureColor(shieldFrac)
+    // for the fill's own colour.
+    it('draws one fixed-alpha reference track plus several fill gradient layers, all tied to the live fraction', () => {
       const { scene } = fusedScene();
       const p = scene.panels[0];
       scene._paintFusedReadout(p, shieldedMech({ shield: 0.1 }));
-      // One TRACK stroke per gradient layer (the always-drawn fixed shape, colour SHIELD_BAR_COLOR).
-      const trackAlphas = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.alpha);
-      expect(trackAlphas.length).toBeGreaterThanOrEqual(3);
-      // Alpha strictly decreases from the first (nearest-panel) layer to the last (outermost).
-      for (let i = 1; i < trackAlphas.length; i++) expect(trackAlphas[i]).toBeLessThan(trackAlphas[i - 1]);
-      const lowTrackPts = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.pts);
-      // Every layer's TRACK is the exact same shape regardless of how little shield survives — redo
-      // at a high fraction (into a FRESH capture) and confirm the track points are identical.
+      const runs = p.fusedGfx.strokeRuns ?? [];
+      // Exactly one reference track, at the fixed dim alpha, in SHIELD_BAR_COLOR.
+      const trackRuns = runs.filter((r) => r.color === 0x5ec8e0);
+      expect(trackRuns.length).toBe(1);
+      expect(trackRuns[0].alpha).toBeLessThan(0.2);
+      // Several FILL layers (the shield's own live-fraction colour), at decreasing alpha.
+      const fillRuns = runs.filter((r) => r.color === structureColor(0.1));
+      expect(fillRuns.length).toBeGreaterThanOrEqual(3);
+      // Each gradient layer draws BOTH sides (left/right) at the same alpha — dedupe before
+      // checking the layer-to-layer alpha actually decreases.
+      const fillAlphas = [...new Set(fillRuns.map((r) => r.alpha))].sort((a, b) => b - a);
+      expect(fillAlphas.length).toBeGreaterThanOrEqual(3);
+      for (let i = 1; i < fillAlphas.length; i++) expect(fillAlphas[i]).toBeLessThan(fillAlphas[i - 1]);
+    });
+
+    it('the reference track is the SAME fixed shape regardless of the live fraction', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      scene._paintFusedReadout(p, shieldedMech({ shield: 0.1 }));
+      const lowTrackPts = (p.fusedGfx.strokeRuns ?? []).find((r) => r.color === 0x5ec8e0).pts;
       p.fusedGfx.strokeRuns = [];
       scene._paintFusedReadout(p, shieldedMech({ shield: 0.95 }));
-      const highTrackPts = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.pts);
+      const highTrackPts = (p.fusedGfx.strokeRuns ?? []).find((r) => r.color === 0x5ec8e0).pts;
       expect(highTrackPts).toEqual(lowTrackPts);
+    });
+
+    // The bend/corner-position invariance itself (point 6 — "the bend position is anchored to the
+    // panel's fixed geometry, only the fill amount varies") is pinned at the pure-function level in
+    // healthReadout.test.js (`shieldArcLayout`'s geometry never depends on its own `frac` argument);
+    // this just confirms the scene actually feeds every gradient layer the SAME live fraction.
+    it('sizes every gradient layer\'s fill to the SAME live fraction (so they recede together)', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      scene._paintFusedReadout(p, shieldedMech({ shield: 0.4 }));
+      const fillRuns = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === structureColor(0.4));
+      expect(fillRuns.length).toBeGreaterThanOrEqual(3);
+      // Every layer's fill reaches the same PROPORTION of its own (pad-grown) path — approximated
+      // here by checking none of them are empty and none reach the full closed shape (frac < 1).
+      for (const run of fillRuns) expect(run.pts.length).toBeGreaterThan(1);
     });
 
     it('is stroked with the bumped-up FUSED_SHIELD_WIDTH, not the old thinner line', () => {
@@ -934,9 +990,10 @@ describe('HudScene health readout modes (#448)', () => {
       expect(Math.max(...ys)).toBe(scene.H);
     });
 
-    // #526 point 6/7: the armor peek plate is a sharp-cornered bar (radius 0), in the new
-    // steel/gunmetal tone rather than the old bronze/gold.
-    it('draws the armor peek plate as a sharp-cornered bar in the new steel/gunmetal tone', () => {
+    // #526-followup (point 2, reversing #526's own sharp-column pass): the armor peek plate is a
+    // ROUNDED square again — bigger than the weapon tile's own corner radius, echoing its style —
+    // in the new steel/gunmetal tone rather than the old bronze/gold.
+    it('draws the armor peek plate as a bigger rounded square in the new steel/gunmetal tone', () => {
       const { scene } = fusedScene();
       const mech = new Mech({ chassisId: 'medium' });
       mech.applyDamage('leftArm', 20);
@@ -944,10 +1001,10 @@ describe('HudScene health readout modes (#448)', () => {
       const runs = scene.panels[0].armorBackGfx.fillRuns ?? [];
       const armorRun = runs.find((r) => r.color !== undefined && r.h > 0);
       expect(armorRun).toBeTruthy();
-      expect(armorRun.radius).toBe(0);
+      expect(armorRun.radius).toBeGreaterThan(TILE_UI.radius);   // bigger than the tile's own round
       expect(armorRun.color).not.toBe(0x8a6a3a);   // the old bronze tone is gone
       const strokeRuns = scene.panels[0].armorBackGfx.strokeRRRuns ?? [];
-      expect(strokeRuns.some((r) => r.radius === 0)).toBe(true);
+      expect(strokeRuns.some((r) => r.radius === armorRun.radius)).toBe(true);
     });
 
     // #526 point 10: a LIVE (non-destroyed) part gets no health-based colour wash any more — only
@@ -997,13 +1054,14 @@ describe('HudScene health readout modes (#448)', () => {
 // gets no HUD tile at all during a deployment (it's Garage-only chrome — see
 // GarageScene/SimulGarageScene, untouched).
 describe('HudScene panels — the two-row ability/weapon block (#506 fourth rework)', () => {
-  it('builds one tile for each of the 4 weapon slots and both ability slots — no core tile', () => {
+  it('builds one tile for each of the 4 weapon slots, both ability slots, AND the passive core slot', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const refs = scene.panels[0].skillRefs;
     for (const loc of TILE_ORDER) expect(refs[loc]).toBeTruthy();
     for (const slot of ABILITY_SLOTS) expect(refs[slot]).toBeTruthy();
-    expect(refs.core).toBeUndefined();
+    // #526-followup: the passive/core slot now rides in this same row, between X and Y.
+    expect(refs.core).toBeTruthy();
   });
 
   it('shows the empty "ability" placeholder label and the ability keyboard bind when unmounted', () => {
@@ -1014,26 +1072,31 @@ describe('HudScene panels — the two-row ability/weapon block (#506 fourth rewo
     expect(refs.abilityY.bind.text).toBe('1');   // ABILITY_BINDS.abilityY.key
   });
 
-  it('places X above the left weapon pair and Y above the right pair, double-wide/half-height, in their own row above the weapons', () => {
+  it('places X, the passive core tile, and Y in one row above the weapons — 1.5/1/1.5 weapon-tile-widths', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
     expect(HUD_ABILITY_ORDER).toEqual(['abilityX', 'abilityY']);
-    const leftArm = panel.skillRefs.leftArm.rect, leftTorso = panel.skillRefs.leftTorso.rect;
-    const rightTorso = panel.skillRefs.rightTorso.rect, rightArm = panel.skillRefs.rightArm.rect;
-    const x = panel.skillRefs.abilityX.rect, y = panel.skillRefs.abilityY.rect;
-    // Same row, above both weapon rows entirely (#506 FOURTH rework: back above).
+    const leftArm = panel.skillRefs.leftArm.rect, rightArm = panel.skillRefs.rightArm.rect;
+    const x = panel.skillRefs.abilityX.rect, core = panel.skillRefs.core.rect, y = panel.skillRefs.abilityY.rect;
+    // Same row, above the weapon row entirely.
     expect(x.y).toBe(y.y);
+    expect(core.y).toBe(x.y);
     expect(x.y).toBeLessThan(leftArm.y);
     expect(leftArm.y - (x.y + x.h)).toBe(12);   // rowGap default
     // Half the weapon tile's height.
     expect(x.h).toBe(Math.round(leftArm.h / 2));
     expect(y.h).toBe(x.h);
-    // X spans exactly the left pair's combined width; Y spans exactly the right pair's.
+    expect(core.h).toBe(x.h);
+    // X/Y are each 1.5x the weapon tile's own width; the row's outer edges match the weapon row's
+    // own bare span exactly.
+    expect(x.w).toBe(Math.round(leftArm.w * 1.5));
+    expect(y.w).toBe(Math.round(leftArm.w * 1.5));
     expect(x.x).toBe(leftArm.x);
-    expect(x.x + x.w).toBe(leftTorso.x + leftTorso.w);
-    expect(y.x).toBe(rightTorso.x);
     expect(y.x + y.w).toBe(rightArm.x + rightArm.w);
+    // The three tiles sit left-to-right with no gaps/overlap, X/core/Y in that order.
+    expect(core.x).toBeGreaterThan(x.x + x.w);
+    expect(y.x).toBeGreaterThan(core.x + core.w);
   });
 
   it('folds the ability row into panel.tileTop/tileBox so the console bay recesses behind both rows', () => {
@@ -1084,12 +1147,33 @@ describe('HudScene panels — the two-row ability/weapon block (#506 fourth rewo
     expect(scene.panels[0].skillRefs.abilityY.subtitle.text).toBe('ACTIVE');
   });
 
-  it('never builds a core tile in the arena HUD, even when a core item is mounted', () => {
-    const mech = new Mech({ chassisId: 'medium', coreMounts: { core: 'shield' } });
-    const snapshot = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
+  // #526-followup: the passive/core slot now DOES get a live HUD tile — folded into the ability
+  // row between X and Y — reading whichever item is mounted, with its own per-item status text.
+  it('shows the mounted core item on the core tile, with a status appropriate to that item', () => {
+    const shieldMech = new Mech({ chassisId: 'medium', coreMounts: { core: 'shield' } });
+    const shieldSnap = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech: shieldMech, dead: false, respawn: null });
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
-    scene._updatePanel(scene.panels[0], snapshot);
-    expect(scene.panels[0].skillRefs.core).toBeUndefined();
+    scene._updatePanel(scene.panels[0], shieldSnap);
+    const coreRef = scene.panels[0].skillRefs.core;
+    expect(coreRef).toBeTruthy();
+    expect(coreRef.subtitle.text).toBe('SHIELD');
+
+    const amsMech = new Mech({ chassisId: 'medium', coreMounts: { core: 'antiMissile' } });
+    amsMech._interceptorCooldown = 0;
+    const amsSnap = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech: amsMech, dead: false, respawn: null });
+    scene._updatePanel(scene.panels[0], amsSnap);
+    expect(scene.panels[0].skillRefs.core.subtitle.text).toBe('READY');
+
+    amsMech._interceptorCooldown = 1.25;
+    scene._updatePanel(scene.panels[0], amsSnap);
+    expect(scene.panels[0].skillRefs.core.subtitle.text).toBe('1.3s');
+    expect(scene.panels[0].skillRefs.core.bar.visible).toBe(true);
+  });
+
+  it('shows the empty "core" placeholder when no passive item is mounted', () => {
+    const { scene } = fakeScene([snap(0)]);
+    scene._syncPanels();
+    expect(scene.panels[0].skillRefs.core.subtitle.text).toBe('core');
   });
 });

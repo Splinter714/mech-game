@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
-import { LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
-import { TILE_ORDER, HUD_ABILITY_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile } from '../ui/skillTiles.js';
+import { LOCATION_INFO, ABILITY_SLOTS, CORE_SLOTS, slotKind } from '../data/anatomy.js';
+import { TILE_ORDER, HUD_ABILITY_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { getItem } from '../data/items.js';
+import { getCoreItem } from '../data/coreItems.js';
 import { ABILITY_BINDS, INTERACT_BIND } from '../input/Controls.js';
 import { InkCache, fitScale } from '../art/inkBounds.js';
 import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
@@ -18,14 +19,14 @@ import {
   integrityLayout, INTEGRITY_ORDER,
   CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
   HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
-  OBJECTIVE_PANEL, objectivePanelRect,
+  OBJECTIVE_PANEL, objectivePanelRect, ARMOR_PEEK_PAD,
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
   paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
-  fusedLayout, shieldArcLayout, bracketOutline, FUSED_DOME_RISE, armorDrainRect,
+  fusedLayout, shieldArcLayout, bracketOutline, FUSED_DOME_RISE, armorDrainRect, coreMeter,
 } from '../data/healthReadout.js';
-import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks } from '../data/hpFx.js';
+import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks, hpCriticalFlash } from '../data/hpFx.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
@@ -133,9 +134,13 @@ const ARMOR_SEAM_H = 7;         // px between plate seams down the armor bar
 // (Jackson: "it should be beneath the ability square in z-order, not a ring on the ability
 // square"). Matches CONSOLE.bayPad (hudLayout.js) — the same "how far a frame stands off its
 // content" scale this console already uses elsewhere.
-// Exported (only tuning constant this file exports) purely so hudPanels.test.js can pin the
-// z-order fix's geometry without hardcoding a magic number that would silently drift from this one.
-export const ARMOR_PEEK_PAD = 10;
+// #526-followup: moved to hudLayout.js (the pure layout module) since the console's own padX and
+// the weapon-tile gap now both derive from it too — re-exported here so existing importers
+// (hudPanels.test.js) don't have to change where they pull it from.
+export { ARMOR_PEEK_PAD };
+// #526-followup (point 2): the armor backing is now a rounded square echoing the weapon tile's
+// own corner style — just a bigger radius to match its bigger footprint. Tunable.
+const ARMOR_BACK_RADIUS = TILE_UI.radius + 3;
 const HP_COLOR = 0xd8433a;
 const HP_CAP = 0xff8f80;
 const SHIELD_BAR_COLOR = 0x5ec8e0;
@@ -153,17 +158,33 @@ const SHIELD_GLOW = [{ pad: 4, a: 0.10 }, { pad: 2, a: 0.20 }];
 // "the shape is shrinking" rather than "a fixed frame is draining" — and (b) "slightly thicker,
 // with an opacity gradient strongest toward the panel (inside) and weakest away from it (toward
 // the screen edge, outside)". `FUSED_SHIELD_WIDTH` is the width bump (was 3/4, now a flat 5 for
-// both track and fill — "slightly thicker" per the ask). `FUSED_SHIELD_GRADIENT` is 3 copies of
-// the SAME fixed shape (`healthReadout.js`'s `shieldArcLayout`/`bracketOutline` `pad` param, #526)
-// grown outward from the panel by an increasing `pad`, at DECREASING alpha — `pad: 0` is the layer
-// nearest the panel (brightest) and the biggest `pad` is nearest the screen edge (faintest), which
-// is what makes the gradient read as directional rather than just a uniform soft glow. All values
-// tunable.
+// both track and fill — "slightly thicker" per the ask).
+//
+// #526-followup (new playtest pass, points 6 & 7): two more reports on this same paint. Point 6,
+// "the bend/corner doesn't track the panel's angled corners correctly while depleting" — the
+// underlying GEOMETRY was already fixed-shape (bracketGeometry in healthReadout.js takes only
+// `rect`/`pad`, never a fraction — confirmed by `healthReadout.test.js`'s new invariance test), so
+// there was no literal corner-position bug left to fix there. What WAS still wrong, and reads as
+// exactly that symptom: point 7's complaint that the gradient was a SEPARATE static layer that
+// didn't recede with the fill. The old code drew 3 copies of the FULL, always-100%-length TRACK
+// (at `trackA` alpha, independent of `p.shield`) UNDERNEATH 3 copies of the frac-sized FILL — so
+// at a low fraction you'd see a short bright fill ending partway along a much longer dim track
+// that continues on through — and past — the actual rounded corner. That made the corner LOOK
+// like it was sliding around as the fill's own end-point slid through the (genuinely fixed) bend,
+// which is exactly the illusion point 6 describes.
+//
+// The fix for both: only ONE always-on reference track now (`FUSED_SHIELD_TRACK_ALPHA`, a single
+// dim stroke of the pad-0 shape — the same "empty space stays legible" rule every other bar in
+// this readout already follows), and the gradient itself is now PART of the frac-sized FILL —
+// `FUSED_SHIELD_GRADIENT`'s pad-grown copies are all drawn at the CURRENT `frac`, so every layer
+// grows and shrinks together as the shield drains, and the reference track is thin/dim enough that
+// the corner reads as one fixed bend the fill either does or doesn't reach, not a shape in motion.
 const FUSED_SHIELD_WIDTH = 5;
+const FUSED_SHIELD_TRACK_ALPHA = 0.16;
 const FUSED_SHIELD_GRADIENT = [
-  { pad: 0, trackA: 0.55, fillA: 1.00 },
-  { pad: 3, trackA: 0.30, fillA: 0.50 },
-  { pad: 7, trackA: 0.14, fillA: 0.22 },
+  { pad: 0, fillA: 1.00 },
+  { pad: 3, fillA: 0.50 },
+  { pad: 7, fillA: 0.22 },
 ];
 // #495 (3rd playtest round): a FUSED-ONLY armor palette. Jackson: the armor peek plate's colour/
 // tone was wrong and too subtle to notice against the tile art. The shared ARMOR_PLATE/RIM/SEAM
@@ -799,20 +820,13 @@ export default class HudScene extends Phaser.Scene {
     // then this player's tile row immediately to its right — rather than each hugging a screen
     // edge with the leftovers in between. Nothing here has to negotiate for room any more: the
     // band already sized the group, so the block is laid out at full size (`availW: 0`).
-    // #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick — Jackson wanted
-    // TWO rows instead: the four weapon tiles at their normal size, and the two mountable
-    // abilities (X left, Y right) as double-wide/half-height tiles riding directly over their
-    // matching weapon pair ("move x/y abilities in weapon HUD to double-wide half-height buttons
-    // ... that sit in a single row above the 4 weapon buttons; so the X ability sits above the
-    // left sided weapons and the Y ability above the right sided weapons").
-    // #506 FOURTH rework (reverting the THIRD's below-weapons experiment, Jackson: "I want 506 to
-    // move the X/Y abilities back to being above the weapons, but I'm glad I tried it"):
-    // `weaponAbilityRows` once again puts the ability row ABOVE the weapon row — see its own
-    // comment in ui/skillTiles.js. It still computes both rows off ONE shared width so they can
-    // never drift apart horizontally, and reports `top` = whichever row ended up physically
-    // highest (the ability row, again), so this panel doesn't have to re-derive that itself below.
-    // CONSOLE_TILES.n is back to 4 (hudLayout.js) since the ability row rides within the weapon
-    // row's own span rather than adding to it.
+    // #526-followup (new redesign, superseding the #506 FOURTH rework's two-tile double-wide row):
+    // Jackson folded the passive/core slot INTO this same row, between X and Y — three tiles now
+    // (X at 1.5 weapon-widths, core at 1, Y at 1.5 — 4 total, matching the weapon row below), none
+    // of them "double-wide" any more. `weaponAbilityRows` (ui/skillTiles.js) owns that math; it
+    // still computes both rows off ONE shared width so they can never drift apart horizontally,
+    // and reports `top` = the ability row's own top (physically highest), so this panel doesn't
+    // have to re-derive that itself below.
     const { weapons: tiles, abilities: abilityTiles, top: rowsTop } =
       weaponAbilityRows(group.tilesX, group.tilesW, { bottom: this.H - 10, maxSize: CONSOLE_TILES.max });
     const last = tiles[tiles.length - 1];
@@ -827,7 +841,18 @@ export default class HudScene extends Phaser.Scene {
     // #448: with NO integrity block there is nothing for a header to head, and reserving its line
     // would leave exactly the hole the mode exists to remove — so the block's content ceiling
     // becomes the tile row itself and no header is created at all.
-    if (blank) bars.headerY = tiles.length ? tiles[0].y : this.H - 10;
+    // #526-followup (point 1/6): FUSED specifically reserves its headroom off the ABILITY row's
+    // own top (`rowsTop`) minus `FUSED_DOME_RISE` — not off the weapon row (`tiles[0].y`) the way
+    // this used to read before the ability row existed above it. That old basis is what let the
+    // notch's own peak (rise above the ABILITY row) poke out past the console shell's reserved
+    // headroom (computed off the WEAPON row instead) — the geometry mismatch behind point 6's
+    // "bend doesn't track the panel" report. Every other blank mode (`none`) still uses the
+    // weapon row's own top, unaffected.
+    if (blank) {
+      bars.headerY = bars.mode === 'fused'
+        ? (rowsTop ?? (tiles.length ? tiles[0].y : this.H - 10)) - FUSED_DOME_RISE
+        : (tiles.length ? tiles[0].y : this.H - 10);
+    }
 
     panel.header = blank ? null : this.add.text(bars.x, bars.headerY, panelLabel(spec.index, count), {
       fontFamily: 'monospace', fontSize: '12px', color: identify ? colStr : C.dim,
@@ -866,11 +891,6 @@ export default class HudScene extends Phaser.Scene {
         fontFamily: 'monospace', fontSize: '11px', color: C.bad,
       }).setVisible(false);
 
-    // #495: NOW pull FUSED's headerY up above the tile row — after the header/statusText objects
-    // above have already captured their (tile-row-level) positions, so this only affects what the
-    // console shell reserves (`_paintConsole`'s `contentTop`), not where the downed line sits.
-    if (bars.mode === 'fused') bars.headerY -= FUSED_DOME_RISE;
-
     // #495 (2nd playtest round): the armor peek's own Graphics layer, created BEFORE the tile row
     // below so Phaser's own draw order puts it BEHIND the tiles — the tile plate painted on top
     // then naturally occludes everything except the thin margin the peek is meant to show through.
@@ -878,13 +898,9 @@ export default class HudScene extends Phaser.Scene {
     panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
     // Skill tiles for THIS player's own mech: the bottom row is the four weapon slots (unchanged
-    // size/position from any of the reworks); the top row is the two mountable abilities in their
-    // own double-wide/half-height tiles, X over the left weapon pair and Y over the right (see the
-    // `weaponAbilityRows` note above — back above the weapon row again, FOURTH rework).
-    // The passive core slot deliberately gets no tile here at all (Jackson, playtest: "the
-    // passive slot doesn't need to be represented during an actual deployment") — it stays
-    // Garage-only chrome; GarageScene and SimulGarageScene still draw it via the original
-    // diamondLayout/coreTileRect, untouched by this rework.
+    // size/position from any of the reworks); the top row is now THREE tiles — X, the passive
+    // core slot, and Y, in that order (`weaponAbilityRows`, ui/skillTiles.js) — the passive slot
+    // folded into this same row per Jackson's redesign, no longer Garage-only chrome.
     const mode = this._panelMode(panel);
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
@@ -892,30 +908,48 @@ export default class HudScene extends Phaser.Scene {
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
     }
     for (const r of abilityTiles) {
+      if (slotKind(r.loc) === 'core') {
+        const id = snapshot?.mech?.coreMounts?.[r.loc] ?? null;
+        // The passive slot has no activation button (nothing to bind) and keeps its real item
+        // icon (see skillTiles.js's `stackedTileLayout` doc) — no `nipCorners` either: it sits in
+        // the MIDDLE of the row, never on the trapezoid's own outer edge.
+        panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
+          loc: r.loc, itemId: id, mode, bindGlyph: '', emptyLabel: 'core',
+        });
+        continue;
+      }
       const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
-        loc: r.loc, itemId: id, mode,
+        loc: r.loc, itemId: id, mode, bindOverStatus: true,
         bindGlyph: mode === 'pad' ? ABILITY_BINDS[r.loc].pad : ABILITY_BINDS[r.loc].key,
         emptyLabel: 'ability',
-        // #526 (point 2): the ability tile nips its own OUTER-top corner — the one nearest the
-        // console notch's own rounded corner — so it tapers into that trapezoidal shape instead
-        // of sitting inside it as a plain rectangle. X is left (nip top-left), Y is right (nip
-        // top-right) — see `HUD_ABILITY_ORDER`.
+        // #526 (point 2, still true of the redesigned row): the ability tile nips its own
+        // OUTER-top corner — the one nearest the console notch's own rounded corner — so it
+        // tapers into that trapezoidal shape instead of sitting inside it as a plain rectangle.
+        // X is left (nip top-left), Y is right (nip top-right) — see `HUD_ABILITY_ORDER`.
         nipCorners: r.loc === HUD_ABILITY_ORDER[0] ? { tl: true } : { tr: true },
       });
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
     // The block's outer TOP is whichever row `weaponAbilityRows` reported as physically highest
-    // (`rowsTop`) — the ability row again (FOURTH rework, reverted from the THIRD's weapon-row-on-
-    // top experiment). Falls back to the weapon row's own top if the rows call returned nothing
-    // (no tiles at all).
+    // (`rowsTop`) — the ability row (X/core/Y). Falls back to the weapon row's own top if the rows
+    // call returned nothing (no tiles at all).
     panel.tileTop = rowsTop ?? rowTop;
     // The block's outer box, so the console can recess one bay behind BOTH rows — its bottom edge
     // is now always the weapon row's own bottom (the ability row rides above it, anchored to the
-    // shared `bottom` line via the weapon row).
+    // shared `bottom` line via the weapon row). #526-followup (point 2): widened by `ARMOR_PEEK_PAD`
+    // on each side — the armor backing now peeks out past the weapon tiles' own footprint (see
+    // `_paintFusedReadout`), so the box the console/shield notch reads has to clear THAT footprint,
+    // not just the bare tiles — matching the same widening `weaponAbilityRows` applies to the
+    // ability row above, so the two can never disagree about the row's true horizontal extent.
     const boxBottom = rowTop + (last ? last.h : 0);
     panel.tileBox = tiles.length
-      ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: boxBottom - panel.tileTop }
+      ? {
+        x: tiles[0].x - ARMOR_PEEK_PAD,
+        y: panel.tileTop,
+        w: (last.x + last.w - tiles[0].x) + ARMOR_PEEK_PAD * 2,
+        h: boxBottom - panel.tileTop,
+      }
       : null;
     // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
     // structure WASH and shield BRACKET that fuse onto/around the tiles themselves. Armor moved
@@ -1041,7 +1075,7 @@ export default class HudScene extends Phaser.Scene {
     for (const slot of ABILITY_SLOTS) {
       const id = mech.abilityMounts[slot] ?? null;
       const opts = {
-        loc: slot, itemId: id, mode, emptyLabel: 'ability',
+        loc: slot, itemId: id, mode, emptyLabel: 'ability', bindOverStatus: true,
         bindGlyph: mode === 'pad' ? ABILITY_BINDS[slot].pad : ABILITY_BINDS[slot].key,
         // #526 (point 2): re-applied every frame too, since `updateSkillTile` repaints the plate
         // each time — see the matching note in `_makePanel`.
@@ -1063,8 +1097,31 @@ export default class HudScene extends Phaser.Scene {
       }
       updateSkillTile(panel.skillRefs[slot], opts);
     }
-    // #506 rework: the passive core slot no longer gets a HUD tile at all during a deployment —
-    // it's Garage-only chrome now (see `_makePanel`'s note). Nothing to update here any more.
+
+    // The passive/core tile — same per-slot shape as the ability tiles above, but with no button
+    // to press (it's always-on) and its own item-specific status. Anti-Missile Defense reads its
+    // live recharge state off the mech's own interceptor cooldown; Shield shows a static label
+    // (its condition already rides the shield-line bracket, `_paintFusedReadout`, via `coreMeter`).
+    for (const slot of CORE_SLOTS) {
+      const id = mech.coreMounts?.[slot] ?? null;
+      const opts = { loc: slot, itemId: id, mode, emptyLabel: 'core', bindGlyph: '' };
+      if (id === 'antiMissile') {
+        const item = getCoreItem('antiMissile');
+        const remaining = mech._interceptorCooldown ?? 0;
+        const full = item?.cooldown || 1;
+        if (remaining > 0) {
+          opts.onCooldown = true;
+          opts.cooldownFrac = remaining / full;
+          opts.subtitle = `${remaining.toFixed(1)}s`;
+          opts.subtitleColor = C.cooldown;
+        } else {
+          opts.subtitle = 'READY'; opts.subtitleColor = C.good;
+        }
+      } else if (id === 'shield') {
+        opts.subtitle = 'SHIELD'; opts.subtitleColor = C.accent;
+      }
+      updateSkillTile(panel.skillRefs[slot], opts);
+    }
 
     this._updateIntegrity(panel, mech);
 
@@ -1755,31 +1812,44 @@ export default class HudScene extends Phaser.Scene {
   // Per-tile WASH = structure. #526 (point 10, playtest: "remove the blue→purple→red HP colour
   // shift, for now just keep the flicker/static/sparks"): the wash's HUE no longer rides the live
   // structure ramp — a LIVE (non-destroyed) part now paints no wash at all, only the damage-
-  // feedback effects below (icon flicker, static specks, sparks). A DESTROYED part still gets its
-  // fixed dead-cell fill + red cross (a binary "gone" state, not a health-based colour gradient).
+  // feedback effects below (icon flicker, static specks, sparks, plus the new critical-flash
+  // below). #526-followup (point 4, playtest: "the destroyed-weapon red X is too alarming — black
+  // out the tile's interior and dim its border instead"): a DESTROYED part no longer draws a red
+  // cross at all — it blacks out the tile's own face and dims the tile's own crisp edge, reading
+  // as "powered down" rather than "hit."
   //
-  // Per-tile PEEK = armor (`armorDrainRect`, unchanged top-to-bottom "draining tank" geometry —
-  // run here against a rect padded `ARMOR_PEEK_PAD` past the tile's own edges), painted into
-  // `panel.armorBackGfx` instead — added to the scene BEFORE the tile row, so it draws BEHIND the
-  // tiles. The opaque tile plate on top then occludes the middle of that padded rect and only a
-  // thin margin peeks out around/under the tile's own edges; full armor shows that margin lit on
-  // all four sides, and it recedes top-to-bottom as armor drains, same direction as before. #495's
-  // SECOND playtest round moved it here (Jackson: "it should be beneath the ability square in
-  // z-order, not a ring on the ability square") — the original cut painted this same drain rect ON
-  // the tile's own face (in `fusedGfx`, on top), which is what read as a ring to him; the geometry
-  // was never the problem, only which layer it was painted into. #526 (point 6, playtest: "armor
-  // needs to be actual full columns, not rounded boxes") draws that same rect+track with a corner
-  // radius of 0 now instead of `peekR` — a sharp-cornered bar/column, not a rounded plate.
+  // Per-tile PEEK = armor. #526-followup (point 2, playtest: "the armor backing should be a
+  // slightly LARGER rounded square echoing the weapon tile's own corner style, not a sharp bar"):
+  // reverses #526's own sharp-column pass — `ARMOR_BACK_RADIUS` rounds the peek plate's corners
+  // again, bigger than the tile's own `TILE_UI.radius` to match its bigger footprint. Still the
+  // same top-to-bottom "draining tank" geometry (`armorDrainRect`), run against a rect padded
+  // `ARMOR_PEEK_PAD` past the tile's own edges and painted into `panel.armorBackGfx` — added to the
+  // scene BEFORE the tile row, so it draws BEHIND the tiles and only a thin margin peeks out
+  // around/under the tile's own edges (#495 2nd round: "beneath the ability square in z-order, not
+  // a ring on the ability square"). Because that backing is now bigger than the tile, the GAP
+  // between adjacent weapon tiles (`CONSOLE_TILES.gap`, hudLayout.js) is sized off `ARMOR_PEEK_PAD`
+  // too, so neighbouring backings can't overlap — see that constant's own comment.
   //
-  // And ONE whole-mech shield BRACKET wrapping the top+sides of the row (`shieldArcLayout` — its
-  // own geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
-  // outline), painted into `fusedGfx` alongside the structure wash.
+  // Per-tile CRITICAL FLASH = a new low-hp-specific red pulse (`hpCriticalFlash`, hpFx.js), layered
+  // on top of the existing flicker/static/sparks rather than replacing them — see that function's
+  // own doc for why it's a different mechanism from the removed colour-wash ramp.
+  //
+  // And ONE whole-mech shield-line BRACKET wrapping the top+sides of the row (`shieldArcLayout` —
+  // its own geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
+  // outline), painted into `fusedGfx` alongside the structure wash. #526-followup generalised this
+  // from "always literal shield HP" to `coreMeter` (healthReadout.js) — whichever core item is
+  // actually mounted supplies the fraction (shield HP, or AMS recharge progress, etc.) — and fixed
+  // two related reports on the same paint: point 6 ("the bend/corner doesn't track the panel's
+  // fixed geometry while depleting") and point 7 ("the opacity gradient is a static overlay that
+  // doesn't recede with the fill") — see `FUSED_SHIELD_GRADIENT`'s own comment for how those turned
+  // out to be the same underlying issue.
   _paintFusedReadout(panel, mech) {
     const g = panel.fusedGfx;
     if (!g) return;
     g.clear();
     const bg = panel.armorBackGfx;
     bg?.clear();
+    const tSec = (this.time?.now ?? 0) / 1000;
     for (const loc of TILE_ORDER) {
       const ref = panel.skillRefs[loc];
       const part = mech.parts[loc];
@@ -1789,19 +1859,21 @@ export default class HudScene extends Phaser.Scene {
       const hpFrac = part.maxHp > 0 ? Math.max(0, Math.min(1, part.hp / part.maxHp)) : 0;
       const armorFrac = part.maxArmor > 0 ? Math.max(0, Math.min(1, part.armor / part.maxArmor)) : 0;
 
-      // #526 (point 10): only the DESTROYED end-state gets a fill any more — a fixed, non-ramped
-      // dark cell, same as every other readout's dead-cell treatment. A live part gets none: its
-      // damage feedback is entirely the flicker/statics/sparks below, independent of any colour.
+      // #526-followup (point 4): a destroyed weapon reads as "powered down," not "hit" — black out
+      // the tile's own face (its own corner radius, so it still reads as the same button) and dim
+      // its crisp edge with a low-alpha dark stroke over the top of the plate's own bright one. No
+      // cross of any colour any more.
       if (destroyed) {
-        g.fillStyle(DOLL_DEAD_CELL, 0.75);
-        g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, 6);
+        g.fillStyle(0x05070a, 0.92);
+        g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, TILE_UI.radius);
+        g.lineStyle(1.25, 0x05070a, 0.45);
+        g.strokeRoundedRect(rect.x, rect.y, rect.w, rect.h, TILE_UI.radius);
       } else {
         // #495 (3rd playtest round — Jackson: "flicker/static/sparks should apply to the weapon
         // button art"): the flicker/statics/sparks are the damage-feedback effect kept by #526 —
         // unrelated to, and unaffected by, the colour-wash removal above.
         const seed = TILE_ORDER.indexOf(loc) + panel.index * 4;
         const urgency = hpUrgency(hpFrac);
-        const tSec = (this.time?.now ?? 0) / 1000;
         // The icon's alpha was already set THIS frame by `updateSkillTile` (online/offline), so
         // multiplying it here (rather than assigning a remembered value) can never compound
         // across frames.
@@ -1818,11 +1890,18 @@ export default class HudScene extends Phaser.Scene {
           g.fillStyle(0xffffff, spark.life);
           g.fillCircle(spark.x, spark.y, 1.4 * spark.life);
         }
+        // #526-followup (point 3): a distinct red alarm pulse, ONLY once this part is genuinely
+        // low (`HP_CRITICAL_FRAC` in hpFx.js) — layered on top of, not instead of, the flicker/
+        // static/sparks above.
+        const flashA = hpCriticalFlash(hpFrac, tSec);
+        if (flashA > 0) {
+          g.fillStyle(HP_COLOR, flashA);
+          g.fillRoundedRect(rect.x, rect.y, rect.w, rect.h, TILE_UI.radius);
+        }
       }
 
-      // Armor: a plate BEHIND the tile (see the method doc above). #526 (point 6): sharp corners
-      // (radius 0) instead of a rounded plate, so it reads as a real bar-graph column peeking out
-      // from behind the tile rather than a rounded box.
+      // Armor: a plate BEHIND the tile (see the method doc above). #526-followup (point 2):
+      // rounded again (`ARMOR_BACK_RADIUS`), bigger than the tile's own corner, echoing its style.
       if (bg) {
         const peek = {
           x: rect.x - ARMOR_PEEK_PAD, y: rect.y - ARMOR_PEEK_PAD,
@@ -1832,11 +1911,11 @@ export default class HudScene extends Phaser.Scene {
         // still shows where a repair would refill it, the same "empty space stays legible" rule
         // every other layer's backing follows.
         bg.lineStyle(1.5, BAR_EDGE, 0.7);
-        bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, 0);
+        bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, ARMOR_BACK_RADIUS);
         const drain = armorDrainRect(peek, armorFrac);
         if (drain.h > 0.5) {
           bg.fillStyle(destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_PLATE, destroyed ? 0.7 : 1);
-          bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, 0);
+          bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, ARMOR_BACK_RADIUS);
           // The lit edge is the drain LINE itself — the one part of the plate that actually
           // moves, so it's the one thing a glance needs to read "how much armor is left" in
           // whatever sliver of it is still peeking out from behind the tile.
@@ -1847,37 +1926,31 @@ export default class HudScene extends Phaser.Scene {
           bg.strokePath();
         }
       }
-      if (destroyed) {
-        g.lineStyle(1.5, HP_COLOR, 0.9);
-        g.beginPath();
-        g.moveTo(rect.x, rect.y);
-        g.lineTo(rect.x + rect.w, rect.y + rect.h);
-        g.moveTo(rect.x + rect.w, rect.y);
-        g.lineTo(rect.x, rect.y + rect.h);
-        g.strokePath();
-      }
     }
 
-    // Shield: ONE bracket over the top+sides of the whole row — a pool, not a per-tile layer, same
-    // "only draw it if this mech actually has one" rule the paper doll's outline follows.
+    // Shield-line: ONE bracket over the top+sides of the whole row — a pool, not a per-tile layer,
+    // same "only draw it if there's something to show" rule the paper doll's outline follows —
+    // generalised (`coreMeter`) to whatever the core slot's own mounted item supplies.
     //
-    // #526 (points 3-5): the rect is grown to the screen floor first (`_fusedShieldRect`, point 3),
-    // then the bracket is painted as `FUSED_SHIELD_GRADIENT.length` copies of the exact SAME fixed
-    // shape (`healthReadout.js`'s `pad` param — never a different shape at a different fraction,
-    // point 4), each grown further from the panel and drawn at a lower alpha (point 5's
-    // strongest-toward-the-panel / weakest-toward-the-screen-edge gradient), at the bumped
-    // `FUSED_SHIELD_WIDTH` (point 5's "slightly thicker").
-    const p = mechPools(mech, INTEGRITY_ORDER);
-    if (p.hasShield && panel.tileBox) {
+    // #526-followup (points 6/7): only ONE always-on reference TRACK now, at a fixed dim alpha
+    // (`FUSED_SHIELD_TRACK_ALPHA`) and the pad-0 shape — so there is exactly one "this is the
+    // fixed channel" reference the eye can check the bend against. The GRADIENT itself is now part
+    // of the FRAC-SIZED fill: `FUSED_SHIELD_GRADIENT`'s pad-grown copies are all drawn against the
+    // SAME live `frac`, so every layer's reach grows/shrinks together as the meter drains/refills —
+    // see the constant's own comment for why this is what actually fixes both reports (the corner
+    // was never literally moving; the old always-full-length track sliding past the frac-sized
+    // fill's own end-point was what read as it moving).
+    const meter = coreMeter(mech);
+    if (meter.has && panel.tileBox) {
       const floorRect = this._fusedShieldRect(panel.tileBox);
-      const shieldCol = structureColor(p.shield);
-      for (const { pad, trackA, fillA } of FUSED_SHIELD_GRADIENT) {
-        const arc = shieldArcLayout(floorRect, p.shield, pad);
-        g.lineStyle(FUSED_SHIELD_WIDTH, SHIELD_BAR_COLOR, trackA);
-        g.strokePoints(arc.track, false);
+      const meterCol = structureColor(meter.frac);
+      g.lineStyle(FUSED_SHIELD_WIDTH, SHIELD_BAR_COLOR, FUSED_SHIELD_TRACK_ALPHA);
+      g.strokePoints(bracketOutline(floorRect), false);
+      for (const { pad, fillA } of FUSED_SHIELD_GRADIENT) {
+        const arc = shieldArcLayout(floorRect, meter.frac, pad);
         for (const side of [arc.left, arc.right]) {
           if (side.length < 2) continue;
-          g.lineStyle(FUSED_SHIELD_WIDTH, shieldCol, fillA);
+          g.lineStyle(FUSED_SHIELD_WIDTH, meterCol, fillA);
           g.strokePoints(side, false);
         }
       }

@@ -10,9 +10,36 @@
 // own cooldown while equipped. See scenes/arena/interceptor.js for the actual target-finding
 // (needs the scene's live projectile list, so it can't live in this pure module) and
 // data/Mech.js's canIntercept/triggerIntercept/tickInterceptorCooldown for the cooldown gate.
+// #526-followup (new playtest pass): each entry MAY carry a pure `meterFrac(mech)` — a 0..1
+// reading of "how full is this item's own gauge right now," fed into the fused HUD's shield-line
+// bracket (data/healthReadout.js `coreMeter`, HudScene.js `_paintFusedReadout`) so that visual
+// isn't hardcoded to literal shield HP. An item with no `meterFrac` simply shows no meter at all
+// (see `coreMeter`) — legal for a passive item that has nothing gauge-like to show.
 export const CORE_ITEMS = {
-  shield: { name: 'Shield', max: 100 },
-  antiMissile: { name: 'Anti-Missile Defense', range: 220, cooldown: 2.5 },
+  shield: {
+    name: 'Shield', max: 100,
+    // Shield HP as a fraction of its (possibly temp-pool-grown) max — mirrors `mechPools`'s own
+    // shield fraction exactly, just read directly off the mech rather than summed alongside armor/
+    // structure (the fused bracket only ever wants this one number).
+    meterFrac: (mech) => {
+      if (!mech?.hasShield?.()) return null;
+      const hp = mech.shieldTotalHp?.() ?? mech.shield?.hp ?? 0;
+      const max = mech.shieldTotalMax?.() ?? mech.shield?.max ?? 0;
+      return max > 0 ? hp / max : 0;
+    },
+  },
+  antiMissile: {
+    name: 'Anti-Missile Defense', range: 220, cooldown: 2.5,
+    // Recharge progress, not "ammo" (AMS has none) — 0 the instant it fires, climbing back to 1
+    // as `_interceptorCooldown` counts down to 0 (data/Mech.js), so the bracket fills back up as
+    // "ready to intercept again" rather than draining like a depletable resource.
+    meterFrac: (mech) => {
+      const cd = CORE_ITEMS.antiMissile.cooldown || 0;
+      if (cd <= 0) return 1;
+      const remaining = mech?._interceptorCooldown ?? 0;
+      return 1 - Math.max(0, Math.min(1, remaining / cd));
+    },
+  },
 };
 
 export function getCoreItem(id) {
