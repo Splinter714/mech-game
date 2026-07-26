@@ -97,6 +97,35 @@ export const ABILITY_BINDS = {
 const ABILITY_PAD_INDEX = { abilityY: PAD.Y, abilityX: PAD.X };
 const ABILITY_KEY_NAME = { abilityY: 'ONE', abilityX: 'FOUR' };
 
+// #524: the #122 fix below (both here and in Controls' constructor) only un-sticks pads that
+// are ALREADY known to this scene's GamepadPlugin at the moment the reset loop runs — the
+// SCENE-TRANSITION case, where the pad was already recognized by the browser and just needed
+// its fresh per-scene wrapper re-synced. It does NOT cover a pad that connects to the BROWSER
+// for the very first time DURING this scene's life: that wrapper is created later, off the
+// native 'gamepadconnected' event, with `_created` stamped at essentially the same instant as
+// the native state that triggered it — so if the player then holds the stick/button steady
+// with no further state change, that wrapper is frozen at all-zero forever, exactly like #122,
+// just arriving after construction instead of before it.
+//
+// This is what actually bit BaseScene (#524): it's the game's entry point (#509) and its whole
+// interaction — walking to a trigger hex — needs nothing but the analog stick, no button. A
+// browser will not expose an already-OS-connected-but-untouched gamepad via
+// `navigator.getGamepads()` until it sees real input on it, so BaseScene is commonly the FIRST
+// place all session a live pad is seen at all. A player who starts driving immediately and
+// holds one direction the whole walk never generates a second native timestamp, so the
+// freshly-connected wrapper never leaves its frozen zero state — the controller reads as dead.
+// GarageScene isn't doing anything special: by the time a player reaches it the pad has
+// already been recognized (from that very drive), so ITS fresh per-scene wrapper is already
+// known at PadEdges/Controls construction time and the existing #122 reset catches it — which
+// is why "visiting the garage" appears to wake the controller up.
+//
+// Fix: also listen for the plugin's own 'connected' event and zero out `_created` on whatever
+// pad arrives, so a pad that shows up mid-scene gets the same unconditional-resync treatment as
+// one that was already known at construction.
+function _unstickLateConnectingPads(scene) {
+  scene.input.gamepad?.on?.('connected', (pad) => { pad._created = 0; });
+}
+
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
 // transitions) where the held-flag fire intent isn't appropriate. One instance per scene
@@ -112,6 +141,7 @@ export class PadEdges {
     // force an immediate resync so a pad already connected/held when this scene starts isn't
     // read as all-zero until its next genuinely new native state-change timestamp.
     for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
+    _unstickLateConnectingPads(scene);   // #524: also catch a pad that connects mid-scene
   }
   pad() {
     const gp = this.scene.input.gamepad;
@@ -169,6 +199,12 @@ export class Controls {
     // cutoff, so already-held input is picked up immediately rather than waiting for a fresh
     // physical edge that may not come.
     for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
+    // #524: the loop above only catches pads already known at construction time — see
+    // _unstickLateConnectingPads' comment for the mid-scene-first-connection case it misses
+    // (the actual BaseScene bug: the game's stick-only entry point is often the first place a
+    // pad is EVER seen this session, so its wrapper is frequently created well after this
+    // constructor already ran).
+    _unstickLateConnectingPads(scene);
 
     // Active input scheme. We latch onto whichever device was used last: once a pad is
     // touched we stay in 'pad' mode (ignoring the mouse, holding the last aim when the
