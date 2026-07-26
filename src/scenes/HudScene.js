@@ -195,7 +195,9 @@ const FUSED_SHIELD_GRADIENT = [
 // as treasure/currency, not plating"): replaced the bronze/brass tone with a steel/gunmetal
 // blue-grey instead — still deliberately its own family from the shared bars-mode ARMOR_PLATE
 // (0x3a4250) above, just cooler/darker so it reads as heavier plating. Exact tone is tunable.
-const FUSED_ARMOR_PLATE = 0x4a5866;
+// #526-followup2 (point 2, playtest): darkened another notch from 0x4a5866 — still too light next
+// to the tile art at a glance. Rim/seam are unchanged; only the face got darker.
+const FUSED_ARMOR_PLATE = 0x3c4753;
 const FUSED_ARMOR_RIM = 0x9db3c2;
 const FUSED_ARMOR_SEAM = 0x1a2129;
 
@@ -1907,23 +1909,49 @@ export default class HudScene extends Phaser.Scene {
           x: rect.x - ARMOR_PEEK_PAD, y: rect.y - ARMOR_PEEK_PAD,
           w: rect.w + ARMOR_PEEK_PAD * 2, h: rect.h + ARMOR_PEEK_PAD * 2,
         };
-        // The always-drawn dim TRACK — the full peek plate's own outline — so an empty-armor tile
-        // still shows where a repair would refill it, the same "empty space stays legible" rule
-        // every other layer's backing follows.
-        bg.lineStyle(1.5, BAR_EDGE, 0.7);
-        bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, ARMOR_BACK_RADIUS);
         const drain = armorDrainRect(peek, armorFrac);
+        // The dim TRACK — the full peek plate's own outline — so a DAMAGED tile still shows where
+        // a repair would refill it, the same "empty space stays legible" rule every other layer's
+        // backing follows. #526-followup2 (point 1, playtest: "a stray solid grey line on top of
+        // the armor columns"): at (near-)full armor `drain` exactly matches `peek`, so this stroke's
+        // outer half used to poke out past the fill as a persistent grey rim along the top of every
+        // weapon tile — that IS the stray line. There's nothing for the track to indicate once the
+        // fill already covers the whole plate, so it only draws while there's real empty space.
+        if (!drain.full) {
+          bg.lineStyle(1.5, BAR_EDGE, 0.7);
+          bg.strokeRoundedRect(peek.x, peek.y, peek.w, peek.h, ARMOR_BACK_RADIUS);
+        }
+        // #526-followup2 (point 2, playtest: "add mech-y texturing to the armor backing"): two
+        // small rivets at the peek plate's own top corners, the same "bolt head" language the
+        // console shell's own rail uses (`CONSOLE_COL.bolt` in `_paintConsole`) — reads as a
+        // fastened plate rather than a flat swatch. Structural furniture, not part of the "how much
+        // armor is left" readout, so it's drawn regardless of fill level, at low alpha.
+        bg.fillStyle(FUSED_ARMOR_RIM, 0.5);
+        bg.fillCircle(peek.x + 5, peek.y + 5, 1.1);
+        bg.fillCircle(peek.x + peek.w - 5, peek.y + 5, 1.1);
         if (drain.h > 0.5) {
           bg.fillStyle(destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_PLATE, destroyed ? 0.7 : 1);
-          bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h, ARMOR_BACK_RADIUS);
+          // #526-followup2 (point 3, playtest: "looks like there might be two panels stacked on top
+          // of each other"): a partial fill used to be rounded on EVERY corner — its own
+          // independently-shaped rounded rect nested inside the track's outline, which is exactly
+          // what read as a second stacked panel. Only round the fill's TOP corners when it's
+          // actually flush with the peek plate's own top edge (i.e. full); otherwise the top is a
+          // flat cut, so a partial fill reads as a level WITHIN the one peek-plate silhouette
+          // instead of a second, independently-rounded panel floating inside it.
+          const topR = drain.full ? ARMOR_BACK_RADIUS : 0;
+          bg.fillRoundedRect(drain.x, drain.y, drain.w, drain.h,
+            { tl: topR, tr: topR, bl: ARMOR_BACK_RADIUS, br: ARMOR_BACK_RADIUS });
           // The lit edge is the drain LINE itself — the one part of the plate that actually
           // moves, so it's the one thing a glance needs to read "how much armor is left" in
-          // whatever sliver of it is still peeking out from behind the tile.
-          bg.lineStyle(2, destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_RIM, 1);
-          bg.beginPath();
-          bg.moveTo(drain.x, drain.y);
-          bg.lineTo(drain.x + drain.w, drain.y);
-          bg.strokePath();
+          // whatever sliver of it is still peeking out from behind the tile. Skipped when full —
+          // there's no cut edge to mark once the fill reaches the plate's own top.
+          if (!drain.full) {
+            bg.lineStyle(2, destroyed ? FUSED_ARMOR_SEAM : FUSED_ARMOR_RIM, 1);
+            bg.beginPath();
+            bg.moveTo(drain.x, drain.y);
+            bg.lineTo(drain.x + drain.w, drain.y);
+            bg.strokePath();
+          }
         }
       }
     }
