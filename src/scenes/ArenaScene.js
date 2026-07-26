@@ -228,7 +228,7 @@ export default class ArenaScene extends Phaser.Scene {
     // the post-clear base-capture choice. One-shot, same pattern as every other scene-level key
     // above; the pad side is polled via `this.padEdges` in update() below.
     this.input.keyboard.on(`keydown-${INTERACT_BIND.key}`, () => this._onInteractPressed?.());
-    // #523: the shared pause menu — ESC or gamepad SELECT, from anywhere. HudScene is a
+    // #523: the shared pause menu — ESC or gamepad START, from anywhere. HudScene is a
     // permanently-launched overlay alongside this scene (see the `scene.launch('HudScene')`
     // below), so it's paused/resumed right along with the arena rather than left running
     // underneath the menu. The MOVEMENT row flips EVERY live player's legacyMovement together
@@ -373,12 +373,11 @@ export default class ArenaScene extends Phaser.Scene {
     // retired — the lock has no maintained state to escape any more, it simply follows
     // convergence's live pick every frame, so there's nothing left to "drop." ──
     // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js).
-    // #523: SELECT used to be the sole pad return-to-garage button — it's now claimed globally by
-    // the pause menu (`wirePauseMenu` in create()) instead, since the issue's confirmed design is
-    // "ESC or gamepad SELECT/BACK" with no exception carved out for this scene. A pad-only player
-    // loses the one-button quick-return this had; the G key (keyboard) path is unchanged, and
-    // there's no in-menu equivalent yet — flagged in the PR as a regression worth a follow-up if
-    // Jackson wants one back.
+    // #523 claimed SELECT globally for opening the pause menu, dropping the pad quick-return this
+    // scene used to have (noted there as a regression pending Jackson's call). #535 restores a
+    // one-button pad return-to-garage on SELECT, now that pause has moved to START — same funnel
+    // (`toGarage()`) as the G key and the pause menu's own manual-exit paths.
+    if (this.padEdges.pressed(PAD.SELECT)) { this.toGarage(); return; }
     if (this.padEdges.pressed(PAD.A)) this._onInteractPressed?.();   // #517: pad A's interact bind
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)

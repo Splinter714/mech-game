@@ -896,9 +896,10 @@ export default class GarageScene extends Phaser.Scene {
   // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
   // every other player's: d-pad left/right cycles colour, up/down moves which of the seven slots
   // is focused, A/X cycle that slot's mount forward/back (or the chassis pick / colour, on those
-  // tabs — see below), B clears an ability/core slot (weapon slots can't be cleared), START
-  // toggles ready. #529: LB/RB cycle the column's own Mech Lab tab (chassis/weapon/ability/
-  // passive/color) — the pad mirror of column 0's keyboard '['/']'.
+  // tabs — see below), B clears an ability/core slot (weapon slots can't be cleared), SELECT
+  // toggles ready (#535 — moved off START, which now opens the shared pause menu everywhere,
+  // see PauseMenuScene.js). #529: LB/RB cycle the column's own Mech Lab tab (chassis/weapon/
+  // ability/passive/color) — the pad mirror of column 0's keyboard '['/']'.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -909,7 +910,7 @@ export default class GarageScene extends Phaser.Scene {
       const col = this.cols[i];
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
-      if (e.pressed(PAD.START)) { this._toggleReady(i); continue; }
+      if (e.pressed(PAD.SELECT)) { this._toggleReady(i); continue; }
       if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
       if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
       if (e.pressed(PAD.DPAD_LEFT)) { this._cycleColor(col, -1); continue; }

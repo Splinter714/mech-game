@@ -1,5 +1,7 @@
-// #523: a shared pause menu, reachable from every scene — ESC or the gamepad SELECT/BACK
-// button (never START, which is reserved for co-op join everywhere else in this game).
+// #523: a shared pause menu, reachable from every scene — ESC or the gamepad START button.
+// #535: moved off SELECT/BACK, which is now freed up for the ready-up (Garage) / return-to-base
+// (Arena) action instead — see GarageScene.js's `_toggleReady` pad wiring and ArenaScene.js's
+// `toGarage()` pad wiring. START also closes the menu again (a toggle), same as B/ESC.
 //
 // Design: a small overlay Scene, `scene.launch()`ed on top of whichever scene opened it (the
 // same launch-an-overlay pattern ArenaScene already uses for HudScene), while the opening scene
@@ -10,7 +12,7 @@
 // covers it, with no extra wiring needed here beyond calling `scene.pause()`.
 //
 // `wirePauseMenu(scene, opts)` is the half every OTHER scene calls once from its own create():
-// it registers ESC (event-based) and polls its own dedicated PadEdges for SELECT on the scene's
+// it registers ESC (event-based) and polls its own dedicated PadEdges for START on the scene's
 // `update` event (Scene Systems always emits this once per active frame, whether or not the
 // scene defines its own `update()` method — see ui/tabBar.js's `attachPadTabCycle`, the same
 // trick) — so scenes with no `update()` of their own (AudioScene, ArtPreviewScene) still get
@@ -99,7 +101,7 @@ export default class PauseMenuScene extends Phaser.Scene {
       y += ROW_H + ROW_GAP;
     }
 
-    this.add.text(this.W / 2, panelY + panelH - 24, 'ESC / SELECT — RESUME', {
+    this.add.text(this.W / 2, panelY + panelH - 24, 'ESC / START — RESUME', {
       fontFamily: 'monospace', fontSize: '12px', color: UI.dim,
     }).setOrigin(0.5);
 
@@ -211,7 +213,7 @@ export default class PauseMenuScene extends Phaser.Scene {
   }
 
   update() {
-    if (this._padEdges.pressed(PAD.SELECT) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
+    if (this._padEdges.pressed(PAD.START) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
     if (this._padEdges.pressed(PAD.DPAD_DOWN)) this._moveCursor(1);
     if (this._padEdges.pressed(PAD.DPAD_UP)) this._moveCursor(-1);
     if (this._padEdges.pressed(PAD.A)) this._activate(this._rowIds[this._cursor]);
@@ -219,7 +221,7 @@ export default class PauseMenuScene extends Phaser.Scene {
 }
 
 // #523: called once from each pause-able scene's own create(). Wires ESC (event-based) and a
-// dedicated PadEdges polling SELECT on the scene's `update` event, so the menu opens the same
+// dedicated PadEdges polling START on the scene's `update` event, so the menu opens the same
 // way from every scene regardless of whether that scene has its own per-frame update().
 // #529: `dev` (import.meta.env.DEV) is passed through automatically — every caller gets the
 // AUDIO/ART pause-menu rows for free in a dev build, with no per-scene wiring needed. `opts.
@@ -238,7 +240,7 @@ export function wirePauseMenu(scene, opts = {}) {
   };
   scene.input.keyboard.on('keydown-ESC', open);
   const edges = new PadEdges(scene, 0);
-  const onUpdate = () => { if (edges.pressed(PAD.SELECT)) open(); };
+  const onUpdate = () => { if (edges.pressed(PAD.START)) open(); };
   scene.events.on('update', onUpdate);
   scene.events.once('shutdown', () => scene.events.off('update', onUpdate));
 }

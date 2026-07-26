@@ -26,10 +26,13 @@ import { wirePauseMenu } from './PauseMenuScene.js';
 // flagged `isDeep` ("DEEP STRIKE"); winning it unlocks the next biome.
 //
 // Pad support: cards lay out in a wrapping GRID (as many columns as comfortably fit), so pad
-// navigation is 2-D — d-pad/left-stick moves the focus by row+column, A/START deploys the
-// focused card directly (no separate confirm-then-deploy step needed on pad, since moving focus
-// already selects), B returns to base. Mirrors GarageScene's own pad-wake convention: the first
-// pad input just reveals the cursor rather than also moving it.
+// navigation is 2-D — d-pad/left-stick moves the focus by row+column, A deploys the focused card
+// directly (no separate confirm-then-deploy step needed on pad, since moving focus already
+// selects), B returns to base. #535 dropped START as a second deploy trigger — START now opens
+// the shared pause menu everywhere (see PauseMenuScene.js), and this scene's own PadEdges was
+// independently edge-tracking the same button, so a Start press would have fired both actions
+// in the same frame. Mirrors GarageScene's own pad-wake convention: the first pad input just
+// reveals the cursor rather than also moving it.
 const UI = {
   text: '#c8d2dd', accent: '#5ec8e0', bad: '#e2533a', deep: '#efc14a', dim: '#565f6b',
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744, selected: 0x24404a,
@@ -105,7 +108,7 @@ export default class MissionSelectScene extends Phaser.Scene {
     const pad = this.padEdges.pad();
     if (!pad) return;
     if (this.padEdges.pressed(PAD.B)) { this.scene.start('BaseScene'); return; }
-    if (this.padEdges.pressed(PAD.A) || this.padEdges.pressed(PAD.START)) {
+    if (this.padEdges.pressed(PAD.A)) {
       if (this._wakePad()) return;   // first pad press just reveals the cursor
       this._deploy();
       return;
@@ -159,7 +162,7 @@ export default class MissionSelectScene extends Phaser.Scene {
 
   _refreshFooterHint() {
     this._footerHint.setText(this._padActive
-      ? '◀▶▲▼ CHOOSE   A/START DEPLOY   B BACK'
+      ? '◀▶▲▼ CHOOSE   A DEPLOY   B BACK'
       : 'CLICK A MISSION, THEN DEPLOY   ESC — BACK TO BASE');
   }
 
@@ -197,8 +200,8 @@ export default class MissionSelectScene extends Phaser.Scene {
 
   // Selecting a card highlights it (and un-highlights whichever was selected before) and enables
   // the Deploy button — it does NOT launch anything by itself on its own (mouse/keyboard), per
-  // the owner's ask: pick a mission, then hit Deploy to commit. A/START on pad does both steps
-  // in one press once the cursor is already on a card, which is the natural pad idiom.
+  // the owner's ask: pick a mission, then hit Deploy to commit. A on pad does both steps in one
+  // press once the cursor is already on a card, which is the natural pad idiom.
   _selectOffer(offer) {
     this._selected = offer;
     for (const [id, rect] of this._cardRects) rect.setFillStyle(id === offer.id ? UI.selected : UI.btn);
