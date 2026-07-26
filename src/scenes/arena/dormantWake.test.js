@@ -569,6 +569,32 @@ describe('#269 playtest follow-up: _spawnTowerPatrols — roaming units near eac
     }
   });
 
+  // #516 (corridor bypass routing): patrols now carry `alertsBaseId` — a separate field from
+  // `baseId` on purpose (see `_spawnTowerPatrols`'s own comment) — so they can escalate their
+  // linked base on sight without joining the base's win-condition kill count.
+  it('tags each patrol unit with its tower\'s linked baseId as `alertsBaseId`, not `baseId`', () => {
+    const towers = [{ q: 0, r: 0, baseId: 'base0' }, { q: 4, r: -2, baseId: 'base1' }];
+    const scene = makeSceneWithSpawnStub(towers);
+    scene._spawnTowerPatrols();
+    const tier0Count = towerPatrolComposition(0, towers.length).length;
+    scene.enemies.slice(0, tier0Count).forEach((e) => {
+      expect(e.alertsBaseId).toBe('base0');
+      expect(e.baseId).toBeUndefined();
+    });
+    scene.enemies.slice(tier0Count).forEach((e) => {
+      expect(e.alertsBaseId).toBe('base1');
+      expect(e.baseId).toBeUndefined();
+    });
+  });
+
+  it('tags patrol units with a null alertsBaseId when the tower carries no baseId', () => {
+    const towers = [{ q: 0, r: 0 }];   // no baseId field at all
+    const scene = makeSceneWithSpawnStub(towers);
+    scene._spawnTowerPatrols();
+    expect(scene.enemies.length).toBeGreaterThan(0);
+    for (const e of scene.enemies) expect(e.alertsBaseId).toBeNull();
+  });
+
   // #269 playtest follow-up round 2 (TOWER_PATROL_COUNT 1 -> 5): a real squad-sized patrol reads
   // as a genuine presence, not a lone trooper — assert the bumped headcount explicitly (rather
   // than only asserting via the derived `2 * TOWER_PATROL_COUNT` above) so a future accidental
@@ -1229,6 +1255,60 @@ describe('#269 playtest follow-up: DORMANT units wake on player proximity, no al
     expect(e.awareness).toBe(DORMANT);
     expect(e.x).toBe(0);
     expect(e.y).toBe(0);
+  });
+});
+
+// #516 (corridor bypass routing): a tower patrol carries `alertsBaseId` (bases.js
+// `_spawnTowerPatrols`) instead of `baseId` — it starts UNAWARE like any roaming unit, and the
+// instant it independently spots the player (the same distance+noise `_updateVehicle` awareness
+// check every non-mech UNAWARE unit already runs) it escalates its linked base via `_wakeBase`,
+// exactly like an alert tower's own countdown completing. Uses the same tickable-scene harness the
+// proximity-wake tests above use — a patrol unit is shaped just like `makeTickableUnit`'s dormant
+// unit, minus `baseId`/DORMANT and plus `alertsBaseId`/UNAWARE.
+describe('#516: a tower patrol spotting the player escalates its linked base', () => {
+  function makePatrolUnit(kindId, { alertsBaseId = 'base0' } = {}) {
+    const def = ENEMY_KINDS[kindId];
+    const mech = new HpBody(def);
+    const view = { setPosition() {}, hull: { setTexture() {}, rotation: 0 }, turret: { rotation: 0 }, shadow: null };
+    return {
+      key: `${kindId}Patrol`, mech, view, kind: def.kind, kindDef: def, behavior: def.behavior,
+      x: 0, y: 0, vx: 0, vy: 0, angle: 0, turret: 0, fireCd: 0, handed: 1,
+      awareness: UNAWARE, detectRange: detectionRangeFor(def.fireRange), alertsBaseId,
+      spawnX: 0, spawnY: 0,
+    };
+  }
+
+  it('a patrol becoming AWARE of a nearby player wakes the base its tower guards', () => {
+    const scene = makeTickableScene({ px: 0, py: 0 });
+    scene.enemyFire = false;   // out of scope here — only the awareness/wake transition is under test
+    const patrol = makePatrolUnit('tank', { alertsBaseId: 'base0' });
+    const dormant = makeTickableUnit('wallTurret', { baseId: 'base0' });
+    scene.enemies.push(patrol, dormant);
+    scene._updateEnemy(patrol, 0.016, 16);
+    expect(patrol.awareness).toBe(AWARE);
+    expect(dormant.awareness).toBe(AWARE);   // the base woke, not just the patrol that spotted us
+  });
+
+  it('a patrol that has not yet spotted the player (far away) leaves its base untouched', () => {
+    const scene = makeTickableScene({ px: 5000, py: 5000 });
+    scene.enemyFire = false;
+    const patrol = makePatrolUnit('tank', { alertsBaseId: 'base0' });
+    const dormant = makeTickableUnit('wallTurret', { baseId: 'base0' });
+    scene.enemies.push(patrol, dormant);
+    scene._updateEnemy(patrol, 0.016, 16);
+    expect(patrol.awareness).toBe(UNAWARE);
+    expect(dormant.awareness).toBe(DORMANT);
+  });
+
+  it('a patrol with no alertsBaseId (opening gap-0 tower, no linked base) still notices the player, but wakes nothing', () => {
+    const scene = makeTickableScene({ px: 0, py: 0 });
+    scene.enemyFire = false;
+    const patrol = makePatrolUnit('tank', { alertsBaseId: null });
+    const dormant = makeTickableUnit('wallTurret', { baseId: 'base0' });
+    scene.enemies.push(patrol, dormant);
+    scene._updateEnemy(patrol, 0.016, 16);
+    expect(patrol.awareness).toBe(AWARE);
+    expect(dormant.awareness).toBe(DORMANT);
   });
 });
 

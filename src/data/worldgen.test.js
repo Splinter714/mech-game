@@ -19,6 +19,7 @@ import {
   MIN_BASE_SEPARATION_PX,
   gateCountForRing, RING_SPANS_PER_GATE, MIN_GATES_PER_RING, MAX_GATES_PER_RING,
   FIRST_TOWER_MAX_PROGRESS_PX, FIRST_TOWER_MAX_PROGRESS_HEX,
+  BASE_LATERAL_OFFSET_HEX, nudgeCandidateLateral,
 } from './worldgen.js';
 import { getBiome } from './biomes.js';
 import { TERRAIN, isPassable, buildingHp as buildingHpOf, damageBuilding } from './terrain.js';
@@ -736,6 +737,81 @@ describe('placeBases (#269 §3: base population world-gen placement)', () => {
       // The objective hex isn't double-booked as a dock hex too.
       for (const d of base.docks) expect(axialKey(d.q, d.r)).not.toBe(objKey);
     }
+  });
+
+  // #516 (corridor bypass routing): `placeBases` now nudges each candidate off the corridor
+  // centreline (`nudgeCandidateLateral`) before building its footprint, so a run's bases don't
+  // all sit dead-centred in the lane — see `BASE_LATERAL_OFFSET_HEX`'s comment for why.
+  describe('#516 nudgeCandidateLateral (pure lateral-offset geometry)', () => {
+    it('returns the same hex unchanged when there is no axis to nudge perpendicular to', () => {
+      const h = { q: 3, r: -1 };
+      const playableKeys = new Set(range(h, 10).map((n) => axialKey(n.q, n.r)));
+      expect(nudgeCandidateLateral(h, null, 2, playableKeys)).toEqual(h);
+    });
+
+    it('returns the same hex unchanged when the offset is zero', () => {
+      const h = { q: 3, r: -1 };
+      const playableKeys = new Set(range(h, 10).map((n) => axialKey(n.q, n.r)));
+      expect(nudgeCandidateLateral(h, { x: 1, y: 0 }, 0, playableKeys)).toEqual(h);
+    });
+
+    it('shifts the candidate perpendicular to its axis by roughly the requested hex-step distance', () => {
+      const h = { q: 0, r: 0 };
+      const playableKeys = new Set(range(h, 10).map((n) => axialKey(n.q, n.r)));
+      const nudged = nudgeCandidateLateral(h, { x: 1, y: 0 }, 2, playableKeys);
+      expect(nudged).not.toEqual(h);
+      const c0 = hexToPixel(h.q, h.r);
+      const c1 = hexToPixel(nudged.q, nudged.r);
+      const dist = Math.hypot(c1.x - c0.x, c1.y - c0.y);
+      // Within one hex step of the exact 2*HEX_STEP_PX target — hex snapping introduces some slop.
+      expect(dist).toBeGreaterThan(HEX_STEP_PX);
+      expect(Math.abs(dist - 2 * HEX_STEP_PX)).toBeLessThan(HEX_STEP_PX);
+      // Perpendicular to axis {x:1,y:0} is the y-axis — the nudge should move it laterally
+      // (along y), not along the corridor's own heading (x).
+      expect(Math.abs(c1.y - c0.y)).toBeGreaterThan(Math.abs(c1.x - c0.x));
+    });
+
+    it('opposite-sign offsets nudge to opposite flanks', () => {
+      const h = { q: 0, r: 0 };
+      const playableKeys = new Set(range(h, 10).map((n) => axialKey(n.q, n.r)));
+      const axis = { x: 1, y: 0 };
+      const plusHex = nudgeCandidateLateral(h, axis, 2, playableKeys);
+      const minusHex = nudgeCandidateLateral(h, axis, -2, playableKeys);
+      const plus = hexToPixel(plusHex.q, plusHex.r);
+      const minus = hexToPixel(minusHex.q, minusHex.r);
+      expect(Math.sign(plus.y)).toBe(-Math.sign(minus.y));
+    });
+
+    it('falls back to the un-nudged hex when the nudge would land outside the playable set', () => {
+      const h = { q: 0, r: 0 };
+      // Only the origin itself is "playable" — any nudge at all lands outside it.
+      const playableKeys = new Set([axialKey(0, 0)]);
+      const nudged = nudgeCandidateLateral(h, { x: 1, y: 0 }, 5, playableKeys);
+      expect(nudged).toEqual(h);
+    });
+  });
+
+  // #516: bases end up genuinely off the corridor centreline (not just theoretically able to),
+  // and the existing "never seals the lane" / wall-turret-envelope invariants (covered elsewhere
+  // in this file) still hold with the nudge wired in — this just confirms the nudge is actually
+  // visible in `placeBases`' real output, on a straight corridor where "centreline" is exactly r=0.
+  it('places bases off the true corridor centreline on a straight lane (#516 lateral offset)', () => {
+    const rng = mulberry32(2024);
+    const all = [];
+    for (let q = -80; q <= 80; q++) {
+      for (let r = -6; r <= 6; r++) all.push({ q, r });
+    }
+    const T = new Map();
+    for (const h of all) T.set(axialKey(h.q, h.r), B.groundA);
+    const isGround = (k) => { const t = T.get(k); return t === B.groundA || t === B.groundB; };
+    // A fixed +x axis for every candidate: on this straight, wide lane "off centreline" means
+    // nonzero `r` (perpendicular to +x in this coordinate convention).
+    const axisOf = () => ({ x: 1, y: 0 });
+    const { bases } = placeBases(rng, all, T, isGround, 3, undefined, undefined, axisOf);
+    expect(bases.length).toBe(3);
+    // At least one base should land measurably off r=0 — with BASE_LATERAL_OFFSET_HEX > 0 and
+    // room to move, centred (pre-#516) placement would put every base at (or very near) r=0.
+    expect(bases.some((b) => Math.abs(b.center.r) >= 1)).toBe(true);
   });
 
   // #275 (redesign): alert towers are no longer anchored to an "outpost" concept — they place

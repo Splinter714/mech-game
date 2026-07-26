@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { capturedBaseIdsFor, applyCapturedBases } from './baseCapture.js';
+import { capturedBaseIdsFor, applyCapturedBases, filterCapturedAlertTowers } from './baseCapture.js';
 
 function outpost(biomeId, baseId) {
   return { id: `outpost-0-${baseId}`, type: 'resource', coord: { q: 0, r: 0 }, biomeId, baseId, upgradeLevel: 0, threatState: 'safe' };
@@ -55,5 +55,40 @@ describe('#518 baseCapture — wiring claimed bases back into a fresh worldgen l
     expect(b0.docks).toHaveLength(1);
     expect(b0.objectiveHex).toEqual({ q: 1, r: 1 });
     expect(keys).toEqual([]);
+  });
+});
+
+// #516 (corridor bypass routing): a captured base shouldn't keep a live hostile alert tower —
+// no countdown/siren/patrol-spawn for ground the player already holds.
+describe('#516 filterCapturedAlertTowers — drop a captured base\'s own tower', () => {
+  function tower(q, r, baseId) {
+    return { q, r, baseId };
+  }
+
+  it('drops a tower whose baseId is captured', () => {
+    const towers = [tower(0, 0, 'base0'), tower(5, 0, 'base1')];
+    const result = filterCapturedAlertTowers(towers, new Set(['base0']));
+    expect(result).toEqual([tower(5, 0, 'base1')]);
+  });
+
+  it('keeps every tower when no base is captured', () => {
+    const towers = [tower(0, 0, 'base0'), tower(5, 0, 'base1')];
+    expect(filterCapturedAlertTowers(towers, new Set())).toEqual(towers);
+    expect(filterCapturedAlertTowers(towers, null)).toEqual(towers);
+  });
+
+  it('never drops a tower with no baseId at all (defensive — placeGapTowers always stamps one)', () => {
+    const towers = [{ q: 0, r: 0 }];   // no baseId field
+    expect(filterCapturedAlertTowers(towers, new Set(['base0']))).toEqual(towers);
+  });
+
+  it('handles an empty/missing tower list safely', () => {
+    expect(filterCapturedAlertTowers([], new Set(['base0']))).toEqual([]);
+    expect(filterCapturedAlertTowers(undefined, new Set(['base0']))).toEqual([]);
+  });
+
+  it('drops every tower when every base is captured', () => {
+    const towers = [tower(0, 0, 'base0'), tower(5, 0, 'base1')];
+    expect(filterCapturedAlertTowers(towers, new Set(['base0', 'base1']))).toEqual([]);
   });
 });
