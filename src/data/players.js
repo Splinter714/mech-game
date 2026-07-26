@@ -71,9 +71,10 @@ export function makePlayer({
     // out-of-combat gate.
     respawn: null,
     lastHitAt: -Infinity,
-    // #497: this player's summoned friendly drone, if any — null when none is out. Owned by
-    // scenes/arena/friendlyDrones.js, not a pure-data concept (it carries a live view object).
-    friendlyDrone: null,
+    // #497 (rework: a squad of 3-5, not a single pet): this player's summoned friendly drones,
+    // if any — null when none are out. Owned by scenes/arena/friendlyDrones.js, not a pure-data
+    // concept (each entry carries a live view object).
+    friendlyDrones: null,
     // #507: this player's own Smoke Screen cloud, if any — null when none is out. Any live
     // player can stand in ANY cloud (co-op cover), not just their own; see arena/stealth.js.
     smokeCloud: null,
