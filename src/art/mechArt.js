@@ -23,7 +23,7 @@ import { gen, scaledGraphics, drawDilated, ART_SCALE } from './_frames.js';
 import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
-import { luminanceGrey } from '../data/desaturate.js';
+import { luminanceGrey, cloakEdgeMask } from '../data/desaturate.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, plateOutline, plate, glowBar,
   exposedInternals, statusSpotBar,
@@ -535,10 +535,23 @@ export function reskinMech(scene, key, mech, opts) {
 // texture (the walk-cycle hull frames, which are damage-independent — see buildMechTextures'
 // `skipHull` note) can cache the returned key themselves.
 //
+// #500 (playtest, third pass — "can we make it a bit more wire-frame-y? like more outline-y"): a
+// flat desaturated fill still read as "solid grey mech" rather than a translucent ghost, so this
+// now ALSO bakes a bright rim line around each part's silhouette (`cloakEdgeMask`, data/desaturate.js
+// — pure alpha-channel math, unit-tested there) and pushes the interior fill's alpha down further,
+// so the two layers read as "translucent wireframe" instead of "solid grey": a crisp lit outline
+// over a fill that's *more* see-through than a plain desaturation alone would be. Same Canvas 2D
+// getImageData/putImageData bake as the grey conversion, for the same reason (works identically
+// under WebGL and Canvas renderers — no WebGL-only postFX pipeline involved).
+//
 // Guarded so it's a harmless no-op key handout against the hand-rolled scene doubles the ability
 // unit tests use (no `.textures`, or a `.textures` with no real canvas backing) — those tests
 // assert the ORCHESTRATION (which key a sprite gets pointed at), not the pixel math itself, which
 // has its own pure unit test (data/desaturate.test.js) and is otherwise verified live.
+const CLOAK_OUTLINE_THICKNESS_PX = 6;   // raster px at ART_SCALE(4x) ≈ 2 display px at ARENA_MECH_SCALE(0.34)
+const CLOAK_OUTLINE_RGB = 235;          // bright near-white rim, distinct from any desaturated grey fill
+const CLOAK_FILL_ALPHA_MULT = 0.55;     // interior fill pushed more transparent than the rim line
+
 export function desaturateTexture(scene, key) {
   const dstKey = `${key}_grey`;
   const srcTex = scene?.textures?.get?.(key);
@@ -556,9 +569,26 @@ export function desaturateTexture(scene, key) {
   canvasTex.clear(0, 0, w, h, false);
   canvasTex.draw(0, 0, src);
   const d = canvasTex.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const grey = luminanceGrey(d[i], d[i + 1], d[i + 2]);   // alpha (d[i + 3]) passes through untouched
-    d[i] = grey; d[i + 1] = grey; d[i + 2] = grey;
+  const pixelCount = w * h;
+  // Snapshot the SOURCE alpha channel before any pixel is touched: the edge mask needs to look at
+  // neighbours' ORIGINAL opacity, and this loop is about to overwrite alpha in place for the fill
+  // pixels, so reading `d` mid-mutation for edge detection would see already-changed neighbours.
+  const alpha0 = new Uint8Array(pixelCount);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) alpha0[p] = d[i + 3];
+  const edge = cloakEdgeMask(alpha0, w, h, CLOAK_OUTLINE_THICKNESS_PX);
+  for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+    const a = alpha0[p];
+    if (a === 0) continue;                                  // fully transparent — nothing to bake
+    if (edge[p]) {
+      // The rim line: bright and fully opaque so it reads as a crisp lit edge regardless of how
+      // transparent the fill around it gets, or of the container-level CLOAK_ALPHA on top of this.
+      d[i] = d[i + 1] = d[i + 2] = CLOAK_OUTLINE_RGB;
+      d[i + 3] = 255;
+    } else {
+      const grey = luminanceGrey(d[i], d[i + 1], d[i + 2]);
+      d[i] = grey; d[i + 1] = grey; d[i + 2] = grey;
+      d[i + 3] = Math.round(a * CLOAK_FILL_ALPHA_MULT);
+    }
   }
   canvasTex.context.putImageData(canvasTex.imageData, 0, 0);   // commit the mutated pixels
   canvasTex.refresh();                                        // push to the GPU texture under WebGL

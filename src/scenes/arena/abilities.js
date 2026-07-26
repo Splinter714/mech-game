@@ -40,7 +40,11 @@ const CLOAK_SWAPPABLE_PARTS = MECH_PART_KEYS.filter((p) => p !== 'hull');
 // baking a true greyscale `_grey` variant of each part texture via Canvas 2D `getImageData` — see
 // its header for why that (not a WebGL postFX pipeline) is what works under both renderers.
 export const CLOAK_ALPHA = 0.45;      // dim enough to read as translucent; the desaturation itself
-                                       // (not the alpha) is what now carries the "ghostly" cue.
+                                       // (not this container alpha) carries the "ghostly" cue, and
+                                       // (#500 third pass) `desaturateTexture` now bakes its OWN
+                                       // per-part rim outline + extra fill transparency on top of
+                                       // this, so the combined look is a lit wireframe silhouette
+                                       // rather than a flat grey one.
 
 // Apply/clear Cloak's visual on a player's mech view: swap every non-hull part sprite to a
 // genuinely-desaturated `_grey` texture variant (baked fresh from whatever the part's CURRENT

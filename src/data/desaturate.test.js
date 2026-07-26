@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { luminanceGrey } from './desaturate.js';
+import { luminanceGrey, silhouetteBoundary, dilateMask, cloakEdgeMask } from './desaturate.js';
 
 describe('luminanceGrey (#500 follow-up: genuine per-pixel desaturation for Cloak)', () => {
   it('is a no-op on already-neutral pixels (black/white/mid-grey)', () => {
@@ -38,5 +38,123 @@ describe('luminanceGrey (#500 follow-up: genuine per-pixel desaturation for Cloa
     const azureGrey = luminanceGrey(0x42, 0x7f, 0xfa);
     expect(azureGrey).toBeGreaterThan(40);
     expect(azureGrey).toBeLessThan(215);
+  });
+});
+
+// #500 (third playtest pass — "can we make it a bit more wire-frame-y? like more outline-y"): the
+// pure alpha-channel edge math behind the Cloak rim-outline bake (mechArt.js `desaturateTexture`
+// calls these). Grids are written as row-strings ('#' opaque, '.' transparent) for readability.
+function gridToAlpha(rows) {
+  const height = rows.length;
+  const width = rows[0].length;
+  const alphas = new Uint8Array(width * height);
+  rows.forEach((row, y) => {
+    for (let x = 0; x < width; x++) alphas[y * width + x] = row[x] === '#' ? 255 : 0;
+  });
+  return { alphas, width, height };
+}
+
+function maskToGrid(mask, width, height) {
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    let row = '';
+    for (let x = 0; x < width; x++) row += mask[y * width + x] ? '#' : '.';
+    rows.push(row);
+  }
+  return rows;
+}
+
+describe('silhouetteBoundary (#500 third pass: the 1px edge line under the Cloak outline)', () => {
+  it('marks only the perimeter of a solid shape, not its interior', () => {
+    const { alphas, width, height } = gridToAlpha([
+      '.......',
+      '.#####.',
+      '.#####.',
+      '.#####.',
+      '.#####.',
+      '.#####.',
+      '.......',
+    ]);
+    const boundary = silhouetteBoundary(alphas, width, height);
+    expect(maskToGrid(boundary, width, height)).toEqual([
+      '.......',
+      '.#####.',
+      '.#...#.',
+      '.#...#.',
+      '.#...#.',
+      '.#####.',
+      '.......',
+    ]);
+  });
+
+  it('is empty for a fully transparent image', () => {
+    const { alphas, width, height } = gridToAlpha(['...', '...', '...']);
+    const boundary = silhouetteBoundary(alphas, width, height);
+    expect([...boundary].every((v) => v === 0)).toBe(true);
+  });
+
+  it('treats the canvas edge as transparent, so a shape touching it is boundary right up to the edge', () => {
+    const { alphas, width, height } = gridToAlpha(['###', '###', '###']);
+    const boundary = silhouetteBoundary(alphas, width, height);
+    // every pixel around the perimeter of a shape that fills the whole canvas has at least one
+    // neighbour off-canvas (treated as transparent); only the dead-center pixel is fully interior.
+    expect(maskToGrid(boundary, width, height)).toEqual(['###', '#.#', '###']);
+  });
+});
+
+describe('dilateMask (#500 third pass: thickening the 1px edge into a visible rim band)', () => {
+  it('radius 0 is a no-op', () => {
+    const mask = new Uint8Array([0, 1, 0, 0]);
+    expect(dilateMask(mask, 2, 2, 0)).toBe(mask);
+  });
+
+  it('grows a single marked pixel into a square block of side (2*radius + 1)', () => {
+    const width = 7, height = 7;
+    const mask = new Uint8Array(width * height);
+    mask[3 * width + 3] = 1; // center pixel
+    const grown = dilateMask(mask, width, height, 1);
+    expect(maskToGrid(grown, width, height)).toEqual([
+      '.......',
+      '.......',
+      '..###..',
+      '..###..',
+      '..###..',
+      '.......',
+      '.......',
+    ]);
+  });
+});
+
+describe('cloakEdgeMask (#500 third pass: boundary detection + thickening in one call)', () => {
+  it('with thickness 0, is identical to the raw 1px boundary', () => {
+    const { alphas, width, height } = gridToAlpha([
+      '.....',
+      '.###.',
+      '.###.',
+      '.###.',
+      '.....',
+    ]);
+    expect(cloakEdgeMask(alphas, width, height, 0)).toEqual(silhouetteBoundary(alphas, width, height));
+  });
+
+  it('thickens the boundary outward, still never marking a fully-transparent pixel run beyond the shape entirely untouched at distance', () => {
+    const { alphas, width, height } = gridToAlpha([
+      '.........',
+      '.........',
+      '..#####..',
+      '..#####..',
+      '..#####..',
+      '..#####..',
+      '..#####..',
+      '.........',
+      '.........',
+    ]);
+    const edge = cloakEdgeMask(alphas, width, height, 1);
+    const grid = maskToGrid(edge, width, height);
+    // the shape's own center pixel (row4, col4) is 2 cells from every side of the 5x5 square, so
+    // it's outside a thickness-1 rim and should read as interior fill, not outline.
+    expect(grid[4][4]).toBe('.');
+    // the top-left corner of the square (row2, col2) IS within the boundary/rim band.
+    expect(grid[2][2]).toBe('#');
   });
 });
