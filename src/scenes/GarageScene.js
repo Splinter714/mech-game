@@ -16,8 +16,8 @@ import {
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
-import { stepIndex, cycleListId } from '../ui/padNav.js';
+import { TILE_ORDER, HUD_ABILITY_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
+import { stepIndex } from '../ui/padNav.js';
 import { LAB_TABS, nextLabTab, labTabForSlotKind, TAB_DEFAULT_SLOT } from '../ui/labTabs.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
@@ -63,6 +63,12 @@ import { WeaponCardList } from '../ui/weaponCardList.js';
 const UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', bad: '#e2533a', good: '#7bd17b',
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
+  // #533: the pad/keyboard row-navigation cursor on the merged chassis+color tab's list rows —
+  // gold, matching the loadout tiles' own `selected` (pad-cursor) highlight in skillTiles.js's
+  // TILE_UI.sel, so "gold ring = the D-pad cursor is here" reads the same across both surfaces.
+  // Deliberately distinct from `accent` (cyan), which this list already uses for "this IS the
+  // equipped chassis/color" — the two states (cursor vs. equipped) can now coincide or differ.
+  focus: 0xefc14a,
 };
 
 // A Phaser text `color` style wants a CSS string; mechColorFor (and the rest of the identity-
@@ -175,12 +181,16 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(this.cols[0], -1));
     // #505 THIRD rework (playtest, Jackson: "arrow keys should function the same as d-pad in the
     // garage") — the exact same actions column 0's own PadEdges drives off DPAD_LEFT/RIGHT/UP/
-    // DOWN in update() below, just off keyboard events instead of a per-frame pad poll. Shares
-    // _cycleColor/_stepSlot with the pad path rather than duplicating the mapping.
-    this.input.keyboard.on('keydown-LEFT', () => this._cycleColor(this.cols[0], -1));
-    this.input.keyboard.on('keydown-RIGHT', () => this._cycleColor(this.cols[0], 1));
-    this.input.keyboard.on('keydown-UP', () => this._stepSlot(this.cols[0], -1));
-    this.input.keyboard.on('keydown-DOWN', () => this._stepSlot(this.cols[0], 1));
+    // DOWN in update() below, just off keyboard events instead of a per-frame pad poll.
+    // #533: LEFT/RIGHT now mirror the D-pad's new tab-cycle/placement-move role (_navHorizontal)
+    // and UP/DOWN mirror its row-navigate role (_navRow) — see update()'s own D-pad dispatch for
+    // the full nav model this replaces (D-pad left/right used to cycle colour directly; that's
+    // now reached via the merged chassis+color tab's own row list instead, see _navRow/
+    // _activateListFocus below).
+    this.input.keyboard.on('keydown-LEFT', () => this._navHorizontal(this.cols[0], -1));
+    this.input.keyboard.on('keydown-RIGHT', () => this._navHorizontal(this.cols[0], 1));
+    this.input.keyboard.on('keydown-UP', () => this._navRow(this.cols[0], -1));
+    this.input.keyboard.on('keydown-DOWN', () => this._navRow(this.cols[0], 1));
     // #529: '['/']' cycle column 0's own Mech Lab tab (chassis/weapon/ability/passive/color) —
     // the keyboard mirror of the pad's LB/RB (see update(), below), same mapping either device.
     this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._cycleLabTab(this.cols[0], -1));
@@ -269,6 +279,15 @@ export default class GarageScene extends Phaser.Scene {
     // pre-#529 default (a weapon slot selected, its catalog showing).
     const col = {
       index: i, layer, selectedSlot: TILE_ORDER[0], labTab: LAB_TABS.findIndex((t) => t.id === 'weapon'),
+      // #533: D-pad/keyboard nav state — `navMode` is 'browse' (rows in the current tab's own
+      // catalog/list are being navigated) or 'placing' (a weapon/ability was just picked off the
+      // catalog and the cursor has moved to the loadout tile row to choose a destination — see
+      // _enterPlacement). `listFocus` is the pad-cursor row index for the merged chassis+color
+      // tab's own combined row list (chassis rows then color rows) — the WeaponCardList catalog
+      // tracks its own focus internally (`col.catalogList`'s `_focus`), so this is only needed
+      // for the one tab that isn't a WeaponCardList.
+      navMode: 'browse', pendingItemId: null, pendingSlots: null, placeFocusIdx: 0,
+      prevSelectedSlot: null, listFocus: 0,
     };
     this.cols[i] = col;
     col.mech = this.allMechs[PLAYER_MECH_KEYS[i]];
@@ -462,11 +481,22 @@ export default class GarageScene extends Phaser.Scene {
   // switching from ability→weapon lands on the first weapon slot, not an ability catalog under a
   // weapon-slot highlight) — see ui/labTabs.js's TAB_DEFAULT_SLOT.
   _setLabTab(col, tabIndex) {
+    // #533: switching tabs mid-placement (a weapon/ability picked off the catalog, cursor
+    // sitting on the loadout tile row waiting for a destination) abandons that placement rather
+    // than leaving it stranded under a tab that no longer shows it — see _cancelPlacement. This
+    // is the one place every tab switch funnels through (pad LB/RB, keyboard '['/']' and the new
+    // D-pad/arrow left-right via _cycleLabTab, and a direct mouse click on the tab strip itself),
+    // so it's the single choke point for this rather than duplicated at each caller.
+    if (col.navMode === 'placing') this._cancelPlacement(col);
     const n = LAB_TABS.length;
     col.labTab = ((tabIndex % n) + n) % n;
     const tabId = LAB_TABS[col.labTab].id;
     const defaultSlot = TAB_DEFAULT_SLOT[tabId];
     if (defaultSlot && slotKind(col.selectedSlot) !== slotKind(defaultSlot)) col.selectedSlot = defaultSlot;
+    // #533: landing ON the merged chassis+color tab seeds its row cursor at the currently
+    // equipped chassis, so the very first A press (with no prior up/down) does something sane
+    // rather than acting on an arbitrary row 0.
+    if (tabId === 'chassis') this._syncListFocus(col);
     this._refreshAllTiles(col);
     this._refreshCatalogList(col);
     this._refreshLabTabUI(col);
@@ -542,12 +572,17 @@ export default class GarageScene extends Phaser.Scene {
     col.colorListLayer.setMask(mask);
   }
 
+  // #533: `idx` is this row's position in the COMBINED chassis+color row list (chassis rows
+  // first, color rows after — see _syncListFocus/_navRow) — chassis rows occupy indices
+  // [0, chassisRows.length).
   _refreshChassisList(col) {
-    for (const row of col.chassisRows) {
+    col.chassisRows.forEach((row, idx) => {
       const on = col.mech.chassisId === row.id;
-      row.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
+      const focused = col.listFocus === idx;
+      row.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
+        .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
       row.text.setColor(on ? UI.accent : UI.text);
-    }
+    });
   }
 
   // Directly pick chassis `id` (chassis-list row click).
@@ -561,12 +596,13 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshChassisList(col);
   }
 
-  // Step through PLAYER_CHASSIS_IDS forward/back (pad A/X while the chassis tab is active reuses
-  // this — see update(), below).
-  cycleChassis(col, dir = 1) {
-    const ids = PLAYER_CHASSIS_IDS;
-    const next = cycleListId(ids, col.mech.chassisId, dir) ?? ids[0];
-    this._selectChassis(col, next);
+  // #533: seed the merged chassis+color tab's row-nav cursor at the currently equipped chassis
+  // row (index into the COMBINED chassis+color list — see _refreshChassisList) — called when a
+  // column's tab lands ON 'chassis' (_setLabTab). Doesn't touch the color rows: the chassis pick
+  // is the more likely thing to want to change next, and the cursor is only ONE index either way.
+  _syncListFocus(col) {
+    const idx = col.chassisRows.findIndex((row) => row.id === col.mech.chassisId);
+    col.listFocus = idx >= 0 ? idx : 0;
   }
 
   // ── The color section of the merged CHASSIS+COLOR tab (#532) ────────────────────────────────
@@ -601,13 +637,18 @@ export default class GarageScene extends Phaser.Scene {
     col.layer.add(col.colorListLayer);
   }
 
+  // #533: color rows sit AFTER every chassis row in the combined list — index `col.chassisRows.
+  // length + idx` — see _refreshChassisList's own note.
   _refreshColorList(col) {
     const current = mechColorFor(col.mech, col.index);
-    for (const swatch of col.colorSwatchRefs) {
+    const focusBase = col.chassisRows.length;
+    col.colorSwatchRefs.forEach((swatch, idx) => {
       const on = swatch.hex === current;
-      swatch.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
+      const focused = col.listFocus === focusBase + idx;
+      swatch.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
+        .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
       swatch.text.setColor(on ? UI.accent : UI.text);
-    }
+    });
   }
 
   // Directly pick a swatch (color-list click) — same distinctness rules as _cycleColor (no two
@@ -680,7 +721,16 @@ export default class GarageScene extends Phaser.Scene {
   // WeaponCardList.setIds resets scroll to the top, matching the old single-editor garage).
   _refreshCatalogList(col) {
     col.catalogList.setIds(this._eligibleIds(col.selectedSlot));
-    col.catalogList.setSelected(this._mountedIn(col, col.selectedSlot));
+    const mountedId = this._mountedIn(col, col.selectedSlot);
+    col.catalogList.setSelected(mountedId);
+    // #533: seed the pad-nav focus cursor on whatever's currently mounted (or the first row, if
+    // the slot's empty) so the very first D-pad/arrow-key A-press has a real row to act on
+    // without requiring an up/down press first. setIds() above always resets focus to -1;
+    // WeaponCardList's own moveFocus() would otherwise lazily default to row 0 on first use, but
+    // seeding it here means the highlighted card and the pad cursor agree from the moment the
+    // tab/slot context changes, not just after the player has already pressed a direction.
+    const idx = col.catalogList.indexOfId(mountedId);
+    col.catalogList.setFocus(idx >= 0 ? idx : 0);
   }
 
   // #529: a tile click also flips the column's active tab to whichever tab that slot's kind
@@ -688,6 +738,10 @@ export default class GarageScene extends Phaser.Scene {
   // catalog is showing switches straight to the ability tab/catalog, keeping the always-visible
   // tile row and the catalog beneath it in sync no matter which one you interact with first.
   _selectSlot(col, loc) {
+    // #533: a mouse click on a tile mid-placement (weapon/ability picked off the catalog, cursor
+    // on the loadout tile row awaiting a destination) reads as "never mind, I want this tile
+    // selected instead" — abandon the pad placement rather than leaving it stranded.
+    if (col.navMode === 'placing') this._cancelPlacement(col);
     Audio.ui('menuNav');
     col.selectedSlot = loc;
     const tab = labTabForSlotKind(slotKind(loc));
@@ -697,12 +751,123 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshLabTabUI(col);
   }
 
-  // Step the focused slot forward/back through the seven-slot cycle (ALL_SLOTS) — shared by the
-  // pad's d-pad up/down (update(), below) and column 0's keyboard up/down arrows (create()), so
-  // the two devices are always driving the identical mapping rather than two copies of it.
-  _stepSlot(col, dir) {
+  // ── #533: D-pad/keyboard nav — tab-cycle, row-navigate, select-then-place ──────────────────
+  // Left/right cycles tabs (unless a placement is in progress, in which case it moves the
+  // placement cursor along the loadout tile row instead — see _movePlacementFocus). Up/down
+  // navigates rows within the current tab's own list: the WeaponCardList catalog on the weapon/
+  // ability/passive tabs, or the merged chassis+color tab's own combined row list. The
+  // associated button (A) either selects directly (passive, chassis, color — each is a single
+  // conceptual "slot", nothing to place) or, for weapon/ability, moves the cursor to the loadout
+  // tile row for a second press to confirm which of that item's several eligible slots to mount
+  // it into. This is genuinely a different flow from the pre-#533 pad scheme (which cycled a
+  // pre-selected tile's mount forward/back with A/X, and dedicated d-pad left/right to a direct
+  // colour cycle) — see labTabs.js's SLOT_KIND_TO_TAB/TAB_DEFAULT_SLOT for how a tab and a slot
+  // KIND still correspond, and _mountInto for the actual mount call every path here funnels
+  // through, identical to what a mouse click has always done.
+
+  _navHorizontal(col, dir) {
     if (!col) return;
-    this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), dir, ALL_SLOTS.length)]);
+    if (col.navMode === 'placing') { this._movePlacementFocus(col, dir); return; }
+    this._cycleLabTab(col, dir);
+  }
+
+  _navRow(col, dir) {
+    if (!col || col.navMode === 'placing') return;   // left/right drives the tile cursor instead
+    const tabId = LAB_TABS[col.labTab].id;
+    if (tabId === 'chassis') {
+      const total = col.chassisRows.length + col.colorSwatchRefs.length;
+      col.listFocus = stepIndex(col.listFocus, dir, total, { wrap: false });
+      Audio.ui('menuNav');
+      this._refreshChassisList(col);
+      this._refreshColorList(col);
+    } else {
+      col.catalogList.moveFocus(dir);   // weapon/ability/passive — the shared WeaponCardList cursor
+    }
+  }
+
+  // The associated select button (A). Chassis/color/passive rows equip directly — there's only
+  // one place any of them can go, so there's nothing to place. Weapon/ability rows instead enter
+  // the two-step placement flow (_enterPlacement).
+  _confirmOrSelect(col) {
+    if (!col) return;
+    if (col.navMode === 'placing') { this._confirmPlacement(col); return; }
+    const tabId = LAB_TABS[col.labTab].id;
+    if (tabId === 'chassis') { this._activateListFocus(col); return; }
+    this._activateCatalogFocus(col, { placement: tabId !== 'passive' });
+  }
+
+  // Direct-select whichever row the merged chassis+color tab's cursor is on.
+  _activateListFocus(col) {
+    if (col.listFocus < col.chassisRows.length) {
+      this._selectChassis(col, col.chassisRows[col.listFocus].id);
+      return;
+    }
+    const swatch = col.colorSwatchRefs[col.listFocus - col.chassisRows.length];
+    if (swatch) this._selectColor(col, swatch.hex);
+  }
+
+  // The catalog's own pad-focused row. `placement: false` (passive tab) mounts it directly, same
+  // as a mouse click on that card. `placement: true` (weapon/ability) hands off to the two-step
+  // flow instead of mounting immediately — a locked weapon still routes straight to the purchase
+  // gate either way, exactly like a direct catalog click.
+  _activateCatalogFocus(col, { placement = false } = {}) {
+    const id = col.catalogList.focusedId();
+    if (id == null) return;
+    if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
+    if (!placement) { this._clickCatalogItem(col, id); return; }
+    this._enterPlacement(col, LAB_TABS[col.labTab].id, id);
+  }
+
+  // Enter the "pick a destination" step: cursor focus moves off the catalog and onto the loadout
+  // tile row, restricted to the slots `id`'s kind can actually go in (the visual left-to-right
+  // tile order, not the data order — TILE_ORDER/HUD_ABILITY_ORDER — so left/right on the pad
+  // matches what's on screen). Starts on wherever `id` is already mounted (if anywhere in that
+  // family), else the currently-selected slot if it's already one of the family's own, else the
+  // first slot. Reuses the tile row's existing `selected` (gold) highlight by driving it through
+  // `col.selectedSlot` — the same visual a mouse-selected tile has always shown, not a new cursor.
+  _enterPlacement(col, tabId, id) {
+    const family = tabId === 'weapon' ? TILE_ORDER : HUD_ABILITY_ORDER;
+    col.navMode = 'placing';
+    col.pendingItemId = id;
+    col.pendingSlots = family;
+    col.prevSelectedSlot = col.selectedSlot;
+    const mountedAt = family.find((loc) => this._mountedIn(col, loc) === id);
+    const startLoc = mountedAt ?? (family.includes(col.selectedSlot) ? col.selectedSlot : family[0]);
+    col.placeFocusIdx = family.indexOf(startLoc);
+    col.selectedSlot = startLoc;
+    Audio.ui('menuNav');
+    this._refreshAllTiles(col);
+  }
+
+  _movePlacementFocus(col, dir) {
+    col.placeFocusIdx = stepIndex(col.placeFocusIdx, dir, col.pendingSlots.length);
+    col.selectedSlot = col.pendingSlots[col.placeFocusIdx];
+    Audio.ui('menuNav');
+    this._refreshAllTiles(col);
+  }
+
+  // Confirm: mount the pending item into whichever tile the placement cursor is on — the exact
+  // same _mountInto a mouse-driven catalog click has always used (same lock/purchase gate,
+  // canMount validation and error toast, e.g. trying to force a melee weapon into a torso).
+  _confirmPlacement(col) {
+    this._mountInto(col, col.selectedSlot, col.pendingItemId);
+    this._exitPlacement(col);
+  }
+
+  // Cancel: drop back to browse mode without mounting anything, restoring whichever slot was
+  // selected before placement started.
+  _cancelPlacement(col) {
+    if (col.prevSelectedSlot != null) col.selectedSlot = col.prevSelectedSlot;
+    this._exitPlacement(col);
+  }
+
+  _exitPlacement(col) {
+    col.navMode = 'browse';
+    col.pendingItemId = null;
+    col.pendingSlots = null;
+    col.prevSelectedSlot = null;
+    this._refreshAllTiles(col);
+    this._refreshCatalogList(col);
   }
 
   _mountedIn(col, loc) {
@@ -713,6 +878,10 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   _clickCatalogItem(col, id) {
+    // #533: same reasoning as _selectSlot above — a direct mouse pick mid pad-placement mounts
+    // straight into whatever tile is already selected (the old, pre-#533 mouse flow), so any
+    // in-progress two-step placement is abandoned rather than left stranded.
+    if (col.navMode === 'placing') this._cancelPlacement(col);
     if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
     this._mountInto(col, col.selectedSlot, id);
   }
@@ -767,14 +936,6 @@ export default class GarageScene extends Phaser.Scene {
     // Deploy/Ready button's greyed-out state depends on (_refreshHeader) — repaint it live rather
     // than only on the next ready-toggle/join.
     if (col.index === 0) this._refreshHeader();
-  }
-
-  // Pad A/X: cycle the focused slot's mount forward/back through its own eligible list, reusing
-  // the same mount path (and so the same lock/purchase gate) a direct catalog click would.
-  _cycleMount(col, dir) {
-    const ids = this._eligibleIds(col.selectedSlot);
-    const next = cycleListId(ids, this._mountedIn(col, col.selectedSlot), dir);
-    if (next != null) this._clickCatalogItem(col, next);
   }
 
   // #65: spend banked SCRAP to permanently unlock `id` — one shared unlock set/currency every
@@ -894,12 +1055,19 @@ export default class GarageScene extends Phaser.Scene {
 
   // ── Per-player pad controls ──────────────────────────────────────────────────────────────────
   // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
-  // every other player's: d-pad left/right cycles colour, up/down moves which of the seven slots
-  // is focused, A/X cycle that slot's mount forward/back (or the chassis pick / colour, on those
-  // tabs — see below), B clears an ability/core slot (weapon slots can't be cleared), SELECT
-  // toggles ready (#535 — moved off START, which now opens the shared pause menu everywhere,
-  // see PauseMenuScene.js). #529: LB/RB cycle the column's own Mech Lab tab (chassis/weapon/
-  // ability/passive/color) — the pad mirror of column 0's keyboard '['/']'.
+  // every other player's. #533 rework: d-pad left/right cycles the column's own Mech Lab tab
+  // (chassis+color/weapon/ability/passive — same action LB/RB and, for column 0, keyboard '['/']'
+  // already drove — see _cycleLabTab/_navHorizontal), d-pad up/down navigates rows within that
+  // tab's own list (_navRow), and A is the associated select button (_confirmOrSelect): direct-
+  // equip for chassis/color/passive rows, or — for weapon/ability rows — moves the cursor to the
+  // loadout tile row for a second A press to confirm which slot to place it into. Mid-placement,
+  // left/right instead moves that tile cursor (not the tab) — see _navHorizontal. B clears an
+  // ability/core slot outside of placement, or cancels an in-progress placement. SELECT toggles
+  // ready (#535 — moved off START, which now opens the shared pause menu everywhere, see
+  // PauseMenuScene.js). This REPLACES the pre-#533 scheme, where d-pad left/right cycled colour
+  // directly and A/X cycled a pre-selected tile's mount forward/back — colour is now one more row
+  // on the merged chassis+color tab's own list (_activateListFocus), reached the same way any
+  // other row is: navigate to it, press A.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -913,22 +1081,15 @@ export default class GarageScene extends Phaser.Scene {
       if (e.pressed(PAD.SELECT)) { this._toggleReady(i); continue; }
       if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
       if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
-      if (e.pressed(PAD.DPAD_LEFT)) { this._cycleColor(col, -1); continue; }
-      if (e.pressed(PAD.DPAD_RIGHT)) { this._cycleColor(col, 1); continue; }
-      if (e.pressed(PAD.DPAD_UP)) { this._stepSlot(col, -1); continue; }
-      if (e.pressed(PAD.DPAD_DOWN)) { this._stepSlot(col, 1); continue; }
-      if (e.pressed(PAD.A)) { this._activateSlotOrTab(col, 1); continue; }
-      if (e.pressed(PAD.X)) { this._activateSlotOrTab(col, -1); continue; }
-      if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
+      if (e.pressed(PAD.DPAD_LEFT)) { this._navHorizontal(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_RIGHT)) { this._navHorizontal(col, 1); continue; }
+      if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_DOWN)) { this._navRow(col, 1); continue; }
+      if (e.pressed(PAD.A)) { this._confirmOrSelect(col); continue; }
+      if (e.pressed(PAD.B)) {
+        if (col.navMode === 'placing') { this._cancelPlacement(col); continue; }
+        this._unmountFrom(col, col.selectedSlot); continue;
+      }
     }
-  }
-
-  // A/X's meaning depends on the active tab: cycle the chassis pick on the merged CHASSIS+COLOR
-  // tab (#532 — colour itself still cycles unconditionally off DPAD_LEFT/RIGHT regardless of tab,
-  // see _cycleColor's own callers), or cycle the focused slot's mount everywhere else (unchanged).
-  _activateSlotOrTab(col, dir) {
-    const tabId = LAB_TABS[col.labTab].id;
-    if (tabId === 'chassis') this.cycleChassis(col, dir);
-    else this._cycleMount(col, dir);
   }
 }
