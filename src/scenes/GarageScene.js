@@ -260,8 +260,8 @@ export default class GarageScene extends Phaser.Scene {
     // click. Added FIRST (before any tile), so within `col.layer` every tile still renders — and
     // hit-tests — on TOP of it; only the gaps between tiles (and the halo/dead space around them)
     // fall through to the blocker instead of whatever's behind it. The old header band (the
-    // passive-slot avatar + "READY?" pill) is gone entirely — see `gl.passive`'s tile and the
-    // compact ready indicator next to the PLAYER # label for where those two moved.
+    // passive-slot avatar + "READY?" pill) is gone entirely — see the compact ready indicator next
+    // to the PLAYER # label for where that piece moved.
     col.panelTopBorder = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, 2, UI.panelEdge)
       .setOrigin(0, 0).setAlpha(0.9);
     col.panelBlocker = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, gl.panel.h, 0x000000, 0)
@@ -271,12 +271,11 @@ export default class GarageScene extends Phaser.Scene {
     // The loadout tiles — weapon row + ability row, drawn with the SAME shared tile-drawing code
     // (drawSkillTile) the arena HUD uses, just with no HP/shield/armor panel chrome around them
     // (HudScene.js draws those separately, alongside its own call into the same tile rects). The
-    // passive core slot isn't part of that shared HUD layout at all (HudScene deliberately omits
-    // it — it's Garage-only chrome) — #505 fifth rework moved it out of the old per-column header
-    // row and into its own tile above the mech preview (`gl.passive`), drawn here alongside every
-    // other tile.
+    // passive/core slot rides IN `gl.tiles.abilities` now (the #526-followup shared-row redesign
+    // folded it in between X and Y, same as HudScene's arena console) rather than getting its own
+    // Garage-only tile stacked above the preview — there is nothing left to draw separately here.
     col.tileRefs = {};
-    for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities, gl.passive]) this._drawColTile(col, rect);
+    for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
 
     // #529: a small 5-tab strip (chassis/weapon/ability/passive/color) sits ABOVE the catalog
     // region, inside `gl.catalog`'s own rect — it doesn't get a dedicated slice from
