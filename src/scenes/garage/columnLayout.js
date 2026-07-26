@@ -35,7 +35,16 @@ export const HEADER_H = 0;
 // so a scrolled catalog card sitting underneath it could still catch a click. Removed outright
 // rather than zeroed, so nothing keeps referencing a footer that isn't drawn any more.
 export const GAP = 8;
-export const PREVIEW_TILE_GAP = 10;
+// #505 playtest follow-up ("standardized gap between mech preview and hud preview"): this used to
+// be its own one-off magic number (10) instead of reusing `GAP` — the same small-gap constant that
+// already separates the catalog from the tile block above, and the tile block from the column's
+// own bottom padding. Both the preview panel and the tile plates are painted with `paintTilePlate`,
+// which strokes a soft halo up to 3.5px OUTSIDE each plate's edge (see skillTiles.js) on both
+// sides of this gap, so a raw `GAP`-sized gap between the two rects' edges reads as a much
+// thinner sliver once the halos eat into it from both sides. Padding by that halo reach keeps the
+// VISIBLE clearance between the two plates equal to the same `GAP` used elsewhere in this column.
+const TILE_PLATE_HALO_REACH = 3.5;
+export const PREVIEW_TILE_GAP = GAP + TILE_PLATE_HALO_REACH * 2;
 // #505 playtest follow-up: the player-number label sits INSIDE the preview box now, near its
 // bottom edge, rather than below it — this is the gap from the box's own bottom edge to the top
 // of the label text (the text itself, via GarageScene's `setOrigin(0.5, 0)`, then reads a few
