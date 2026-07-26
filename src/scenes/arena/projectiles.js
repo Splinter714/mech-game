@@ -298,6 +298,7 @@ export const ProjectilesMixin = {
           p.dead = true;
           p.stopTrajectorySfx?.();
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._igniteBuildingHex(p, p.x, p.y);   // #536: Plasma's dot also catches the hex alight
           this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
@@ -310,6 +311,7 @@ export const ProjectilesMixin = {
           p.dead = true;
           p.stopTrajectorySfx?.();   // #56: stop this round's in-flight loop the instant it dies
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._igniteBuildingHex(p, p.x, p.y);   // #536: Plasma's dot also catches the hex alight
           this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           continue;
         }
@@ -442,6 +444,7 @@ export const ProjectilesMixin = {
             && this._hexKeyAt(p.x, p.y) === p.targetHexKey
             && this._destructibleStandingAt?.(p.targetHexKey)) {
           this._damageBuildingAt(p.x, p.y, p.damage, { flame: isFlameKind(p.kind) });
+          this._igniteBuildingHex(p, p.x, p.y);   // #536: Plasma's dot also catches the hex alight
         }
         this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
         // #319: the patch carries NO owner on purpose — burning ground is a hazard that
@@ -486,6 +489,15 @@ export const ProjectilesMixin = {
           this._drawAoeTendril(p, other.x, other.y);
         }
       }
+    }
+    // #536: the cloud also chews through destructible SOFT-COVER hexes it passes over, the same
+    // way a napalm ground patch's periodic tick does (`_updateFirePatches` below) — indiscriminate,
+    // no owner check, since the cloud doesn't care who it belongs to any more than fire does.
+    for (const h of hexesWithinPixelRadius(p.x, p.y, radius)) {
+      const k = axialKey(h.q, h.r);
+      if (!this.coverHp.has(k)) continue;
+      const c = hexToPixel(h.q, h.r);
+      this._damageBuildingAt(c.x, c.y, amount);
     }
   },
 
@@ -880,6 +892,56 @@ export const ProjectilesMixin = {
     for (const b of this.dyingBeams) drawBeam(this.beamFx, b.x0, b.y0, b.x1, b.y1, b.color, 1, b.heavy, b.age + b.fadeAge, 1 - b.fadeAge / b.fadeTtl, b.coneDeg || 0);
   },
 
+  // #536: Plasma Coater's dot (delivery.dot) also ignites the destructible cover/building hex a
+  // bolt hits DIRECTLY (instead of a living target) — a lightweight PER-HEX burn tracked in
+  // `buildingBurns`, ticking the SAME duration/tickDamage/tickInterval numbers the round's own
+  // unit-side DoT carries (data/weapons.js's plasmaCoater config: 4s, 5dmg/tick, every 1s) —
+  // there's no separate "building burn" dial to invent, the hex just burns at the rate the round
+  // would coat a living target with. Applied straight through `_damageBuildingAt` rather than the
+  // Mech/HpBody status-effect system, since a hex isn't a unit and has no statusEffects array.
+  // Re-igniting an already-burning hex refreshes its remaining time rather than stacking a second
+  // timer — the same "refresh, never stack" rule `applyStatusEffect` uses for units (#489).
+  _igniteBuildingHex(p, x, y) {
+    if (!p.dot) return;
+    const k = this._hexKeyAt(x, y);
+    if (!this.coverHp.has(k) && !this.buildingHp.has(k)) return;
+    const { duration, tickDamage, tickInterval = 1 } = p.dot;
+    const until = this.time.now + duration * 1000;
+    const nextTick = this.time.now + tickInterval * 1000;
+    const existing = this.buildingBurns.find((b) => b.key === k);
+    if (existing) {
+      existing.until = until;
+      existing.nextTick = nextTick;
+      existing.tickDamage = tickDamage;
+      existing.tickInterval = tickInterval;
+      existing.x = x;
+      existing.y = y;
+    } else {
+      this.buildingBurns.push({ key: k, x, y, until, nextTick, tickDamage, tickInterval });
+    }
+  },
+
+  // #536: tick every hex `_igniteBuildingHex` planted a burn on — same shape as the fire-patch
+  // cover tick below, just scoped to the single hex Plasma's bolt actually hit (a coating, not an
+  // AoE cloud) — and drawn with the same green pulse `_drawStatusEffects` uses for a burning
+  // enemy, so a burning building reads as "the same plasma fire" rather than a new effect.
+  // Drawn into `groundFx`, already cleared this frame by `_updateFirePatches` (which calls this
+  // at its own end, same low ground-decal layer napalm's patches use).
+  _updateBuildingBurns() {
+    const now = this.time.now;
+    const g = this.groundFx;
+    for (const b of this.buildingBurns) {
+      if (now >= b.nextTick) {
+        b.nextTick += b.tickInterval * 1000;
+        this._damageBuildingAt(b.x, b.y, b.tickDamage);
+      }
+      const pulse = 0.5 + 0.5 * Math.sin(now / 110);
+      g.fillStyle(0x39ff6a, 0.18 + pulse * 0.12).fillCircle(b.x, b.y, 16 + pulse * 4);
+      if (now >= b.until) b.dead = true;
+    }
+    if (this.buildingBurns.some((b) => b.dead)) this.buildingBurns = this.buildingBurns.filter((b) => !b.dead);
+  },
+
   // Burning ground patches (napalm): tick damage to mechs standing in them, with a
   // flickering flame visual, until they burn out. #72: each tick also cooks any destructible
   // SOFT-COVER hex the patch overlaps — the flame multiplier (terrain.js FLAME_COVER_MULT)
@@ -928,5 +990,6 @@ export const ProjectilesMixin = {
       if (now >= fp.until) fp.dead = true;
     }
     if (this.firePatches.some((f) => f.dead)) this.firePatches = this.firePatches.filter((f) => !f.dead);
+    this._updateBuildingBurns();   // #536: Plasma-ignited building/cover hexes, same ground layer
   },
 };

@@ -254,6 +254,7 @@ export default class ArenaScene extends Phaser.Scene {
     this.beams = [];
     this.dyingBeams = [];
     this.firePatches = [];                // burning ground (napalm)
+    this.buildingBurns = [];              // #536: cover/building hexes ignited by Plasma's dot
     this.hazards = [];                    // #488/#491: planted mines / pull fields
     this._nextHazardTick = 0;             // #508: damaging hazard terrain tick cadence
     // #254: the `_impactPool`/`_debrisPool` reset moved up above (before the opening spawn) — see
