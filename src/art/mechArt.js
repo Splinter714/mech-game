@@ -552,34 +552,33 @@ export function reskinMech(scene, key, mech, opts) {
 // #500 (fourth pass, owner playtest: "cloak wireframe is pretty good" + three follow-ups) —
 // CLOAK_OUTLINE_THICKNESS_PX nudged down from 6 → 4 raster px ("slightly thinner", not a redesign).
 //
-// CLOAK_FILL_ALPHA_MULT raised from 0.55 → 0.92 to fix "legs bleeding through the torso": the
-// mech view stacks hull/torsos/arms/turret as SIBLING sprites in one container (mechView.js
-// `makeMechParts`), each independently alpha-blended, under one container-level CLOAK_ALPHA
-// (abilities.js). With every part's OWN fill baked to the SAME ~0.55 alpha, a region where (say)
-// the torso covers the hull composites THREE layers deep (background, then hull-over-background,
-// then torso-over-that) while a region with only the torso showing composites just two — so the
-// hull's grey silhouette/pose visibly echoes through the torso above it wherever they overlap,
-// read as "legs bleeding through". This is inherent to independently-alpha'd sibling sprites: no
-// choice of EQUAL alpha removes the double-transparency seam, only the alpha's overall magnitude
-// changes how visible it is.
+// #500 (fifth pass, owner playtest AGAIN: "not seeing cloak occlusion... lines still feel a bit
+// thick") — two changes:
 //
-// The technically clean fix would flatten the whole cloaked stack into one pre-composited texture
-// per pose change (draw every part at FULL alpha into a Phaser RenderTexture, preserving normal
-// opaque occlusion, then display THAT single result at reduced alpha) — but that means adding a
-// wholly new rendering primitive (RenderTexture is unused anywhere else in this codebase) that has
-// to be re-drawn on every gait tick, turret slew, and convergence-tilt change (i.e. nearly every
-// frame a cloaked player is moving/aiming), wired through locomotion.js/mechView.js's per-frame
-// pose sync, correctly interleaved with the muzzle-glow reload-blink visibility toggle — real
-// surface area for a visual regression that (per the owner's process for this pass) can't be
-// verified live before landing. So this takes the documented simpler fallback instead: push each
-// part's OWN baked alpha up near-opaque (0.92) so a part fully covers whatever's directly behind it
-// wherever it visually overlaps (any bleed-through left is a ~8% ghost, well under the noise floor
-// at the arena's actual on-screen mech scale) and let the rim outline + desaturation + the
-// container's own CLOAK_ALPHA (unchanged) carry the entire "translucent ghost" read instead of
-// each part's own transparency doing much of the work.
-const CLOAK_OUTLINE_THICKNESS_PX = 4;   // raster px at ART_SCALE(4x) ≈ 1.3 display px at ARENA_MECH_SCALE(0.34)
+// 1. CLOAK_FILL_ALPHA_MULT is RETIRED (was 0.55 → 0.92 in the fourth pass, now effectively 1 — see
+//    below). Raising a part's own baked fill alpha could only ever shrink the leg/torso bleed-
+//    through, never remove it: the mech view stacks hull/torsos/arms/turret as SIBLING sprites in
+//    one container (mechView.js `makeMechParts`), each independently alpha-blended under a SECOND,
+//    container-level CLOAK_ALPHA (abilities.js) — a translucent container multiplies its own alpha
+//    into every child as it draws them, which lets whatever's behind a sibling (in local z-order)
+//    show through it regardless of how opaque that sibling's OWN texture is. That's what the owner
+//    was still seeing after the fourth pass raised the per-part alpha to 0.92. The actual fix
+//    (scenes/arena/cloakFlatten.js) flattens the cloaked parts into ONE pre-composited
+//    RenderTexture first — at full, ordinary opaque-over-opaque occlusion — and applies CLOAK_ALPHA
+//    exactly once, to that single flattened result, never to the container or to any individual
+//    part. For that flatten to actually BE opaque internally, the per-part fill this function bakes
+//    must not carry its own partial alpha any more (a 0.92-alpha fill drawn onto an already-drawn
+//    sibling inside the RenderTexture would reproduce the exact same bleed-through ONE LEVEL IN,
+//    just as it did at the container level) — so the fill now bakes at the SAME alpha the source
+//    texture already had (fully opaque wherever the source was), and 100% of the "translucent
+//    ghost" look comes from the one CLOAK_ALPHA application on the flattened image. Net visual
+//    effect on the fill is a small INCREASE in solidity within the ghost (1.0×0.45 vs the old,
+//    still-imperfect 0.92×0.45) — imperceptible on its own, and the actual bleed-through is gone.
+// 2. CLOAK_OUTLINE_THICKNESS_PX thinned again, 4 → 2 raster px ("lines still feel a bit thick").
+const CLOAK_OUTLINE_THICKNESS_PX = 2;   // raster px at ART_SCALE(4x) ≈ 0.7 display px at ARENA_MECH_SCALE(0.34)
 const CLOAK_OUTLINE_RGB = 235;          // bright near-white rim, distinct from any desaturated grey fill
-const CLOAK_FILL_ALPHA_MULT = 0.92;     // near-opaque so overlapping parts don't double-composite/ghost
+const CLOAK_FILL_ALPHA_MULT = 1;        // retired (see above) — kept as a named constant so the fill
+                                         // line below stays self-documenting rather than a bare `a`.
 
 export function desaturateTexture(scene, key) {
   const dstKey = `${key}_grey`;

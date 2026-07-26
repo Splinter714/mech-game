@@ -27,6 +27,7 @@ import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { RunStatsMixin } from './arena/runStatsHooks.js';
 import { FriendlyDronesMixin } from './arena/friendlyDrones.js';
 import { StealthMixin } from './arena/stealth.js';
+import { CloakFlattenMixin } from './arena/cloakFlatten.js';
 import { primaryPlayerOf, playersOf, tickPlayerResources } from './arena/players.js';
 import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
@@ -518,6 +519,12 @@ export default class ArenaScene extends Phaser.Scene {
     // #402: on-mech per-weapon ammo/reload lights + bars, redrawn after this frame's ammo state
     // and part poses are settled.
     this._drawAmmoIndicators();
+    // #500 (fifth pass): redraw (or tear down) each cloaked player's flattened RenderTexture —
+    // deliberately the LAST statement in update(), after every other per-frame mutation of a
+    // player's view (gait pose, shield outline, status-spot reskin check, and the ammo-indicator
+    // glow-visibility toggle just above), so the bake always matches exactly what this frame
+    // would have rendered. See cloakFlatten.js for the full explanation.
+    this._updateCloakFlatten();
   }
 
   // #216: the sound cue lives HERE, not in any of the call sites, because this is the one
@@ -554,7 +561,7 @@ export default class ArenaScene extends Phaser.Scene {
 // mixin file + one entry in this list (the scene stays a thin orchestrator).
 Object.assign(
   ArenaScene.prototype,
-  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, RepairOutpostsMixin, ResourceOutpostsMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin,
+  WorldMixin, LocomotionMixin, VisibilityMixin, TargetingMixin, FiringMixin, ProjectilesMixin, HazardTilesMixin, EnemiesMixin, CombatMixin, PowerupsMixin, MissionMixin, RunMixin, RepairOutpostsMixin, ResourceOutpostsMixin, SalvageMixin, BasesMixin, CoopMixin, AmmoIndicatorsMixin, RunStatsMixin, FriendlyDronesMixin, StealthMixin, CloakFlattenMixin,
 );
 
 // #347: the former player-singleton FIELDS, now delegating accessors onto `this.players[0]`.
