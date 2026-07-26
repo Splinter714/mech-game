@@ -102,6 +102,30 @@ describe('garageColumnLayout (#505)', () => {
         expect(gl.catalog.y).toBeGreaterThanOrEqual(HEADER_H);
         expect(gl.catalog.y + gl.catalog.h).toBeLessThanOrEqual(gl.preview.cy - gl.preview.h / 2 + 1);
       });
+
+      // #528: GarageScene paints an invisible interactive rect over gl.panel to stop clicks on
+      // the loadout row (preview + tiles, including the gaps between them) from falling through
+      // to a WeaponCardList catalog card positioned underneath. That rect is only a real fix if
+      // this box actually spans the FULL band the preview/tiles occupy — no gaps at the edges.
+      it(`panel spans the full width and exactly the tile block/preview's own y-range, no gaps (w=${w}, h=${h})`, () => {
+        const gl = garageColumnLayout(w, h);
+        const previewTop = gl.preview.cy - gl.preview.h / 2;
+        const previewBottom = gl.preview.cy + gl.preview.h / 2;
+        const rows = [...gl.tiles.weapons, ...gl.tiles.abilities];
+        const blockTop = Math.min(...rows.map((r) => r.y));
+        const blockBottom = Math.max(...rows.map((r) => r.y + r.h));
+        // Same y-span as both the tile block and the (equal-height) preview square.
+        expect(gl.panel.y).toBeCloseTo(blockTop, 0);
+        expect(gl.panel.y).toBeCloseTo(previewTop, 0);
+        expect(gl.panel.y + gl.panel.h).toBeCloseTo(blockBottom, 0);
+        expect(gl.panel.y + gl.panel.h).toBeCloseTo(previewBottom, 0);
+        // Full inner width, at the column's own pad — matching (a superset of) the catalog's own
+        // x/w, so nothing a catalog card could occupy sits outside this blocker.
+        expect(gl.panel.x).toBe(COLUMN_PAD);
+        expect(gl.panel.w).toBe(gl.innerW);
+        expect(gl.catalog.x).toBeGreaterThanOrEqual(gl.panel.x);
+        expect(gl.catalog.x + gl.catalog.w).toBeLessThanOrEqual(gl.panel.x + gl.panel.w);
+      });
     }
   }
 
