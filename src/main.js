@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import BootScene from './scenes/BootScene.js';
 import BaseScene from './scenes/BaseScene.js';
 import GarageScene from './scenes/GarageScene.js';
+import SimulGarageScene from './scenes/SimulGarageScene.js';
 import MissionSelectScene from './scenes/MissionSelectScene.js';
 import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
@@ -58,7 +59,9 @@ const config = {
     height: window.innerHeight * getDpr(),
   },
   input: { gamepad: true },
-  scene: [BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene],
+  // SimulGarageScene: the simultaneous-co-op-garage PROTOTYPE (see its own file header) sitting
+  // alongside the shipped sequential GarageScene, reachable from its 'SIMUL' tab-bar action.
+  scene: [BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene],
 };
 
 const game = new Phaser.Game(config);

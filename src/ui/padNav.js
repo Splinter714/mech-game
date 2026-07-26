@@ -44,6 +44,21 @@ export function stepIndex(i, delta, n, { wrap = true } = {}) {
   return Math.min(n - 1, Math.max(0, j));
 }
 
+// Step `currentId` to the next/previous entry in `ids` (wrapping both ways). Used by pad-only
+// "cycle the mounted item" controls (the simultaneous garage prototype's A/X mount-cycle) — the
+// same wrap-and-step shape as data/mechColors.js's cycleSwatch, but with no distinctness
+// constraint (two players' slots may hold the same weapon, unlike two players' colours). An empty
+// list returns null; a `currentId` not found in the list (nothing mounted yet) starts a forward
+// cycle at the first entry and a backward cycle at the last, so the first press always lands
+// somewhere real rather than needing a prior selection.
+export function cycleListId(ids, currentId, dir = 1) {
+  if (!ids.length) return null;
+  const idx = ids.indexOf(currentId);
+  if (idx < 0) return dir < 0 ? ids[ids.length - 1] : ids[0];
+  const n = ids.length;
+  return ids[((idx + (dir < 0 ? -1 : 1)) % n + n) % n];
+}
+
 // Decide what pressing a slot's fire bind does to that slot, given the slot's current mount
 // and the highlighted catalog id (#70 catalog-first pad flow). A slot bind ALWAYS mounts /
 // replaces the slot with the highlight ('mount') — it never removes a weapon. Re-pressing the

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dominantDir, DirRepeater, stepIndex, scrollToShow, slotBindAction, REPEAT_INITIAL, REPEAT_INTERVAL } from './padNav.js';
+import { dominantDir, DirRepeater, stepIndex, scrollToShow, slotBindAction, cycleListId, REPEAT_INITIAL, REPEAT_INTERVAL } from './padNav.js';
 
 describe('dominantDir', () => {
   it('returns null inside the deadzone', () => {
@@ -122,5 +122,29 @@ describe('scrollToShow', () => {
     expect(scrollToShow(50, -20, 96, 300, 1000)).toBe(0);        // top item → 0
     expect(scrollToShow(0, 950, 96, 300, 700)).toBe(700);        // deep item → maxScroll
     expect(scrollToShow(0, 100, 96, 300, 0)).toBe(0);            // content shorter than view
+  });
+});
+
+describe('cycleListId', () => {
+  const ids = ['a', 'b', 'c'];
+
+  it('steps forward and wraps', () => {
+    expect(cycleListId(ids, 'a', 1)).toBe('b');
+    expect(cycleListId(ids, 'c', 1)).toBe('a');
+  });
+
+  it('steps backward and wraps', () => {
+    expect(cycleListId(ids, 'b', -1)).toBe('a');
+    expect(cycleListId(ids, 'a', -1)).toBe('c');
+  });
+
+  it('starts at the first entry forward (or last backward) when nothing is mounted', () => {
+    expect(cycleListId(ids, null, 1)).toBe('a');
+    expect(cycleListId(ids, null, -1)).toBe('c');
+    expect(cycleListId(ids, 'not-in-list', 1)).toBe('a');
+  });
+
+  it('returns null for an empty list', () => {
+    expect(cycleListId([], 'a', 1)).toBeNull();
   });
 });

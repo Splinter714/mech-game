@@ -201,6 +201,9 @@ export default class GarageScene extends Phaser.Scene {
     // up with the on-screen ‹ › arrows. Free keys (the D/ESC binds above are the only garage keys).
     this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(+1));
     this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(-1));
+    // PROTOTYPE: 'P' jumps to the simultaneous co-op garage (SimulGarageScene) — see its file
+    // header. Same button also lives in the tab bar's SIMUL action, above.
+    this.input.keyboard.on('keydown-P', () => this.scene.start('SimulGarageScene'));
     this.events.once('shutdown', () => this.list.destroy());
 
     // Latch the displayed binds to the last-used device: any mouse/keyboard use → 'kbm'.
@@ -519,9 +522,12 @@ export default class GarageScene extends Phaser.Scene {
       deployLabel: garageActionLabel(this.session),
       // #445: the run-stats overlay's opener lives IN the tab row (same size/gap/alignment as the
       // tabs), and only in dev builds — spread in exactly like the MUSIC tab is in tabBar.js.
-      actions: import.meta.env.DEV
-        ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }]
-        : [],
+      // The SIMUL entry (prototype, see SimulGarageScene.js) is not dev-gated — it's the whole
+      // point of the prototype that Jackson can jump to it and evaluate it live.
+      actions: [
+        ...(import.meta.env.DEV ? [{ key: 'STATS', onClick: () => this._statsOverlay.open() }] : []),
+        { key: 'SIMUL', onClick: () => this.scene.start('SimulGarageScene') },
+      ],
     });
   }
 

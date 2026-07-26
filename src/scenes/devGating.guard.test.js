@@ -78,7 +78,7 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
     expect(main).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?import\('\.\/scenes\/AudioScene\.js'\)/);
     // ...and NOT statically imported / listed in the always-on scene array.
     expect(main).not.toMatch(/^import AudioScene from/m);
-    expect(main).toMatch(/scene: \[BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene\],/);
+    expect(main).toMatch(/scene: \[BootScene, BaseScene, GarageScene, SimulGarageScene, MissionSelectScene, ArenaScene, HudScene\],/);
   });
 
   it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {
@@ -134,7 +134,9 @@ describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-ga
   });
 
   it('#445: the STATS button is spread into the tab bar row only under import.meta.env.DEV', () => {
-    expect(garage).toMatch(/actions: import\.meta\.env\.DEV\s*\n?\s*\? \[\{ key: 'STATS', onClick: \(\) => this\._statsOverlay\.open\(\) \}\]\s*\n?\s*: \[\],/);
+    // #349's SIMUL entry point (the simultaneous-garage prototype) sits alongside STATS in the
+    // same `actions` array now, but STATS itself must still be behind its own DEV spread.
+    expect(garage).toMatch(/actions: \[\s*\n\s*\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'STATS', onClick: \(\) => this\._statsOverlay\.open\(\) \}\] : \[\]\),/);
   });
 
   it('#445: STATS is an in-row tab-bar action, never a free-floating this.button(...)', () => {
