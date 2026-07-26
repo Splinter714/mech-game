@@ -15,6 +15,7 @@ import { CORE_ITEMS } from '../data/coreItems.js';
 import { projectileKind, chargeArcPoints, chargeDistanceFade } from '../data/delivery.js';
 import { drawProjectileBody } from './projectiles/index.js';
 import { drawAbilityIcon } from './abilityIcons.js';
+import { drawCoreItemIcon } from './coreItemIcons.js';
 
 // `projectileKind` lives in the pure delivery sim (data/delivery.js); re-exported here so
 // existing art importers keep resolving it from the art layer. `drawProjectileBody` now
@@ -303,26 +304,17 @@ function drawWeaponIcon(g, weapon, S, c) {
   }
 }
 
-// #506 THIRD rework: abilities now get real per-item glyphs (`drawAbilityIcon`, abilityIcons.js)
-// instead of this placeholder. This flat colored swatch — a rounded square, no per-item glyph —
-// remains the CORE_ITEMS-only stand-in (the passive slot has no HUD presence any more and is
-// Garage-only chrome, so its art was never in scope for this pass).
-function drawSwatchIcon(g, S, c, color) {
-  const size = ICON * 0.6 * S;
-  const r = 4 * S;
-  g.fillStyle(color, 0.85);
-  g.fillRoundedRect(c - size / 2, c - size / 2, size, size, r);
-  g.lineStyle(1.5 * S, 0xffffff, 0.25);
-  g.strokeRoundedRect(c - size / 2, c - size / 2, size, size, r);
-}
-
-const ABILITY_SWATCH_COLOR = 0x5ec8e0;   // shared UI accent — matches the ability-diamond tiles
-const CORE_SWATCH_COLOR = 0xefc14a;      // shared "passive/always-on" gold used elsewhere
+const ABILITY_SWATCH_COLOR = 0x5ec8e0;   // shared UI accent — matches the ability tiles
+// #526-followup: the passive/core slot now rides in the same HUD row as X/Y (previously
+// Garage-only chrome), so it gets its own bespoke glyphs (`coreItemIcons.js`) the same way
+// abilities did in #506 — this is just the tint they're drawn in, the shared "passive/always-on"
+// gold used elsewhere.
+const CORE_SWATCH_COLOR = 0xefc14a;
 
 // Build a `wfx_<id>` texture for every weapon (bespoke per-weapon art), every ability (#506
-// THIRD rework: bespoke per-ability art, `drawAbilityIcon`), and a flat swatch placeholder for
-// every core id (its passive slot has no HUD tile any more — Garage-only chrome — so it was
-// never brought into this art pass).
+// THIRD rework: bespoke per-ability art, `drawAbilityIcon`), and every core item (#526-followup:
+// bespoke per-item art, `drawCoreItemIcon`, mirroring the ability pass now that the core slot has
+// a real HUD tile of its own).
 // #188: this used to also build one per equipment/ability id (jumpJet/bubbleShield) —
 // equipment.js is gone (Sprint is a hardcoded built-in with its own HUD fuel-bar treatment, not
 // a catalog icon) — #506 brought mountable non-weapon items back, hence abilities/core here.
@@ -336,6 +328,6 @@ export function buildItemFxTextures(scene) {
     gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawAbilityIcon(g, id, S, c, ABILITY_SWATCH_COLOR));
   }
   for (const id of Object.keys(CORE_ITEMS)) {
-    gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawSwatchIcon(g, S, c, CORE_SWATCH_COLOR));
+    gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawCoreItemIcon(g, id, S, c, CORE_SWATCH_COLOR));
   }
 }

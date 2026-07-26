@@ -10,7 +10,9 @@
 import { itemFxKey } from '../art/index.js';
 import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
-import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
+import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT, CORE_SLOTS } from '../data/anatomy.js';
+import { CONSOLE_TILES } from '../data/hudLayout.js';
+import { SHIELD_ARC } from '../data/healthReadout.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
 // centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
@@ -36,13 +38,15 @@ export const TILE_UI = {
   // rounded corners and a soft halo just outside the edge so it pops off the console plate
   // behind it. Deliberately a small move: this is still the same tile, better lit.
   radius: 9,          // corner rounding
-  // #526: the double-wide ABILITY tiles get a bigger round on their own OUTER-top corner (the one
+  // #526: the wide ABILITY tiles get a bigger round on their own OUTER-top corner (the one
   // nearest the console's own nipped-corner notch, `SHIELD_ARC.corner` in healthReadout.js) so
   // they visibly taper INTO that notch shape instead of sitting inside it as plain rectangles that
   // need extra clearance. Only the outer corner nips; the inner one and both bottom corners keep
-  // the normal `radius`. Tunable — picked close to, but not matching exactly, the console notch's
-  // own 14px so the tile still reads as its own button.
-  nipRadius: 16,
+  // the normal `radius`. #526-followup (point 1: "follow that same clean trapezoidal edge shape"):
+  // now EXACTLY `SHIELD_ARC.corner` rather than "close but not matching" — the ability tiles'
+  // nipped corner and the console notch's own corner are now the SAME radius by construction, so
+  // they can never drift apart again.
+  nipRadius: SHIELD_ARC.corner,
   edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
   halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
 };
@@ -149,32 +153,64 @@ export function wideTileLayout(rect, { pad = 6, iconGap = 8, colWFrac = 0.46 } =
   return { iconSize, iconCx, iconCy, colX, colW };
 }
 
-// #506 FOURTH rework (reverting the THIRD's below-weapons experiment, Jackson: "I want 506 to
-// move the X/Y abilities back to being above the weapons, but I'm glad I tried it"): the ability
-// row is back to owning the space directly ABOVE the weapon row, which itself anchors to the
-// shared `bottom` — the SECOND rework's arrangement, restored. `tileRow` still supplies each
-// weapon slot's SIZE/X, so the horizontal math — width, gaps, centring — is exactly what it
-// always was; only which row sits where changed (again).
+// #526-followup (point 5): the X/Y ability tiles' own content layout — the control-bind glyph
+// ("X"/"Y") and the ready/charge-status text, horizontally CENTRED and stacked vertically one
+// above the other, rather than `wideTileLayout`'s icon-left/text-right arrangement (which the
+// core/passive tile — also wide, at 1× weapon-width — keeps unchanged, since it still wants a
+// real item icon; only the ability tiles opt into this via `bindOverStatus`, see `drawSkillTile`).
+// Pure geometry: two y-positions (bind upper, status lower) and the shared centre-x, always
+// inside the rect regardless of size.
+export function stackedTileLayout(rect) {
+  return {
+    cx: rect.x + rect.w / 2,
+    bindY: rect.y + rect.h * 0.24,
+    subtitleY: rect.y + rect.h * 0.62,
+  };
+}
+
+// #526-followup (new redesign, replacing the FOURTH rework's two-tile double-wide/half-height
+// shape): Jackson folded the passive/core slot INTO this same row, in the MIDDLE between X and
+// Y, rather than leaving it as Garage-only chrome. Sizing: X and Y are each 1.5 weapon-tile-widths,
+// the core tile 1 weapon-tile-width — 1.5 + 1 + 1.5 = 4, matching the 4-weapon row's own BARE
+// width (tiles + their internal gaps) below it. None of the three are "double-wide" any more
+// (that concept is gone); they are three DIFFERENTLY-sized tiles in one row.
+//
+// The row's OUTER edges match the weapon row's own bare span exactly — this is what makes the
+// 1.5/1/1.5 sizing land the way Jackson described it ("matching the exact width of the 4-weapon
+// row"), rather than also chasing the armor backing's wider footprint the way the individual
+// weapon tiles' own spacing does (`CONSOLE_TILES.gap`, hudLayout.js) — see `SHIELD_ARC.overhang`
+// (healthReadout.js) for how the shield/console notch still gets an EQUAL margin against this
+// row despite the two footprints differing (point 1). The gap between the three tiles is `1.5×`
+// the weapon row's own gap: with the row's TOTAL width fixed (the bare weapon row's own span) and
+// the three tile widths fixed at 1.5/1/1.5× the weapon tile size, `1.5×gap` is the exact value
+// that makes `1.5size + gap' + 1size + gap' + 1.5size` equal that total. The core tile absorbs any
+// leftover px from rounding, so the OUTER two tiles' outer edges always land exactly on the row's
+// own bounds (never off by a stray rounded pixel).
 export function weaponAbilityRows(x, w, {
-  bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER,
-  gap = 12, rowGap = 12, maxSize = 132,
+  bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER, coreLoc = CORE_SLOTS[0],
+  gap = CONSOLE_TILES.gap, rowGap = 12, maxSize = 132,
 } = {}) {
   const weapons = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
   if (!weapons.length) return { weapons, abilities: [], top: bottom };
-  const half = Math.floor(weapons.length / 2);
-  const leftPair = weapons.slice(0, half);
-  const rightPair = weapons.slice(half);
+  const size = weapons[0].w;
+  const last = weapons[weapons.length - 1];
+  // The row's own bounds: the bare weapon row's span, unwidened.
+  const rowX = weapons[0].x;
+  const rowW = last.x + last.w - weapons[0].x;
   const abilityH = Math.round(weapons[0].h / 2);
   const abilityTop = weapons[0].y - rowGap - abilityH;
-  const spanOf = (pair) => {
-    const last = pair[pair.length - 1];
-    return { x: pair[0].x, w: last.x + last.w - pair[0].x };
-  };
-  const leftSpan = spanOf(leftPair);
-  const rightSpan = spanOf(rightPair);
+  const abilityGap = gap * 1.5;
+  const leftW = Math.round(size * 1.5);
+  const rightW = Math.round(size * 1.5);
+  // The core tile takes whatever's left of the row's fixed total width — nominally `size`, but
+  // this is what keeps the OUTER edges exact regardless of the `Math.round`s above.
+  const midW = Math.max(0, rowW - leftW - rightW - abilityGap * 2);
+  const midX = rowX + leftW + abilityGap;
+  const rightX = midX + midW + abilityGap;
   const abilities = [
-    { loc: abilityOrder[0], x: leftSpan.x, y: abilityTop, w: leftSpan.w, h: abilityH },
-    { loc: abilityOrder[1], x: rightSpan.x, y: abilityTop, w: rightSpan.w, h: abilityH },
+    { loc: abilityOrder[0], x: rowX, y: abilityTop, w: leftW, h: abilityH },
+    { loc: coreLoc, x: midX, y: abilityTop, w: midW, h: abilityH },
+    { loc: abilityOrder[1], x: rightX, y: abilityTop, w: rightW, h: abilityH },
   ];
   return { weapons, abilities, top: abilityTop };
 }
@@ -214,11 +250,30 @@ export function drawSkillTile(scene, parent, rect, opts) {
   const bg = scene.add.rectangle(rect.x, rect.y, rect.w, rect.h, TILE_UI.card, 0)
     .setOrigin(0, 0);
 
+  const stacked = wide && !!opts.bindOverStatus;
   let bind, icon, plus, subtitle;
-  if (wide) {
+  if (stacked) {
+    // #526-followup (point 5): the ability tiles' own layout — bind glyph over status text, both
+    // horizontally centred, no icon at all (see `updateSkillTile`, which keeps `icon`/`plus`
+    // permanently hidden here). `icon`/`plus` are still created so every tile has the same object
+    // shape for `updateSkillTile` to touch — just never shown.
+    const L = stackedTileLayout(rect);
+    bind = scene.add.text(L.cx, L.bindY, '', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.4)}px`, color: TILE_UI.accent,
+    }).setOrigin(0.5, 0);
+    icon = scene.add.image(L.cx, rect.y + rect.h / 2, '__WHITE').setVisible(false);
+    plus = scene.add.text(L.cx, rect.y + rect.h / 2, '+', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.5)}px`, color: TILE_UI.slotEdge,
+    }).setOrigin(0.5).setVisible(false);
+    subtitle = scene.add.text(L.cx, L.subtitleY, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: TILE_UI.dim, align: 'center',
+      wordWrap: { width: rect.w - 10, useAdvancedWrap: true },
+    }).setOrigin(0.5, 0);
+  } else if (wide) {
     // Icon-left / text-right, but the pair is centered as one group within the rect (see
-    // `wideTileLayout`) — so a wide tile's content sits balanced in the double-wide rect instead
-    // of pinned to the left pad with empty space trailing off to the right.
+    // `wideTileLayout`) — so a wide tile's content sits balanced in the wide rect instead
+    // of pinned to the left pad with empty space trailing off to the right. Still used by the
+    // core/passive tile, which keeps a real item icon (see the module doc above `stackedTileLayout`).
     const L = wideTileLayout(rect);
     bind = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.1), '', {
       fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.34)}px`, color: TILE_UI.accent,
@@ -256,7 +311,7 @@ export function drawSkillTile(scene, parent, rect, opts) {
   const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
   const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
   parent.add([plate, bg, bind, icon, plus, subtitle, barTrack, bar]);
-  const refs = { rect, wide, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
+  const refs = { rect, wide, stacked, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
   updateSkillTile(refs, opts);
   return refs;
 }
@@ -268,7 +323,7 @@ export function drawSkillTile(scene, parent, rect, opts) {
 // bind source (SKILL_BINDS vs. ABILITY_BINDS vs. none) and empty-state copy. Omitting them
 // reproduces the old weapon-tile defaults exactly, so no existing behavior changes.
 export function updateSkillTile(refs, opts) {
-  const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide } = refs;
+  const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide, stacked = false } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
     iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0, nipCorners = null,
     // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
@@ -286,7 +341,11 @@ export function updateSkillTile(refs, opts) {
   // while only covering half the width horizontally.
   const iconSize = wide ? wideTileLayout(rect).iconSize : rect.w * 0.46;
   if (itemId) {
-    icon.setTexture(itemFxKey(itemId)).setDisplaySize(iconSize, iconSize).setAlpha(iconAlpha).setVisible(true);
+    // #526-followup (point 5): the stacked (bind-over-status) ability tiles never show an icon at
+    // all — the bind glyph + status text ARE the tile's content — so this is the one place a
+    // mounted item's icon is deliberately suppressed regardless of `itemId`.
+    if (!stacked) icon.setTexture(itemFxKey(itemId)).setDisplaySize(iconSize, iconSize).setAlpha(iconAlpha).setVisible(true);
+    else icon.setVisible(false);
     plus.setVisible(false);
     subtitle.setText(sub).setColor(subtitleColor);
     if (onCooldown) {
@@ -307,7 +366,9 @@ export function updateSkillTile(refs, opts) {
   } else {
     icon.setVisible(false);
     barTrack.setVisible(false); bar.setVisible(false);
-    plus.setVisible(true);
+    // Stacked ability tiles show no "+" swatch either — an empty ability slot just reads as the
+    // bind glyph over the `emptyLabel` status text, same as a mounted one minus the icon.
+    plus.setVisible(!stacked);
     subtitle.setText(emptyLabel).setColor(TILE_UI.dim);
   }
 }

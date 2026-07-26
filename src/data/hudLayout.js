@@ -229,6 +229,13 @@ export function integrityLayout(locs, { anchorX, bottomY, availW, side = 'left' 
 //     where each piece lands; the shell is then simply that run plus its padding.
 //
 // The target readout is no longer in here at all — it moved to the top-left disc (`targetDiscBox`).
+// #526-followup (new playtest pass, point 2): how far the fused readout's armor BACKING plate
+// stands outside its weapon tile's own footprint. Was a `HudScene.js`-local constant; moved here
+// (the pure layout module) because the console's own horizontal padding and the weapon-tile GAP
+// both now have to be derived from it too — see `CONSOLE.padX` and `CONSOLE_TILES.gap` below —
+// so one number drives all three rather than three places agreeing on 10 by hand.
+export const ARMOR_PEEK_PAD = 10;
+
 export const CONSOLE = {
   // #452 follow-up (Jackson: the console must reach the BOTTOM EDGE of the screen — "there's
   // currently a gap between the console and the bottom of the viewport"). The shell is FLUSH: its
@@ -236,7 +243,11 @@ export const CONSOLE = {
   // makes it read as built into the machine rather than as a floating card. This stays 0 whatever
   // is inside the band — a NONE-mode band (#448) is shorter, not lifted.
   edgeGap: 0,       // px of bare screen left showing past the shell at the bottom
-  padX: 16,         // inner padding at each END of the shell
+  // #526-followup (point 1): stays 16 — see `SHIELD_ARC.overhang` (healthReadout.js) for why the
+  // notch's own horizontal reach (armor peek pad + overhang) always nets out to exactly this same
+  // number regardless of `ARMOR_PEEK_PAD`, which is what lets the shell's own edge land EXACTLY on
+  // the notch's outer edge with no rim and no overflow.
+  padX: 16,
   padTop: 10,       // inner padding above the tallest bay
   radius: 14,       // the shell's TOP corner rounding (the bottom is flush with the screen edge)
   bayRadius: 8,     // a recessed bay's corner rounding
@@ -254,7 +265,12 @@ export const CONSOLE = {
 // since the ability row rides within that same horizontal span rather than adding to it. In a
 // centred console they want their natural size — only a genuinely narrow window (or a co-op pair)
 // ever squeezes them.
-export const CONSOLE_TILES = { n: 4, gap: 12, max: 92, min: 46 };
+// #526-followup (point 2): the gap must be wide enough that two ADJACENT weapon tiles' armor
+// backings (each `ARMOR_PEEK_PAD` bigger than its own tile on every side) don't overlap in the
+// gutter between them — that needs at least `ARMOR_PEEK_PAD * 2`; +4 is a little daylight so the
+// two backings don't touch edge-to-edge either. Was a flat 12 (smaller than the backing's own
+// footprint), which is exactly what made adjacent backings overlap before this pass.
+export const CONSOLE_TILES = { n: 4, gap: ARMOR_PEEK_PAD * 2 + 4, max: 92, min: 46 };
 
 export function tileRowWidth(size, n = CONSOLE_TILES.n, gap = CONSOLE_TILES.gap) {
   return size * n + gap * (n - 1);

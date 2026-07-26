@@ -3,7 +3,7 @@
 // hash underneath is deterministic (a seeded sine hash, same idiom art/projectileArt.js's beam
 // sparks use), so reproducibility itself is a real assertion, not an assumption.
 import { describe, it, expect } from 'vitest';
-import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks } from './hpFx.js';
+import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks, hpCriticalFlash, HP_CRITICAL_FRAC } from './hpFx.js';
 
 describe('hpUrgency', () => {
   it('is 0 at and above ~70% hp — a scratch never glitches', () => {
@@ -137,5 +137,43 @@ describe('hpSparks', () => {
 
   it('never returns more than one spark per tile at once', () => {
     for (let i = 0; i < 60; i++) expect(hpSparks(rect, i * 0.05, 7, 1).length).toBeLessThanOrEqual(1);
+  });
+});
+
+// #526-followup (point 3): a distinct red "critical" pulse, layered ALONGSIDE the flicker/static/
+// sparks above (not replacing them), gated on genuinely low hp.
+describe('hpCriticalFlash', () => {
+  it('is exactly 0 above the critical threshold', () => {
+    expect(hpCriticalFlash(1, 5)).toBe(0);
+    expect(hpCriticalFlash(HP_CRITICAL_FRAC + 0.01, 5)).toBe(0);
+  });
+
+  it('is exactly 0 once the part is fully destroyed (hp 0) — that\'s the dead-cell fill\'s job', () => {
+    expect(hpCriticalFlash(0, 5)).toBe(0);
+  });
+
+  it('is > 0 somewhere in the critical band and never negative', () => {
+    for (let t = 0; t < 6; t += 0.3) {
+      const v = hpCriticalFlash(HP_CRITICAL_FRAC * 0.5, t);
+      expect(v).toBeGreaterThanOrEqual(0);
+    }
+    const anyPositive = Array.from({ length: 20 }, (_, i) => hpCriticalFlash(HP_CRITICAL_FRAC * 0.5, i * 0.3))
+      .some((v) => v > 0);
+    expect(anyPositive).toBe(true);
+  });
+
+  it('pulses over time rather than sitting flat', () => {
+    const samples = Array.from({ length: 20 }, (_, i) => hpCriticalFlash(0.05, i * 0.15));
+    expect(Math.max(...samples)).toBeGreaterThan(Math.min(...samples));
+  });
+
+  it('is deterministic — replaying the same instant reproduces the same result', () => {
+    expect(hpCriticalFlash(0.08, 2.71)).toBe(hpCriticalFlash(0.08, 2.71));
+  });
+
+  it('gets stronger the closer to zero hp, at a fixed instant', () => {
+    const nearThreshold = hpCriticalFlash(HP_CRITICAL_FRAC - 0.01, 0);
+    const nearZero = hpCriticalFlash(0.01, 0);
+    expect(nearZero).toBeGreaterThan(nearThreshold);
   });
 });

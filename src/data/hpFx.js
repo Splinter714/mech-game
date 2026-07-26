@@ -87,3 +87,22 @@ export function hpSparks(rect, tSec, seed, urgency) {
   const hang = hash(step * 8.9 + seed * 2.9 + 500);
   return [{ x: rect.x + hx * rect.w, y: rect.y + hy * rect.h, angle: hang * Math.PI * 2, life }];
 }
+
+// CRITICAL FLASH: a new playtest ask, LAYERED alongside the flicker/static/sparks above rather
+// than replacing them — a distinct red "alarm" pulse gated on genuinely LOW hp, not just "some
+// urgency". #526's own playtest removed the continuous blue→purple→red colour WASH-by-health
+// (Jackson: "for now just keep the flicker/static/sparks"); this is a DIFFERENT mechanism, not a
+// reintroduction of that ramp — it does nothing at all above `HP_CRITICAL_FRAC`, and below it
+// rides a plain sine PULSE (not the flicker's stepped jitter) so it reads as a deliberate alarm
+// rather than more of the same damage noise. Pure and reproducible from (hpFrac, tSec) alone, same
+// idiom as the rest of this module.
+export const HP_CRITICAL_FRAC = 0.2;   // hp fraction at/below which the flash can appear at all
+const HP_CRITICAL_PULSE_HZ = 6.5;      // radians/sec fed to Math.sin — a brisk but readable pulse
+
+export function hpCriticalFlash(hpFrac, tSec) {
+  const f = Math.max(0, Math.min(1, hpFrac ?? 0));
+  if (f <= 0 || f > HP_CRITICAL_FRAC) return 0;   // destroyed (f<=0) parts get their own dead fill
+  const closeness = 1 - f / HP_CRITICAL_FRAC;     // 0 right at the threshold, 1 at hp 0
+  const pulse = 0.5 + 0.5 * Math.sin(tSec * HP_CRITICAL_PULSE_HZ);
+  return closeness * (0.25 + 0.55 * pulse);
+}

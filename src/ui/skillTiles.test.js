@@ -181,34 +181,59 @@ describe('wideTileLayout (#506 follow-up: centered content)', () => {
 // #506 fourth rework (reverting the third's below-weapons experiment): the ability row is back to
 // riding ABOVE the weapon row. Pinned directly against the pure layout function (HudScene's own
 // geometry tests in hudPanels.test.js pin the same thing through the scene wiring).
-describe('weaponAbilityRows — ability row above the weapon row (#506 fourth rework)', () => {
+// #526-followup: the passive/core slot folded INTO this row, between X and Y — three tiles now
+// (X 1.5×, core 1×, Y 1.5× the weapon tile's own width), replacing the #506 fourth rework's
+// two-tile double-wide shape entirely.
+describe('weaponAbilityRows — three-tile ability row, X/core/Y (#526-followup redesign)', () => {
   it('anchors the weapon row to `bottom` and puts the ability row above it', () => {
     const bottom = 800;
     const { weapons, abilities, top } = weaponAbilityRows(0, 800, { bottom, maxSize: 92 });
     expect(weapons).toHaveLength(4);
-    expect(abilities).toHaveLength(2);
+    expect(abilities).toHaveLength(3);
     // Weapons sit at the very bottom of the block...
     expect(weapons[0].y + weapons[0].h).toBe(bottom);
-    // ...and the ability row is physically ABOVE them (smaller y), separated by the row gap.
-    expect(abilities[0].y).toBeLessThan(weapons[0].y);
+    // ...and the ability row is physically ABOVE them (smaller y), separated by the row gap, all
+    // three tiles sharing the same row.
+    for (const a of abilities) {
+      expect(a.y).toBeLessThan(weapons[0].y);
+      expect(a.y).toBe(abilities[0].y);
+    }
     expect(weapons[0].y - (abilities[0].y + abilities[0].h)).toBe(12);   // default rowGap
     // `top` reports whichever row is now highest — the ability row.
     expect(top).toBe(abilities[0].y);
   });
 
-  it('still matches each ability tile\'s span exactly to its weapon pair', () => {
+  it('sizes X/Y at 1.5x and core at 1x the weapon tile\'s own size', () => {
     const { weapons, abilities } = weaponAbilityRows(0, 800, { bottom: 800, maxSize: 92 });
-    const [leftArm, leftTorso, rightTorso, rightArm] = weapons;
-    const [x, y] = abilities;
-    expect(x.x).toBe(leftArm.x);
-    expect(x.x + x.w).toBe(leftTorso.x + leftTorso.w);
-    expect(y.x).toBe(rightTorso.x);
-    expect(y.x + y.w).toBe(rightArm.x + rightArm.w);
+    const size = weapons[0].w;
+    const [x, core, y] = abilities;
+    expect(x.w).toBe(Math.round(size * 1.5));
+    expect(y.w).toBe(Math.round(size * 1.5));
+    // The core tile absorbs any rounding slop so the OUTER edges land exactly (see below) —
+    // nominally 1x, allow a couple of px of rounding give either way.
+    expect(Math.abs(core.w - size)).toBeLessThanOrEqual(2);
+    expect(core.h).toBe(x.h);
+    expect(core.y).toBe(x.y);
   });
 
-  it('assigns HUD_ABILITY_ORDER (X then Y) to the left/right slots respectively', () => {
+  it('the three-tile row\'s OUTER edges match the weapon row\'s own BARE span exactly (no armor widening — see SHIELD_ARC.overhang for how the notch still gets an equal margin against it)', () => {
+    const { weapons, abilities } = weaponAbilityRows(0, 800, { bottom: 800, maxSize: 92 });
+    const last = weapons[weapons.length - 1];
+    const [x, , y] = abilities;
+    expect(x.x).toBe(weapons[0].x);
+    expect(y.x + y.w).toBe(last.x + last.w);
+  });
+
+  it('the three tiles tile the row with no gaps and no overlap', () => {
     const { abilities } = weaponAbilityRows(0, 800, { bottom: 800, maxSize: 92 });
-    expect(abilities.map((a) => a.loc)).toEqual(HUD_ABILITY_ORDER);
+    const [x, core, y] = abilities;
+    expect(core.x).toBeGreaterThan(x.x + x.w);
+    expect(y.x).toBeGreaterThan(core.x + core.w);
+  });
+
+  it('assigns HUD_ABILITY_ORDER (X then Y) to the outer left/right slots, core in the middle', () => {
+    const { abilities } = weaponAbilityRows(0, 800, { bottom: 800, maxSize: 92 });
+    expect(abilities.map((a) => a.loc)).toEqual([HUD_ABILITY_ORDER[0], 'core', HUD_ABILITY_ORDER[1]]);
   });
 
   it('returns empty rows and falls back top to `bottom` when there are no weapon slots', () => {
