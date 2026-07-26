@@ -6,11 +6,11 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeCoreAlpha } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
-import { drawSlash } from '../../art/index.js';
+import { drawSlash, drawChargeWedge } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 // #224 (temporary): WEAPON_TRAJECTORY_SOUNDS_ENABLED gates the in-flight trajectory loop
@@ -153,7 +153,14 @@ export const FiringMixin = {
     const DRIFT_REFERENCE = 1.2; // rad of accumulated drift treated as "fully unsteady"
     const unsteadiness = Math.max(0, Math.min(1, state.aimDrift / DRIFT_REFERENCE));
     const chargeSpread = (unsteadiness * maxSpreadDeg * Math.PI) / 180;
-    this.fireWeapon(w, player, { chargeMult: mult, chargeSpread });
+    // #493 follow-up: the fired burst should look like whatever cone the telegraph was
+    // showing the instant the button came up — same `elapsed / maxTime` fraction
+    // `_drawChargeFor` feeds `chargeConeAngleDeg`, so a shot loosed mid-charge visibly bursts
+    // as the wide cone it actually was, and only a full-charge release (frac 1 → 0°) still
+    // looks like the clean tight beam.
+    const elapsedFrac = maxTime > 0 ? Math.max(0, Math.min(1, state.elapsed / maxTime)) : 1;
+    const chargeConeDeg = chargeConeAngleDeg(elapsedFrac);
+    this.fireWeapon(w, player, { chargeMult: mult, chargeSpread, chargeConeDeg });
     state.charging = false;
     state.elapsed = 0;
     state.aimDrift = 0;
@@ -181,42 +188,25 @@ export const FiringMixin = {
       const reach = 40 + (w.weapon.range.max || 400) * 0.5 * frac;
       const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
       const g = this.chargeFx;
-      const halfAngle = ((chargeConeAngleDeg(frac) * Math.PI) / 180) / 2;
-      const leftX = m.x + Math.cos(angle - halfAngle) * reach, leftY = m.y + Math.sin(angle - halfAngle) * reach;
-      const rightX = m.x + Math.cos(angle + halfAngle) * reach, rightY = m.y + Math.sin(angle + halfAngle) * reach;
 
-      // Filled wedge — the wide-cone telegraph. Collapses to a zero-area sliver once halfAngle
-      // reaches 0, leaving only the beam core below.
-      g.fillStyle(color, 0.10 + frac * 0.15);
-      g.beginPath();
-      g.moveTo(m.x, m.y);
-      g.lineTo(leftX, leftY);
-      g.lineTo(rightX, rightY);
-      g.closePath();
-      g.fillPath();
+      // #493 follow-up: rounded far edge + distance-based opacity fade (opaque near the
+      // mech, transparent at the tip) — see `drawChargeWedge` (art/projectileArt.js), shared
+      // with the fired-burst visual below so both read as the same visual language.
+      drawChargeWedge(g, m.x, m.y, angle, chargeConeAngleDeg(frac), reach, color, 0.1 + frac * 0.15);
 
-      // Cone edges, so the wedge reads as a telegraph outline rather than a flat wash. Fades
-      // out as the cone narrows onto the beam core (their alpha and the edges' own convergence
-      // both drive the beam-y read at high charge).
-      g.lineStyle(1.5, color, (0.5 + frac * 0.2) * (1 - frac * 0.5));
-      g.beginPath();
-      g.moveTo(m.x, m.y);
-      g.lineTo(leftX, leftY);
-      g.strokePath();
-      g.beginPath();
-      g.moveTo(m.x, m.y);
-      g.lineTo(rightX, rightY);
-      g.strokePath();
-
-      // Centre beam core: present from the very start (a thin line down the cone's bisector)
-      // and thickens/brightens toward full charge, so by frac=1 — cone fully collapsed — this
-      // IS the straight beam.
-      const width = 1 + frac * 5;
-      g.lineStyle(width, color, 0.35 + frac * 0.55);
-      g.beginPath();
-      g.moveTo(m.x, m.y);
-      g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
-      g.strokePath();
+      // Centre convergence line — the "strong middle line". Jackson: "that should really just
+      // be there if they hold charge all the way to middle convergence" — so it stays fully
+      // hidden through the wide-cone early/mid charge and only fades in near full charge
+      // (`chargeCoreAlpha`), then thickens/brightens the rest of the way exactly as before.
+      const coreAlpha = chargeCoreAlpha(frac);
+      if (coreAlpha > 0) {
+        const width = 1 + frac * 5;
+        g.lineStyle(width, color, coreAlpha * (0.35 + frac * 0.55));
+        g.beginPath();
+        g.moveTo(m.x, m.y);
+        g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
+        g.strokePath();
+      }
     }
   },
 
@@ -339,7 +329,11 @@ export const FiringMixin = {
   // `chargeSpread` (radians, default 0): an extra random angular jitter applied to this shot's
   // launch angle, from how much the aim drifted during a charge hold (`_releaseCharge`) — 0 for
   // every non-charging trigger pull.
-  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0 } = {}) {
+  // `chargeConeDeg` (degrees, default 0): the charge telegraph's cone width AT THE MOMENT OF
+  // RELEASE (`_releaseCharge`) — threaded down to `_fireHitscan`'s beam so the burst visual
+  // reflects how charged the shot actually was, not just its damage. 0 for every non-charging
+  // trigger pull, and for a full-charge release (the cone has narrowed to a clean beam by then).
+  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0, chargeConeDeg = 0 } = {}) {
     if (!this.scene.isActive()) return;
     if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
     // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
@@ -441,7 +435,7 @@ export const FiringMixin = {
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player, pullId });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player, pullId, burstConeDeg: chargeConeDeg });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
@@ -686,7 +680,11 @@ export const FiringMixin = {
   // tracking object, preserving #86.
   // `shooter` (#348, optional): the PLAYER firing, for the per-player converge pick and for
   // friendly fire (they are excluded from their own candidate list).
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null, spawnerKind = null } = {}) {
+  // `burstConeDeg` (#493 follow-up, degrees, default 0): the charge-lance's release-time cone
+  // width — stamped onto the beam so the draw loop (projectiles.js `_updateBeams`) can burst it
+  // as a wide, faded wedge instead of a clean beam. 0 for every non-charging weapon/shot, so
+  // their beams render exactly as before.
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null, spawnerKind = null, burstConeDeg = 0 } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -780,8 +778,9 @@ export const FiringMixin = {
       live.x0 = muzzleX; live.y0 = muzzleY; live.x1 = endX; live.y1 = endY;
       live.lateral = lateral;
       live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
+      live.coneDeg = burstConeDeg;
     } else {
-      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral });
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral, coneDeg: burstConeDeg });
     }
     if (eatenAt) {
       // #374 — the beam was eaten mid-trace: play its OWN normal beam impact FX at the clamp point
