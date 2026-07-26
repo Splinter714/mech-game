@@ -244,7 +244,7 @@ export default class ArenaScene extends Phaser.Scene {
     // overlay's Graphics exists for the first `_updateVisibility` tick. Its DEPTH.LOS_DIM (2.9)
     // tier is what puts the fog under the player/flyers and over everything on the ground.
     this._initVisibility();
-    this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm)
+    this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm) + planted hazards (#525)
     this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
@@ -417,8 +417,13 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
     this._drawStatusEffects();            // #489: coated-in-plasma glow, after this frame's ticks
-    this._updateHazards(dt);              // #488/#491: planted mines / pull fields
+    // #525: `_updateFirePatches` clears+redraws `groundFx` (the low ground-decal layer) once per
+    // frame; `_updateHazards` now draws planted mines/pull fields into that SAME layer (below every
+    // unit — see DEPTH.GROUND_FX), so it must run AFTER the clear or its drawing would be wiped the
+    // instant `_updateFirePatches` ran. Order between the two is otherwise inert — neither reads the
+    // other's state.
     this._updateFirePatches();
+    this._updateHazards(dt);              // #488/#491: planted mines / pull fields
     this._updateHazardTerrain();          // #508: damaging hazard terrain (mud/quicksand/etc.)
     this._updateBeams(delta);
     this._updateChargeVisuals();          // #493: charge-up telegraph arcs
