@@ -59,16 +59,6 @@ export function cycleListId(ids, currentId, dir = 1) {
   return ids[((idx + (dir < 0 ? -1 : 1)) % n + n) % n];
 }
 
-// Decide what pressing a slot's fire bind does to that slot, given the slot's current mount
-// and the highlighted catalog id (#70 catalog-first pad flow). A slot bind ALWAYS mounts /
-// replaces the slot with the highlight ('mount') — it never removes a weapon. Re-pressing the
-// bind while the slot already holds exactly that item is a no-op ('none', stays mounted).
-// With nothing highlighted there's likewise nothing to do ('none').
-export function slotBindAction(currentId, highlightedId) {
-  if (highlightedId == null) return 'none';
-  return currentId === highlightedId ? 'none' : 'mount';
-}
-
 // Minimal scroll adjustment so [itemTop, itemTop+itemH] (content coords) is visible in a
 // viewport of height viewH scrolled to scrollY. Result clamped to [0, maxScroll].
 export function scrollToShow(scrollY, itemTop, itemH, viewH, maxScroll) {
