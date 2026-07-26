@@ -33,9 +33,8 @@ export const TILE_UI = {
   // isn't left wondering why the bar isn't creeping back up.
   cooldown: '#5e7ce0', cooldownHex: 0x5e7ce0,
   // #452: the button now reads as a physical KEY on a console rather than a flat swatch —
-  // rounded corners, a lit top bevel (the same "dark face, rim on the lit edge" language the mech
-  // art itself is drawn in) and a soft halo just outside the edge so it pops off the console
-  // plate behind it. Deliberately a small move: this is still the same tile, better lit.
+  // rounded corners and a soft halo just outside the edge so it pops off the console plate
+  // behind it. Deliberately a small move: this is still the same tile, better lit.
   radius: 9,          // corner rounding
   // #526: the double-wide ABILITY tiles get a bigger round on their own OUTER-top corner (the one
   // nearest the console's own nipped-corner notch, `SHIELD_ARC.corner` in healthReadout.js) so
@@ -45,13 +44,12 @@ export const TILE_UI = {
   // own 14px so the tile still reads as its own button.
   nipRadius: 16,
   edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
-  bevel: 0x6d8299,    // the lit top/left inner bevel
   halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
 };
 
-// Paint one tile's PLATE — the rounded body, its lit bevel, its edge and the halo just outside
-// it. A Graphics rather than a Rectangle purely because Phaser's Rectangle cannot round its
-// corners; the tile's hit area is still the plain rect (see `drawSkillTile`).
+// Paint one tile's PLATE — the rounded body, its edge and the halo just outside it. A Graphics
+// rather than a Rectangle purely because Phaser's Rectangle cannot round its corners; the tile's
+// hit area is still the plain rect (see `drawSkillTile`).
 //
 // #526: `nipCorners` (optional, e.g. `{ tl: true }` or `{ tr: true }`) nips ONE outer-top corner
 // to `TILE_UI.nipRadius` instead of the normal `radius` — used by the double-wide ability tiles so
@@ -82,14 +80,10 @@ export function paintTilePlate(g, rect, { selected = false, nipCorners = null } 
   // The plate itself.
   g.fillStyle(selected ? TILE_UI.cardSel : TILE_UI.card, 1);
   g.fillRoundedRect(x, y, w, h, corners);
-  // Lit top bevel — a highlight along the top edge only, so the button reads as catching light
-  // from above like every other plated surface in the game.
-  g.lineStyle(1.5, TILE_UI.bevel, selected ? 0.55 : 0.34);
-  g.beginPath();
-  g.moveTo(x + r, y + 1.5);
-  g.lineTo(x + w - r, y + 1.5);
-  g.strokePath();
-  // Crisp outer edge.
+  // Crisp outer edge. (#505 playtest: a separate "lit top bevel" highlight used to be stroked
+  // just inside this same top edge — with the two lines only ~1.5px apart it read as a stray
+  // double border along the top of every tile, so it's gone; the crisp edge alone is the border,
+  // same as every other side of the tile.)
   g.lineStyle(selected ? 2 : 1.25, selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
   g.strokeRoundedRect(x, y, w, h, corners);
 }

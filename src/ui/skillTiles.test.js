@@ -346,3 +346,42 @@ describe('paintTilePlate nipCorners (#526)', () => {
     expect(TILE_UI.nipRadius).toBeGreaterThan(TILE_UI.radius);
   });
 });
+
+// #505 playtest ("there's a visible second line along the TOP border of the tiles"): a separate
+// "lit top bevel" highlight used to be stroked as a straight line just inside the tile's own top
+// edge, ~1.5px away from the crisp `strokeRoundedRect` edge already tracing that same top border —
+// two nearly-parallel lines only the TOP border had (every other side only ever had the one crisp
+// edge). It's gone now; the crisp edge alone is the tile's border on every side.
+describe('paintTilePlate top border has no stray double line (#505 playtest)', () => {
+  function recordingGfx() {
+    const calls = [];
+    const g = {};
+    for (const k of ['clear', 'lineStyle', 'fillStyle']) g[k] = () => g;
+    g.fillRoundedRect = () => g;
+    g.strokeRoundedRect = (x, y, w, h, radius) => { calls.push({ fn: 'strokeRoundedRect', radius }); return g; };
+    // A stray extra top-edge highlight would be drawn as a straight line via beginPath/moveTo/
+    // lineTo/strokePath — record any use of that path so its absence is directly assertable.
+    g.beginPath = () => { calls.push({ fn: 'beginPath' }); return g; };
+    g.moveTo = () => { calls.push({ fn: 'moveTo' }); return g; };
+    g.lineTo = () => { calls.push({ fn: 'lineTo' }); return g; };
+    g.strokePath = () => { calls.push({ fn: 'strokePath' }); return g; };
+    return { g, calls };
+  }
+  const rect = { x: 0, y: 0, w: 92, h: 92 };
+
+  it('draws no standalone line (beginPath/moveTo/lineTo/strokePath) at all', () => {
+    const { g, calls } = recordingGfx();
+    paintTilePlate(g, rect, {});
+    expect(calls.filter((c) => ['beginPath', 'moveTo', 'lineTo', 'strokePath'].includes(c.fn))).toHaveLength(0);
+  });
+
+  it('strokes the rounded rect exactly 3 times — 2 outside halo passes + 1 crisp edge, nothing extra', () => {
+    const { g, calls } = recordingGfx();
+    paintTilePlate(g, rect, {});
+    expect(calls.filter((c) => c.fn === 'strokeRoundedRect')).toHaveLength(3);
+  });
+
+  it('no longer exposes a bevel color on TILE_UI — it was only ever used by the removed line', () => {
+    expect(TILE_UI.bevel).toBeUndefined();
+  });
+});

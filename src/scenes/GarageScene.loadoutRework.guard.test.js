@@ -59,11 +59,26 @@ describe('#505 THIRD rework — mech preview: left of the tile block, same heigh
   it('the preview panel/scale come from gl.preview (garageColumnLayout), not a fixed square box', () => {
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
     expect(body).toMatch(/const \{ cx: previewCx, cy: previewCy, w: previewW, h: previewH \} = gl\.preview;/);
-    expect(body).toMatch(/this\.add\.rectangle\(previewCx, previewCy, previewW, previewH, 0x10151c\)/);
   });
 
   it('no leftover PREVIEW_BOX square-box sizing from the earlier rework', () => {
     expect(src).not.toContain('PREVIEW_BOX');
+  });
+});
+
+// #505 playtest follow-up: "round the mech preview box, matching the weapon/ability tiles" — the
+// panel is now a Graphics painted with the SAME paintTilePlate the skill tiles themselves use,
+// not a plain squared-off Rectangle.
+describe('#505 playtest follow-up — mech preview panel reuses the shared tile-plate paint', () => {
+  it('imports paintTilePlate from the shared skillTiles module', () => {
+    expect(src).toMatch(/import \{ [^}]*paintTilePlate[^}]* \} from '\.\.\/ui\/skillTiles\.js';/);
+  });
+
+  it('previewPanel is a Graphics object painted via paintTilePlate over the preview rect, not a plain Rectangle', () => {
+    const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
+    expect(body).toMatch(/col\.previewPanel = this\.add\.graphics\(\);/);
+    expect(body).toMatch(/paintTilePlate\(col\.previewPanel, \{ x: previewCx - previewW \/ 2, y: previewCy - previewH \/ 2, w: previewW, h: previewH \}\);/);
+    expect(body).not.toMatch(/this\.add\.rectangle\(previewCx, previewCy, previewW, previewH/);
   });
 });
 
@@ -101,8 +116,8 @@ describe('#505 THIRD rework — colour-select swatch/label hidden, cycling still
   });
 });
 
-describe('#505 THIRD rework — player label moved below the preview art', () => {
-  it('headerLabel is positioned from gl.label (below the preview), not a fixed header-row offset', () => {
+describe('#505 THIRD rework — player label moved onto the preview art (now INSIDE it, near the bottom — #505 playtest follow-up)', () => {
+  it('headerLabel is positioned from gl.label (inside the preview, near its bottom), not a fixed header-row offset', () => {
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
     expect(body).toMatch(/col\.headerLabel = this\.add\.text\(gl\.label\.cx, gl\.label\.y, `PLAYER \$\{i \+ 1\}`/);
   });
