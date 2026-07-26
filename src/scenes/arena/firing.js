@@ -9,7 +9,7 @@ import {
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeCoreAlpha } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
-import { traceHitscan } from '../../data/beamTrace.js';
+import { traceHitscan, traceHitscanPiercing } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash, drawChargeWedge } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
@@ -694,10 +694,21 @@ export const FiringMixin = {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
+    // #537: Charge Lance opts into `pierce` — it hits EVERY living target along the beam, not
+    // just the nearest one, so it doesn't stop resolving at the first body the way every other
+    // hitscan weapon does below. It still gets stopped by a wall exactly like any other beam
+    // (see wallT/blocked further down) — pierce only changes what happens to bodies, not cover.
+    const pierce = !!w.weapon.delivery.pierce;
+    const targets = this._liveTargetsForTrace(owner, shooter);
 
     // Project each living target onto the firing ray (forward `t`, perpendicular miss) and
-    // take the nearest one actually struck.
-    const trace = traceHitscan(muzzleX, muzzleY, angle, reach, this._liveTargetsForTrace(owner, shooter));
+    // take the nearest one actually struck. A piercing weapon skips this single-target pick
+    // entirely — its resting distance (before wall clamping below) is just its raw reach, and
+    // which targets it actually hits is resolved separately, after the final wall-clamped
+    // endDist is known (see the `pierce` branch at the bottom of this method).
+    const trace = pierce
+      ? { target: null, t: 0, endDist: Math.min(reach, 600) }
+      : traceHitscan(muzzleX, muzzleY, angle, reach, targets);
     let target = trace.target?.ref ?? null;
     let t = trace.t;
     let hit = !!target;
@@ -796,6 +807,25 @@ export const FiringMixin = {
       // #405: the caught beam chips the soft-cover hex that ate it (the hex `eatenAt` marks), so
       // energy loadouts clear woods too. Keyed off the eating hex's own centre, not the clamp point.
       this._damageSoftCoverHex?.(this._hexKeyAt(eatenAt.x, eatenAt.y));
+    } else if (pierce) {
+      // #537: damage EVERY living target within beam-width tolerance between the muzzle and the
+      // final (wall-clamped) endDist — not just the nearest. Each target takes the same full
+      // charge-scaled damage (see the `pierce` comment on the weapon entry in weapons.js for why
+      // it isn't divided across targets), scored at its OWN distance along the beam so range
+      // falloff still applies per-target.
+      const pierceHits = traceHitscanPiercing(muzzleX, muzzleY, angle, endDist, targets);
+      for (const { target: c, t: ct } of pierceHits) {
+        const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, ct)));
+        // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the
+        // player damage sink, not the enemy one. Mirrors the single-target `hit` branch below.
+        if (owner === 'enemy') this._damagePlayerAt(dmg, playerRefOf(this, c.ref), { enemyKind: statKind, weaponId: w.weapon.id, shotId: statShotId, spawnerKind });
+        else if (isPlayerRef(this, c.ref)) this._damagePlayerAt(dmg, c.ref, { weaponId: w.weapon.id });
+        else this._damageEnemyAt(c.ref, c.x, c.y, dmg, color, false, { weaponId: w.weapon.id, pullId });
+      }
+      // A piercing beam that also got stopped by a wall still chips that wall/span, same as the
+      // single-target `blocked` branch below — pierce only changes what happens to bodies.
+      if (blocked) this._damageBuildingAt?.(endX, endY, Math.max(1, Math.round(w.weapon.damage)), { flame: false });
+      this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
     } else if (hit) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       // #348: friendly fire — a player-owned beam that resolved to another PLAYER routes to the

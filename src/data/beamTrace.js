@@ -29,3 +29,23 @@ export function traceHitscan(muzzleX, muzzleY, angle, reach, enemies, hitRadius 
     endY: muzzleY + dirY * endDist,
   };
 }
+
+// #537: the piercing counterpart to `traceHitscan` above — instead of stopping at the single
+// nearest candidate, returns EVERY living candidate within beam-width tolerance whose forward
+// projection falls between the muzzle and `maxDist` (the beam's final, already wall-clamped
+// resting distance), sorted nearest-first. Used only by a hitscan weapon whose delivery opts
+// into `pierce: true` (currently just Charge Lance) — every other hitscan weapon keeps using
+// `traceHitscan` above and is unaffected.
+export function traceHitscanPiercing(muzzleX, muzzleY, angle, maxDist, targets, hitRadius = 44) {
+  const dirX = Math.cos(angle), dirY = Math.sin(angle);
+  const hits = [];
+  for (const e of targets) {
+    if (e.destroyed) continue;
+    const ex = e.x - muzzleX, ey = e.y - muzzleY;
+    const tt = ex * dirX + ey * dirY;
+    const perp = Math.abs(ex * dirY - ey * dirX);
+    if (tt > 0 && tt <= maxDist && perp < hitRadius) hits.push({ target: e, t: tt });
+  }
+  hits.sort((a, b) => a.t - b.t);
+  return hits;
+}

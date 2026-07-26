@@ -247,11 +247,19 @@ export const WEAPONS = {
     // beam; jerking the reticle around while charging = a wide, inaccurate shot). See firing.js
     // `_handleChargeFire`/`_releaseCharge`. A charging hold also now telegraphs as a growing arc
     // that thickens into a full beam by maxTime (firing.js `_updateChargeVisuals`).
+    // #537 playtest ask: "charge lance should pierce enemies, meaning it hits whichever
+    // enemies are in the area of the shot at time of release." `pierce: true` (firing.js
+    // `_fireHitscan`) makes this the one hitscan weapon that damages EVERY living target along
+    // its beam (up to the same wall-clamped reach every hitscan shot already respects), not
+    // just the nearest — a wall/cover still stops it, it just doesn't stop at the first body.
+    // Each pierced enemy takes the same full charge-scaled damage (not divided across targets):
+    // it's a single continuous lance, not a shared pool, and "everyone in the line eats the
+    // full hit" is the more legible payoff for the charge commitment than a per-target split.
     id: 'chargeLance', name: 'Charge Lance', category: 'energy',
     damage: 30, range: { min: 0, opt: 460, max: 680 },
     ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s) if tapped at minTime every time
     delivery: {
-      hit: 'hitscan', pattern: 'single', kind: 'rail',
+      hit: 'hitscan', pattern: 'single', kind: 'rail', pierce: true,
       chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5, maxSpreadDeg: 22 },
     },
   }),
