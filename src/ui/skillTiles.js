@@ -37,6 +37,13 @@ export const TILE_UI = {
   // art itself is drawn in) and a soft halo just outside the edge so it pops off the console
   // plate behind it. Deliberately a small move: this is still the same tile, better lit.
   radius: 9,          // corner rounding
+  // #526: the double-wide ABILITY tiles get a bigger round on their own OUTER-top corner (the one
+  // nearest the console's own nipped-corner notch, `SHIELD_ARC.corner` in healthReadout.js) so
+  // they visibly taper INTO that notch shape instead of sitting inside it as plain rectangles that
+  // need extra clearance. Only the outer corner nips; the inner one and both bottom corners keep
+  // the normal `radius`. Tunable — picked close to, but not matching exactly, the console notch's
+  // own 14px so the tile still reads as its own button.
+  nipRadius: 16,
   edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
   bevel: 0x6d8299,    // the lit top/left inner bevel
   halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
@@ -45,20 +52,36 @@ export const TILE_UI = {
 // Paint one tile's PLATE — the rounded body, its lit bevel, its edge and the halo just outside
 // it. A Graphics rather than a Rectangle purely because Phaser's Rectangle cannot round its
 // corners; the tile's hit area is still the plain rect (see `drawSkillTile`).
-export function paintTilePlate(g, rect, { selected = false } = {}) {
+//
+// #526: `nipCorners` (optional, e.g. `{ tl: true }` or `{ tr: true }`) nips ONE outer-top corner
+// to `TILE_UI.nipRadius` instead of the normal `radius` — used by the double-wide ability tiles so
+// they taper into the console's own nipped-corner notch (see `TILE_UI.nipRadius`'s own comment).
+// Every other tile (every weapon tile, and an ability tile with no flag set) is unaffected — the
+// per-corner object collapses right back to the old single-radius rounding when every flag is
+// false/absent.
+export function paintTilePlate(g, rect, { selected = false, nipCorners = null } = {}) {
   const { x, y, w, h } = rect;
   const r = Math.min(TILE_UI.radius, w / 4);
+  const corners = nipCorners
+    ? {
+      tl: nipCorners.tl ? TILE_UI.nipRadius : r, tr: nipCorners.tr ? TILE_UI.nipRadius : r,
+      bl: r, br: r,
+    }
+    : r;
+  const grow = (pad) => (typeof corners === 'number'
+    ? corners + pad
+    : { tl: corners.tl + pad, tr: corners.tr + pad, bl: corners.bl + pad, br: corners.br + pad });
   g.clear();
   // Outside-the-edge halo: two fading passes, since plain Graphics has no blur (the same stacked-
   // silhouette stand-in the HUD's chevron glow and shield bar use).
   const haloCol = selected ? TILE_UI.sel : TILE_UI.halo;
   for (const [pad, a] of [[3.5, selected ? 0.20 : 0.07], [1.5, selected ? 0.40 : 0.16]]) {
     g.lineStyle(2, haloCol, a);
-    g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r + pad);
+    g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, grow(pad));
   }
   // The plate itself.
   g.fillStyle(selected ? TILE_UI.cardSel : TILE_UI.card, 1);
-  g.fillRoundedRect(x, y, w, h, r);
+  g.fillRoundedRect(x, y, w, h, corners);
   // Lit top bevel — a highlight along the top edge only, so the button reads as catching light
   // from above like every other plated surface in the game.
   g.lineStyle(1.5, TILE_UI.bevel, selected ? 0.55 : 0.34);
@@ -68,7 +91,7 @@ export function paintTilePlate(g, rect, { selected = false } = {}) {
   g.strokePath();
   // Crisp outer edge.
   g.lineStyle(selected ? 2 : 1.25, selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
-  g.strokeRoundedRect(x, y, w, h, r);
+  g.strokeRoundedRect(x, y, w, h, corners);
 }
 
 // A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`. `order`
@@ -90,6 +113,23 @@ export function tileRow(x, w, { y, bottom, order = TILE_ORDER, n = order.length,
 // "the buttons themselves should be double-width also").
 const WIDE_ASPECT = 1.6;
 export function isWideTile(rect) { return rect.w > rect.h * WIDE_ASPECT; }
+
+// #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo, make it visible
+// sooner"): the bar's WIDTH already tracks `ammoFrac` exactly (full mag = full-width bar) — what
+// made it easy to miss was that it stayed the same flat GOOD colour across the entire 33%-100%
+// range, on a thin (3px) track, so a magazine burning down from full read as "no change" until it
+// suddenly snapped to warn/bad near the end. Two fixes: the track is thicker now (`AMMO_BAR_H`,
+// see `drawSkillTile`), and the WARN colour now kicks in at `AMMO_WARN_FRAC` (60%) instead of the
+// old 33% — noticeably earlier, while `AMMO_LOW_FRAC` (25%) still gates the final BAD/red state.
+// Pulled out as a pure function so the thresholds are unit-testable without booting Phaser.
+export const AMMO_BAR_H = 5;
+export const AMMO_WARN_FRAC = 0.6;
+export const AMMO_LOW_FRAC = 0.25;
+export function ammoBarColor(frac) {
+  if (frac <= 0 || frac <= AMMO_LOW_FRAC) return TILE_UI.bad;
+  if (frac <= AMMO_WARN_FRAC) return 0xefc14a;
+  return TILE_UI.good;
+}
 
 // Pure geometry for a wide tile's content: a square icon, sized off the tile's own HEIGHT (the
 // limiting dimension, so it actually fills the short tile instead of overflowing it), followed by
@@ -216,8 +256,11 @@ export function drawSkillTile(scene, parent, rect, opts) {
       wordWrap: { width: rect.w - 6, useAdvancedWrap: true },
     }).setOrigin(0.5, 0);
   }
-  const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
-  const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
+  // #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo") — thickened from
+  // 3px to `AMMO_BAR_H` so it reads as a real gauge at a glance instead of a hairline that only
+  // catches the eye once it's short and red.
+  const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
+  const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
   parent.add([plate, bg, bind, icon, plus, subtitle, barTrack, bar]);
   const refs = { rect, wide, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
   updateSkillTile(refs, opts);
@@ -233,14 +276,14 @@ export function drawSkillTile(scene, parent, rect, opts) {
 export function updateSkillTile(refs, opts) {
   const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
-    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0,
+    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0, nipCorners = null,
     // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
     // location — an ability/core `loc` (not in SKILL_BINDS) degrades to an empty glyph instead
     // of throwing, so a caller that forgets to pass `bindGlyph` explicitly fails safe, not loud.
     bindGlyph = SKILL_BINDS[loc] ? (mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key) : '',
     emptyLabel = 'weapon' } = opts;
 
-  paintTilePlate(plate, rect, { selected });
+  paintTilePlate(plate, rect, { selected, nipCorners });
   bind.setText(bindGlyph).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
   // #506 THIRD rework: a wide tile sizes its icon off the tile's own HEIGHT (via
@@ -263,7 +306,7 @@ export function updateSkillTile(refs, opts) {
     } else if (ammoFrac != null) {
       barTrack.setVisible(true);
       bar.setVisible(true).setScale(Math.max(0, Math.min(1, ammoFrac)), 1)
-        .setFillStyle(ammoFrac > 0.33 ? TILE_UI.good : ammoFrac > 0 ? 0xefc14a : TILE_UI.bad);
+        .setFillStyle(ammoBarColor(ammoFrac));
     } else {
       barTrack.setVisible(false); bar.setVisible(false);
     }

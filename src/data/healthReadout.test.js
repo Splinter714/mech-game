@@ -4,7 +4,7 @@ import {
   paperDollLayout, perimeterRun, PAPER_DOLL,
   mechPools, noneLayout,
   structureColor, hslToInt, STRUCTURE_RAMP,
-  fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC, armorDrainRect,
+  fusedLayout, FUSED_DOME_RISE, shieldArcLayout, SHIELD_ARC, armorDrainRect, bracketOutline,
 } from './healthReadout.js';
 import { consoleBand, CONSOLE } from './hudLayout.js';
 import { INTEGRITY_ORDER, integrityLayout } from './hudLayout.js';
@@ -488,6 +488,48 @@ describe('#495 shield arc (fused)', () => {
   it('clamps out-of-range fractions to the endpoints', () => {
     expect(shieldArcLayout(rect, 1.5).left.length).toBe(shieldArcLayout(rect, 1).left.length);
     expect(shieldArcLayout(rect, -0.4).left).toEqual([]);
+  });
+
+  // #526 (playtest: "opacity should be a gradient — strongest facing the panel, weakest facing
+  // away"): HudScene paints several copies of the SAME shape at increasing `pad`/decreasing alpha
+  // to fake that gradient. What has to hold is that `pad` really does grow the shape outward
+  // (away from the tile row) while the default (omitted) call is byte-identical to before.
+  describe('#526 the gradient `pad` param', () => {
+    it('defaults to 0 — omitting it reproduces the exact old shape', () => {
+      expect(shieldArcLayout(rect, 1)).toEqual(shieldArcLayout(rect, 1, 0));
+      expect(bracketOutline(rect)).toEqual(bracketOutline(rect, 0));
+    });
+
+    it('a bigger pad pushes the sides further out, away from the row', () => {
+      const near = shieldArcLayout(rect, 1, 0);
+      const far = shieldArcLayout(rect, 1, 8);
+      // The outer stub (index 0) is the point nearest the panel on each side — it should move
+      // AWAY from the row's own centre as pad grows.
+      const cx = rect.x + rect.w / 2;
+      expect(far.left[0].x).toBeLessThan(near.left[0].x);       // left stub moves further left
+      expect(far.right[0].x).toBeGreaterThan(near.right[0].x);  // right stub moves further right
+      expect(Math.abs(far.left[0].x - cx)).toBeGreaterThan(Math.abs(near.left[0].x - cx));
+    });
+
+    it('a bigger pad also pushes the top rail (the apex) further up, away from the row', () => {
+      const near = shieldArcLayout(rect, 1, 0);
+      const far = shieldArcLayout(rect, 1, 8);
+      const nearApex = near.left[near.left.length - 1];
+      const farApex = far.left[far.left.length - 1];
+      expect(farApex.y).toBeLessThan(nearApex.y);
+    });
+
+    it('pad never moves the outer end\'s Y — every layer still reaches the row\'s own bottom edge', () => {
+      const near = shieldArcLayout(rect, 1, 0);
+      const far = shieldArcLayout(rect, 1, 10);
+      expect(far.left[0].y).toBeCloseTo(near.left[0].y, 6);
+      expect(far.left[0].y).toBeCloseTo(rect.y + rect.h, 5);
+    });
+
+    it('bracketOutline is the same TRACK shieldArcLayout computes, standalone and frac-independent', () => {
+      expect(bracketOutline(rect, 3)).toEqual(shieldArcLayout(rect, 0.4, 3).track);
+      expect(bracketOutline(rect, 3)).toEqual(shieldArcLayout(rect, 0.9, 3).track);
+    });
   });
 
   // #495 SECOND playtest round (Jackson: "the shape of the shield should match wrapping the

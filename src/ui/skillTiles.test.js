@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   diamondLayout, coreTileRect, drawSkillTile, updateSkillTile, tileRow,
   isWideTile, wideTileLayout, weaponAbilityRows, TILE_ORDER, HUD_ABILITY_ORDER,
+  ammoBarColor, AMMO_WARN_FRAC, AMMO_LOW_FRAC, TILE_UI, paintTilePlate,
 } from './skillTiles.js';
 import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 
@@ -272,5 +273,76 @@ describe('drawSkillTile/updateSkillTile icon sizing on a wide tile (#506 third r
     expect(isWideTile(rect)).toBe(false);
     drawSkillTile(scene, { add() {} }, rect, { loc: 'leftArm', itemId: 'autocannon' });
     expect(images[0].displaySize).toEqual({ w: 92 * 0.46, h: 92 * 0.46 });
+  });
+});
+
+// #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo, make it visible
+// sooner"): the WARN colour now kicks in much earlier than the old 33% cutoff, so a magazine
+// burning down reads as "getting low" well before it's nearly empty.
+describe('ammoBarColor (#526)', () => {
+  it('is GOOD well above the warn threshold', () => {
+    expect(ammoBarColor(1)).toBe(TILE_UI.good);
+    expect(ammoBarColor(0.9)).toBe(TILE_UI.good);
+  });
+
+  it('turns WARN at a much higher fraction than the old 33% cutoff', () => {
+    expect(AMMO_WARN_FRAC).toBeGreaterThan(0.33);
+    expect(ammoBarColor(AMMO_WARN_FRAC)).not.toBe(TILE_UI.good);
+    expect(ammoBarColor(AMMO_WARN_FRAC + 0.01)).toBe(TILE_UI.good);
+  });
+
+  it('turns BAD once at/under the low threshold, and at exactly empty', () => {
+    expect(ammoBarColor(AMMO_LOW_FRAC)).toBe(TILE_UI.bad);
+    expect(ammoBarColor(0)).toBe(TILE_UI.bad);
+  });
+
+  it('the low threshold sits strictly below the warn threshold', () => {
+    expect(AMMO_LOW_FRAC).toBeLessThan(AMMO_WARN_FRAC);
+  });
+});
+
+// #526: the double-wide ability tiles nip ONE outer-top corner so they taper into the console's
+// own nipped-corner notch shape. Pinned against the actual Graphics calls `paintTilePlate` makes,
+// via a stub that records every fillRoundedRect/strokeRoundedRect radius argument.
+describe('paintTilePlate nipCorners (#526)', () => {
+  function recordingGfx() {
+    const calls = [];
+    const g = {};
+    for (const k of ['clear', 'lineStyle', 'fillStyle', 'beginPath', 'moveTo', 'lineTo', 'strokePath']) {
+      g[k] = () => g;
+    }
+    g.fillRoundedRect = (x, y, w, h, radius) => { calls.push({ fn: 'fill', radius }); return g; };
+    g.strokeRoundedRect = (x, y, w, h, radius) => { calls.push({ fn: 'stroke', radius }); return g; };
+    return { g, calls };
+  }
+  const rect = { x: 0, y: 0, w: 200, h: 46 };
+
+  it('with no nipCorners, every corner stays the plain uniform radius (unchanged weapon-tile look)', () => {
+    const { g, calls } = recordingGfx();
+    paintTilePlate(g, rect, {});
+    const fill = calls.find((c) => c.fn === 'fill');
+    expect(typeof fill.radius).toBe('number');
+  });
+
+  it('nipCorners.tl nips only the top-left corner, to the bigger nipRadius', () => {
+    const { g, calls } = recordingGfx();
+    paintTilePlate(g, rect, { nipCorners: { tl: true } });
+    const fill = calls.find((c) => c.fn === 'fill');
+    expect(fill.radius).toEqual({
+      tl: TILE_UI.nipRadius, tr: Math.min(TILE_UI.radius, rect.w / 4),
+      bl: Math.min(TILE_UI.radius, rect.w / 4), br: Math.min(TILE_UI.radius, rect.w / 4),
+    });
+  });
+
+  it('nipCorners.tr nips only the top-right corner', () => {
+    const { g, calls } = recordingGfx();
+    paintTilePlate(g, rect, { nipCorners: { tr: true } });
+    const fill = calls.find((c) => c.fn === 'fill');
+    expect(fill.radius.tr).toBe(TILE_UI.nipRadius);
+    expect(fill.radius.tl).toBe(Math.min(TILE_UI.radius, rect.w / 4));
+  });
+
+  it('the nip radius is bigger than the base tile radius, so it reads as an intentional flare', () => {
+    expect(TILE_UI.nipRadius).toBeGreaterThan(TILE_UI.radius);
   });
 });
