@@ -320,6 +320,12 @@ export default class HudScene extends Phaser.Scene {
     this.captureChoiceBanner = this.add.text(this.W / 2, this.H * 0.32, '', {
       fontFamily: 'monospace', fontSize: '22px', color: C.warn, fontStyle: 'bold', align: 'center',
     }).setOrigin(0.5).setVisible(false);
+    // #512: the "build a repair outpost here?" prompt — reads `repairOutpostPrompt` (scenes/arena/
+    // repairOutposts.js `_updateRepairOutposts`), same registry-snapshot pattern as the capture
+    // banner above, and reuses the same INTERACT_BIND key/label convention.
+    this.repairPromptBanner = this.add.text(this.W / 2, this.H * 0.32, '', {
+      fontFamily: 'monospace', fontSize: '22px', color: C.good, fontStyle: 'bold', align: 'center',
+    }).setOrigin(0.5).setVisible(false);
 
     // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
     // readout are dev-only overlays — created only under `import.meta.env.DEV` and updated behind
@@ -1315,6 +1321,14 @@ export default class HudScene extends Phaser.Scene {
     this.captureChoiceBanner.setText(
       `BASE CLEARED\nPRESS [${INTERACT_BIND.key}] TO ESTABLISH BASE`,
     ).setVisible(!!capture && !over);
+
+    // #512: the repair-outpost build prompt. Suppressed alongside the capture choice/run-over
+    // banner — never shown together, since `_updateRepairOutposts` itself never offers a build
+    // prompt while a capture choice is pending (see that file's comment).
+    const repairPrompt = this.registry.get('repairOutpostPrompt');
+    this.repairPromptBanner.setText(
+      repairPrompt ? `PRESS [${INTERACT_BIND.key}] TO BUILD REPAIR OUTPOST — ${repairPrompt.cost} SCRAP` : '',
+    ).setVisible(!!repairPrompt && !over && !capture);
 
     this._updateBuffHud(snapshots);
     // #383: the main-game-window objective edge arrow (#80) is now REDUNDANT — the follow-window

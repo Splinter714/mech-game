@@ -132,8 +132,13 @@ export const RunMixin = {
   // for "a generic interact we may need", see Controls.js) is the ONLY thing that can turn a
   // pending choice into "establish". No-op when nothing is pending, so mashing the interact key
   // outside the choice window does nothing.
+  // #512: falls through to the repair-outpost build prompt (scenes/arena/repairOutposts.js
+  // `_onRepairInteractPressed`) when there's no #517 capture choice pending — the two share the
+  // same key but never a base at the same time (a base is either mid-clear-and-not-yet-captured,
+  // or already `captured` and eligible for a repair outpost, never both).
   _onInteractPressed() {
-    if (this._captureChoiceActive) this._resolveBaseCaptureChoice(true);
+    if (this._captureChoiceActive) { this._resolveBaseCaptureChoice(true); return; }
+    this._onRepairInteractPressed?.();
   },
 
   // Bank the objective's currency and move on to the next base, having already decided (or
@@ -166,6 +171,13 @@ export const RunMixin = {
       this.registry.set(OUTPOSTS_KEY, nextOutposts);
       saveOutposts(nextOutposts);
     }
+    // #512: mark it captured on THIS sortie's live `base` record too, not just in the persisted
+    // outposts list — the persisted claim only gets wired back into `base.captured` at the NEXT
+    // deploy's world-build (world.js `applyCapturedBases`), but the repair-outpost build prompt
+    // (scenes/arena/repairOutposts.js) reads `base.captured` live, every frame, so a player who
+    // backtracks to a base they just established THIS sortie can still be offered the build
+    // prompt on repeat visits, not just after redeploying.
+    base.captured = true;
     const regionalBases = this.registry.get(REGIONAL_BASES_KEY) ?? [];
     const nextRegional = establishRegionalBase(regionalBases, {
       biomeId: this.biomeId, baseId: base.id, coord: base.center,
