@@ -1,10 +1,30 @@
 // #497 — Friendly Drone Launcher. Exercises `FriendlyDronesMixin` directly against a minimal
 // fake scene, mirroring interceptor.test.js's pattern.
+//
+// #497 follow-up: the summon now bakes its view from the real Recon Drone art builder
+// (art/vehicles/drone.js `drawDrone`, via `buildVehicleTextures`) instead of a plain
+// `add.circle`. Real texture generation needs a real Phaser canvas/graphics stack this test has
+// no business building (same call carrierDeploy.test.js makes about `_spawnKind`), so the fake
+// scene's `textures.exists` always reports true — the build branch is skipped and never
+// exercised here; only the pure position/targeting/lifecycle logic is under test.
 import { describe, it, expect, vi } from 'vitest';
 import { FriendlyDronesMixin } from './friendlyDrones.js';
 
-function fakeView() {
-  return { setStrokeStyle() { return this; }, setDepth() { return this; }, setPosition: vi.fn(), destroy: vi.fn() };
+function fakeSprite() {
+  return { rotation: 0, setScale: vi.fn(function () { return this; }) };
+}
+
+function fakeGameObject() {
+  return { setScale: vi.fn(function () { return this; }) };
+}
+
+function fakeContainer(x, y) {
+  return {
+    x, y,
+    setDepth: vi.fn(function () { return this; }),
+    setPosition: vi.fn(function (nx, ny) { this.x = nx; this.y = ny; return this; }),
+    destroy: vi.fn(),
+  };
 }
 
 function makeScene(enemies = []) {
@@ -12,7 +32,12 @@ function makeScene(enemies = []) {
     enemies,
     players: [],
     time: { now: 0 },
-    add: { circle: vi.fn(() => fakeView()) },   // a FRESH view each call — spawn never reuses one
+    textures: { exists: () => true },   // skip real art generation — see file header
+    add: {
+      ellipse: vi.fn(() => fakeGameObject()),
+      sprite: vi.fn(() => fakeSprite()),
+      container: vi.fn((x, y) => fakeContainer(x, y)),
+    },
     _damageEnemyAt: vi.fn(),
   };
   return Object.assign(scene, FriendlyDronesMixin);
@@ -23,12 +48,14 @@ function fakeEnemy(x, y) {
 }
 
 describe('#497 _spawnFriendlyDrone / _despawnFriendlyDrone', () => {
-  it('creates a drone on the player and a view for it', () => {
+  it('creates a drone on the player and a view (hull+turret+shadow) for it', () => {
     const scene = makeScene();
     const player = { x: 10, y: 20, color: 0xff0000 };
     scene._spawnFriendlyDrone(player);
     expect(player.friendlyDrone).toBeTruthy();
-    expect(scene.add.circle).toHaveBeenCalledWith(10, 20, 7, 0xff0000);
+    expect(scene.add.container).toHaveBeenCalledWith(10, 20, expect.any(Array));
+    expect(player.friendlyDrone.view.hull).toBeTruthy();
+    expect(player.friendlyDrone.view.turret).toBeTruthy();
   });
 
   it('re-summoning replaces rather than leaking a second view', () => {
@@ -104,5 +131,18 @@ describe('#497 _updateFriendlyDrones', () => {
     const scene = makeScene();
     scene.players = [{ x: 0, y: 0, dead: false, friendlyDrone: null }];
     expect(() => scene._updateFriendlyDrones(0.1)).not.toThrow();
+  });
+
+  it('spins the rotor overlay every frame, independent of orbit motion', () => {
+    const scene = makeScene();
+    const player = { x: 0, y: 0, dead: false };
+    scene.players = [player];
+    scene._spawnFriendlyDrone(player);
+    const startSpin = player.friendlyDrone.rotorSpin;
+
+    scene._updateFriendlyDrones(0.1);
+
+    expect(player.friendlyDrone.rotorSpin).toBeGreaterThan(startSpin);
+    expect(player.friendlyDrone.view.turret.rotation).toBe(player.friendlyDrone.rotorSpin);
   });
 });
