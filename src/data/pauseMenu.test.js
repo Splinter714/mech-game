@@ -2,7 +2,8 @@
 // the Phaser-heavy scenes/PauseMenuScene.js).
 import { describe, it, expect } from 'vitest';
 import {
-  PAUSE_ROWS, PAUSE_ROW_TITLES, toggleRowLabel, movementRowLabel, movementRowEnabled,
+  PAUSE_ROWS, PAUSE_ROW_TITLES, DEV_NAV_ROWS, pauseRowIds, toggleRowLabel, navRowLabel,
+  movementRowLabel, movementRowEnabled,
 } from './pauseMenu.js';
 
 describe('PAUSE_ROWS', () => {
@@ -42,6 +43,34 @@ describe('movementRowLabel', () => {
 
   it('a fresh player (undefined legacyMovement) reads as FAST (LEGACY), matching resolveMovement\'s own default', () => {
     expect(movementRowLabel(undefined)).toBe('MOVEMENT FEEL: FAST (LEGACY)');
+  });
+});
+
+// #529: AUDIO/ART/STATS moved here from the scene-level tab bar (ui/tabBar.js) — dev-only
+// navigation rows appended after the five base rows.
+describe('pauseRowIds (#529 — dev-only AUDIO/ART/STATS navigation rows)', () => {
+  it('is just the five base rows outside a dev build', () => {
+    expect(pauseRowIds({ dev: false })).toEqual(PAUSE_ROWS);
+    expect(pauseRowIds()).toEqual(PAUSE_ROWS);
+  });
+
+  it('adds AUDIO/ART (but not STATS) in a dev build with no stats overlay available', () => {
+    expect(pauseRowIds({ dev: true })).toEqual([...PAUSE_ROWS, 'audio', 'art']);
+  });
+
+  it('adds STATS too when the opening scene has one (the Garage)', () => {
+    expect(pauseRowIds({ dev: true, hasStats: true })).toEqual([...PAUSE_ROWS, ...DEV_NAV_ROWS]);
+  });
+
+  it('every DEV_NAV_ROWS id has a title', () => {
+    for (const id of DEV_NAV_ROWS) expect(PAUSE_ROW_TITLES[id]).toBeTruthy();
+  });
+});
+
+describe('navRowLabel', () => {
+  it('is a static title with no ON/OFF suffix', () => {
+    expect(navRowLabel('audio')).toBe('AUDIO TAB (DEV)');
+    expect(navRowLabel('stats')).toBe('RUN STATS');
   });
 });
 

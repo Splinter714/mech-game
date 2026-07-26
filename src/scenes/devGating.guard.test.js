@@ -81,14 +81,13 @@ describe('#523 HudScene: perf/control-method/AI/version readouts moved from DEV-
   });
 });
 
-describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
-  it('the AUDIO/AudioScene tab is spread into TABS only under import.meta.env.DEV', () => {
-    expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'AUDIO', scene: 'AudioScene' \}\] : \[\]\)/);
+describe('#529 tabBar: MECH LAB/AUDIO/ART tabs are gone — moved to the Mech Lab\'s own tabs / the pause menu', () => {
+  it('TABS is now empty — no scene-navigation tabs live in the shared header any more', () => {
+    expect(tabBar).toMatch(/const TABS = \[\];/);
   });
 
-  it('#470: AudioScene is registered by a DEV-guarded dynamic import (never in a prod bundle)', () => {
+  it('#470/#461: AudioScene/ArtPreviewScene are still registered by DEV-guarded dynamic imports (never in a prod bundle) — only their ACCESS moved, not their dev-only-ness', () => {
     expect(main).toMatch(/if \(import\.meta\.env\.DEV\)\s*\{[\s\S]*?import\('\.\/scenes\/AudioScene\.js'\)/);
-    // ...and NOT statically imported / listed in the always-on scene array.
     expect(main).not.toMatch(/^import AudioScene from/m);
     // #523: PauseMenuScene joined the always-on array (it's a production feature, not a dev-only
     // authoring tool), and the array wrapped onto multiple lines — match loosely on the scene
@@ -96,12 +95,9 @@ describe('#296/#470 tabBar: the AUDIO tab is dev-only', () => {
     expect(main).toMatch(/scene: \[\s*BootScene, BaseScene, GarageScene, MissionSelectScene, ArenaScene, HudScene,\s*PauseMenuScene,?\s*\]/);
   });
 
-  it('#461: the ART/ArtPreviewScene tab is spread into TABS only under import.meta.env.DEV', () => {
-    expect(tabBar).toMatch(/\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'ART', scene: 'ArtPreviewScene' \}\] : \[\]\)/);
-  });
-
-  it("MECH LAB stays unconditional so production still has the garage tab", () => {
-    expect(tabBar).toMatch(/const TABS = \[\s*\n\s*\{ key: 'MECH LAB', scene: 'GarageScene' \},/);
+  it('#529: AUDIO/ART/STATS access instead lives in the pause menu (dev-only nav rows)', () => {
+    const pauseMenuData = readFileSync(join(DIR, '..', 'data', 'pauseMenu.js'), 'utf8');
+    expect(pauseMenuData).toMatch(/DEV_NAV_ROWS = \['audio', 'art', 'stats'\]/);
   });
 
   it('#445: in-row `actions` reuse the tab rect geometry (same size + vertical alignment)', () => {
@@ -142,11 +138,14 @@ describe('#470 GarageScene: the SFX-authoring surface is gone (not merely dev-ga
     expect(garage).toMatch(/if \(import\.meta\.env\.DEV\) this\._statsOverlay = new StatsOverlay\(this\);/);
   });
 
-  it('#445: the STATS button is spread into the tab bar row only under import.meta.env.DEV', () => {
-    expect(garage).toMatch(/actions: \[\s*\n\s*\.\.\.\(import\.meta\.env\.DEV \? \[\{ key: 'STATS', onClick: \(\) => this\._statsOverlay\.open\(\) \}\] : \[\]\),/);
+  // #529: STATS access moved from a tab-bar `actions` entry into the pause menu (openStats
+  // callback) — the tab bar no longer carries a STATS action at all.
+  it('#529: the tab bar no longer carries a STATS `actions` entry — GarageScene passes openStats to wirePauseMenu instead', () => {
+    expect(garage).not.toMatch(/actions: \[/);
+    expect(garage).toMatch(/wirePauseMenu\(this, \{ openStats: \(\) => this\._statsOverlay\?\.open\(\) \}\);/);
   });
 
-  it('#445: STATS is an in-row tab-bar action, never a free-floating this.button(...)', () => {
+  it('#529: STATS is never a free-floating this.button(...) on the garage itself', () => {
     expect(garage).not.toMatch(/this\.button\([^\n]*'STATS'/);
   });
 });

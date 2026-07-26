@@ -1,11 +1,18 @@
 // #523: pure pause-menu logic, kept separate from the Phaser-heavy scenes/PauseMenuScene.js —
 // same split as data/hudLayout.js vs scenes/HudScene.js — so it's directly unit-testable.
 
-// The five rows, in display/cursor order. Four are persisted show/hide toggles (their own
+// The five base rows, in display/cursor order. Four are persisted show/hide toggles (their own
 // localStorage flag, data/pauseSettings.js); MOVEMENT is a live action button that flips the
 // current player(s)' `legacyMovement` state (arena/shared.js `applyMovementToggle`) rather than
 // a persisted preference — mirrors the existing D-pad-down toggle, doesn't replace it.
 export const PAUSE_ROWS = ['version', 'movement', 'perf', 'controlMethod', 'aiDebug'];
+
+// #529: dev-only NAVIGATION rows, appended after the base five when the pause menu is opened
+// from a dev build — this is where AUDIO/ART (the two dev-only lab scenes) and STATS (the
+// Garage's own run-history overlay) moved when the "Mech Lab / AUDIO / ART" scene-level tab bar
+// went away (see ui/tabBar.js). Unlike the base rows, these aren't toggles: activating one
+// navigates away (audio/art) or closes the menu and opens an overlay (stats).
+export const DEV_NAV_ROWS = ['audio', 'art', 'stats'];
 
 export const PAUSE_ROW_TITLES = {
   version: 'VERSION NUMBER',
@@ -13,11 +20,29 @@ export const PAUSE_ROW_TITLES = {
   perf: 'PERF READOUT',
   controlMethod: 'CONTROL METHOD',
   aiDebug: 'AI DEBUG READOUT',
+  audio: 'AUDIO TAB (DEV)',
+  art: 'ART TAB (DEV)',
+  stats: 'RUN STATS',
 };
+
+// The full row id list for a pause-menu instance: the five base rows, plus (in a dev build) the
+// AUDIO/ART navigation rows, plus (in a dev build, AND only when the opening scene actually has a
+// stats overlay to open — i.e. it's the Garage) the STATS row. Pure so it's testable without a
+// Phaser scene; PauseMenuScene.js just calls this with what it knows about its own launch data.
+export function pauseRowIds({ dev = false, hasStats = false } = {}) {
+  if (!dev) return [...PAUSE_ROWS];
+  const nav = hasStats ? DEV_NAV_ROWS : DEV_NAV_ROWS.filter((id) => id !== 'stats');
+  return [...PAUSE_ROWS, ...nav];
+}
 
 // A plain show/hide toggle row's label.
 export function toggleRowLabel(rowId, enabled) {
   return `${PAUSE_ROW_TITLES[rowId]}: ${enabled ? 'ON' : 'OFF'}`;
+}
+
+// A navigation row's (audio/art/stats) label — static, no ON/OFF state.
+export function navRowLabel(rowId) {
+  return PAUSE_ROW_TITLES[rowId];
 }
 
 // The movement-toggle action row's label, off the player's own legacyMovement flag (undefined —
