@@ -181,23 +181,28 @@ export function stackedTileLayout(rect) {
 
 // #526-followup (new redesign, replacing the FOURTH rework's two-tile double-wide/half-height
 // shape): Jackson folded the passive/core slot INTO this same row, in the MIDDLE between X and
-// Y, rather than leaving it as Garage-only chrome. Sizing: X and Y are each 1.5 weapon-tile-widths,
-// the core tile 1 weapon-tile-width — 1.5 + 1 + 1.5 = 4, matching the 4-weapon row's own BARE
-// width (tiles + their internal gaps) below it. None of the three are "double-wide" any more
-// (that concept is gone); they are three DIFFERENTLY-sized tiles in one row.
+// Y, rather than leaving it as Garage-only chrome.
 //
 // The row's OUTER edges matched the weapon row's own BARE span exactly at first — but #526-
 // followup2 (point 5, playtest) moved that to the weapon row's ARMORED span instead (bare tiles
 // widened by `ARMOR_PEEK_PAD` on each outer edge, the same footprint the armor backing behind each
-// weapon tile actually paints), so the 1.5/1/1.5 sizing lines up with what's actually visible below
-// it rather than the tiles hiding under that backing. See `SHIELD_ARC.overhang` (healthReadout.js)
+// weapon tile actually paints), so the sizing lines up with what's actually visible below it
+// rather than the tiles hiding under that backing. See `SHIELD_ARC.overhang` (healthReadout.js)
 // for how the shield/console notch still gets an EQUAL margin against this row despite the two
-// footprints differing (point 1). The gap between the three tiles is `1.5×` the weapon row's own
-// gap: with the row's TOTAL width fixed (the armored weapon row's own span) and the three tile
-// widths fixed at 1.5/1/1.5× the armored weapon tile size, `1.5×gap` is the exact value that makes
-// `1.5size + gap' + 1size + gap' + 1.5size` equal that total. The core tile absorbs any leftover px
-// from rounding, so the OUTER two tiles' outer edges always land exactly on the row's own bounds
-// (never off by a stray rounded pixel).
+// footprints differing (point 1).
+//
+// #526-followup3 (playtest: "passive widening isn't wide enough — let it take as much space as
+// is available except for a small standardized gap"). The previous approach was a fixed ratio
+// split (1.5/1/1.5, later nudged to 1.35/1.3/1.35) of the weapon-tile width — no ratio nudge ever
+// read as wide enough, because the core/passive tile's share was still capped by the split rather
+// than by how much room was actually free. So this drops the ratio split entirely: X and Y each
+// get `ABILITY_MIN_W` — a small width sized only to fit their own content cleanly (the icon, sized
+// off `abilityH` per `stackedTileLayout`, is the dominant/tallest element; the corner bind badge
+// and the status subtitle underneath both need far less width than that) — and the core/passive
+// tile absorbs EVERY remaining pixel between them. The three tiles are separated by the row's own
+// standard `gap` (the same constant the weapon row below it uses), not a widened one, so the row's
+// total span still matches the weapon row's ARMORED width exactly.
+export const ABILITY_MIN_W_RATIO = 1.25; // × abilityH — tunable if X/Y still feel cramped or bloated in play.
 export function weaponAbilityRows(x, w, {
   bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER, coreLoc = CORE_SLOTS[0],
   // #526-followup2 (point 4, playtest: "add a gap between the ability/passive row and the weapon
@@ -211,33 +216,22 @@ export function weaponAbilityRows(x, w, {
 } = {}) {
   const weapons = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
   if (!weapons.length) return { weapons, abilities: [], top: bottom };
-  // #526-followup2 (point 5, playtest: "ability tile widths should be based on the ARMORED weapon
-  // footprint, not the bare tile"): the armor backing behind each weapon tile is a bigger rounded
-  // square than the tile itself (`ARMOR_PEEK_PAD` bigger on every side, HudScene.js), so the
-  // weapon row's true VISIBLE span is wider than its bare tile rects by `ARMOR_PEEK_PAD` on each
-  // outer edge. `size` (the unit the 1.5×/1×/1.5× math scales against) and the row's own bounds
-  // both now measure that armored footprint, so the ability row lines up with what's actually on
-  // screen below it rather than the bare tiles underneath the armor.
-  const size = weapons[0].w + ARMOR_PEEK_PAD * 2;
-  const last = weapons[weapons.length - 1];
   // The row's own ARMORED bounds: the bare weapon row's span, widened by the armor backing peeking
   // out past the first/last tile on each side (mirrors `CONSOLE_TILES.gap`'s own widening logic).
+  const last = weapons[weapons.length - 1];
   const rowX = weapons[0].x - ARMOR_PEEK_PAD;
   const rowW = (last.x + last.w - weapons[0].x) + ARMOR_PEEK_PAD * 2;
   const abilityH = Math.round(weapons[0].h / 2);
   const abilityTop = weapons[0].y - rowGap - abilityH;
-  const abilityGap = gap * 1.5;
-  // #526 playtest follow-up: "shield/AMS slot should be wider" — nudged the split from the
-  // original 1.5/1/1.5 to 1.35/1.3/1.35 (still summing to 4x weapon-tile-widths, so the row
-  // keeps lining up with the weapon row below). Tunable, not locked — revisit if it still
-  // reads too narrow/wide in play.
-  const leftW = Math.round(size * 1.35);
-  const rightW = Math.round(size * 1.35);
-  // The core tile takes whatever's left of the row's fixed total width — nominally `size`, but
-  // this is what keeps the OUTER edges exact regardless of the `Math.round`s above.
-  const midW = Math.max(0, rowW - leftW - rightW - abilityGap * 2);
-  const midX = rowX + leftW + abilityGap;
-  const rightX = midX + midW + abilityGap;
+  // X/Y get just enough width to fit their content (icon + corner bind badge + status text)
+  // cleanly — see the module doc above. The core/passive tile fills everything left over between
+  // them, separated from each by the row's own standard `gap` (same constant as the weapon row).
+  const minAbilityW = Math.round(abilityH * ABILITY_MIN_W_RATIO);
+  const leftW = minAbilityW;
+  const rightW = minAbilityW;
+  const midW = Math.max(0, rowW - leftW - rightW - gap * 2);
+  const midX = rowX + leftW + gap;
+  const rightX = midX + midW + gap;
   const abilities = [
     { loc: abilityOrder[0], x: rowX, y: abilityTop, w: leftW, h: abilityH },
     { loc: coreLoc, x: midX, y: abilityTop, w: midW, h: abilityH },
