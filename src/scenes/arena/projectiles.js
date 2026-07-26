@@ -479,23 +479,58 @@ export const ProjectilesMixin = {
     }
   },
 
-  // #492 playtest follow-up: a brief jagged bolt from a travelAoe round (Caustic Lobber) to
-  // whatever it just damaged this tick — reads as the cloud "reaching out and striking" its
-  // victims instead of damage happening invisibly. Drawn into `projFx`, already cleared/redrawn
-  // this frame by `_updateProjectiles` above, so it needs no lifetime/cleanup of its own — it's
-  // just gone next frame unless the tick fires again.
+  // #492 playtest follow-up: a brief bolt from a travelAoe round (Caustic Lobber, currently the
+  // only weapon using travelAoe) to whatever it just damaged this tick — reads as the cloud
+  // "reaching out and striking" its victims instead of damage happening invisibly. Drawn into
+  // `projFx`, already cleared/redrawn this frame by `_updateProjectiles` above, so it needs no
+  // lifetime/cleanup of its own — it's just gone next frame unless the tick fires again.
   // Playtest follow-up #3 (2026-07-25, #492): "slightly thicker tendrils" — lineStyle width
   // 2 -> 3.
+  // Playtest follow-up #4 (2026-07-26, #492): "tendrils should also be purple and should have
+  // more range and be more spooky tendrilly." Three changes:
+  //   * colour — was `p.color` (the ballistic category's orange), which never matched the
+  //     shadow-orb reskin. Now hardcoded to the same violet palette `art/projectiles/shadow.js`
+  //     already established for this round (`0x5c1f8a` dark wisp / `0xb060e0` bright violet eye),
+  //     ignoring `p.color` on purpose — exactly like `shadow.js` ignores the passed-in category
+  //     colour, so the orb and its tendrils read as one consistent shadow-magic effect.
+  //   * range — the reach is `p.travelAoe.radius` (bumped 130 -> 175 in weapons.js), not
+  //     anything in here; a farther-reaching cloud means tendrils now visibly stretch out to
+  //     victims standing farther from the canister.
+  //   * "more spooky/tendrilly" — was a single 2-segment jagged line. Now TWO independently
+  //     wandering strands, each a short sinuous polyline (a sine-shaped bow plus per-segment
+  //     jitter, not just one midpoint kink) so it reads as writhing tendrils rather than a
+  //     single bolt. Each strand is drawn twice — a soft wide dark-violet glow underneath, then
+  //     a thin bright-violet core on top — for a wispy, layered look consistent with the orb's
+  //     own soft-haze-plus-hot-core treatment.
   _drawAoeTendril(p, tx, ty) {
     const g = this.projFx;
-    const midX = (p.x + tx) / 2 + (Math.random() - 0.5) * 14;
-    const midY = (p.y + ty) / 2 + (Math.random() - 0.5) * 14;
-    g.lineStyle(3, p.color, 0.85);
-    g.beginPath();
-    g.moveTo(p.x, p.y);
-    g.lineTo(midX, midY);
-    g.lineTo(tx, ty);
-    g.strokePath();
+    const dx = tx - p.x, dy = ty - p.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = -dy / dist, ny = dx / dist;   // unit perpendicular, for sideways wander
+    const GLOW = 0x5c1f8a, CORE = 0xb060e0;   // shadow.js's dark-wisp / bright-eye violets
+
+    for (let strand = 0; strand < 2; strand++) {
+      const segs = 4;
+      const bowSign = strand === 0 ? 1 : -1;
+      const bowAmt = 9 + strand * 5;
+      const pts = [];
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const bow = Math.sin(t * Math.PI) * bowAmt * bowSign;
+        const jitter = (Math.random() - 0.5) * 7;
+        pts.push({
+          x: p.x + dx * t + nx * (bow + jitter),
+          y: p.y + dy * t + ny * (bow + jitter),
+        });
+      }
+      for (const [width, color, alpha] of [[5, GLOW, 0.28], [2, CORE, 0.85 - strand * 0.2]]) {
+        g.lineStyle(width, color, alpha);
+        g.beginPath();
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+        g.strokePath();
+      }
+    }
   },
 
   // #491/#499: `p.force` (a weapon's `delivery.force`) pushes or pulls every living enemy within

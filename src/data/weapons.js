@@ -480,13 +480,18 @@ export const WEAPONS = {
     //     canister, so it no longer looks like a smaller napalm round.
     //   * the damage tendril (`_drawAoeTendril`, scenes/arena/projectiles.js) is drawn thicker —
     //     tuned there since it's shared drawing code, not a per-weapon field.
+    // Playtest follow-up #4 (2026-07-26, #492): "tendrils should also be purple and should have
+    // more range and be more spooky tendrilly." travelAoe.radius 130 -> 175 (+35%, still below
+    // the force-field radii at 190/210) so the tendrils reach visibly farther; the tendril
+    // recolor + more-elaborate sinuous-strand treatment lives in `_drawAoeTendril` itself
+    // (scenes/arena/projectiles.js) since it's shared drawing code, not a per-weapon field.
     id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
     damage: 18, range: { min: 40, opt: 700, max: 900 },
     ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'straight', velocity: 130,   // deliberately slow — the "cloud" has to linger to matter
       splash: 30, kind: 'shadow', scale: 1.6, ignoresEnemyHit: true,
-      travelAoe: { radius: 130, dps: 14 },
+      travelAoe: { radius: 175, dps: 14 },
     },
   }),
   timedCharge: w({   // #488: reworked from a timed mid-air detonation into an actual MINEFIELD

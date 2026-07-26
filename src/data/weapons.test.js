@@ -320,3 +320,19 @@ describe('Proximity Mines (timedCharge) polish pass', () => {
     expect(WEAPONS.timedCharge.delivery.hazard).toMatchObject({ kind: 'mine', radius: 55, damage: 30 });
   });
 });
+
+describe('Caustic Lobber (#492) — shadow-magic reskin tuning', () => {
+  it('is the shadow-orb kind and drifts through enemies rather than detonating on contact', () => {
+    const { kind, ignoresEnemyHit } = WEAPONS.causticLobber.delivery;
+    expect(kind).toBe('shadow');
+    expect(ignoresEnemyHit).toBe(true);
+  });
+
+  it('reaches farther with each tuning pass (playtest follow-up #4: 130 -> 175, +35%, still ' +
+      'under the force-field radii at 190/210)', () => {
+    const { travelAoe } = WEAPONS.causticLobber.delivery;
+    expect(travelAoe.radius).toBe(175);
+    expect(travelAoe.radius).toBeGreaterThan(130);
+    expect(travelAoe.dps).toBe(14);
+  });
+});
