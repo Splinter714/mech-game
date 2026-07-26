@@ -20,6 +20,13 @@ describe('shop economy', () => {
     expect(costOf('totallyMadeUpWeapon')).toBeGreaterThan(0);
   });
 
+  // #499: shelving a weapon (data/weapons.js SHELVED_WEAPON_IDS) removes it from WEAPON_IDS,
+  // which SHOPPABLE_IDS is derived from — so a shelved weapon is unbuyable/unmountable
+  // without needing its own carve-out here.
+  it('a shelved weapon (Repulsor Pulse) is not shoppable', () => {
+    expect(SHOPPABLE_IDS).not.toContain('repulsorPulse');
+  });
+
   it('canAfford compares balance against cost', () => {
     const id = SHOPPABLE_IDS.find((i) => costOf(i) > 0);
     const price = costOf(id);
