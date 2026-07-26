@@ -15,9 +15,9 @@ import {
   WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, CORE_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
-import { PadEdges, PAD } from '../input/Controls.js';
+import { PadEdges, PAD, SKILL_BINDS } from '../input/Controls.js';
 import { TILE_ORDER, HUD_ABILITY_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
-import { stepIndex } from '../ui/padNav.js';
+import { stepIndex, slotBindAction } from '../ui/padNav.js';
 import { LAB_TABS, nextLabTab, labTabForSlotKind, TAB_DEFAULT_SLOT } from '../ui/labTabs.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
@@ -79,6 +79,18 @@ function hexColor(n) {
 
 // Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
 const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
+
+// #539: the four weapon skill slots' own arena fire-bind buttons, reversed from SKILL_BINDS
+// (Controls.js is the single source of truth for the location→pad-label mapping, so this
+// derives from it rather than hardcoding which button owns which slot) into pad-label→location,
+// so a slot-bind button press can look up ITS location directly. Restores the pre-#505 "catalog-
+// first" pad shortcut (#70, f45485d): while a weapon is pad-focused in the catalog, pressing the
+// slot's own fire bind mounts it straight into that slot, a one-press alternative to #533's
+// two-step A-then-place flow. Abilities have no equivalent — they mount via Y/X (ABILITY_BINDS),
+// which don't collide with these four, so there's nothing to reverse-map for them.
+const LOCATION_BY_SLOT_PAD_LABEL = Object.fromEntries(
+  Object.entries(SKILL_BINDS).map(([loc, bind]) => [bind.pad, loc])
+);
 
 // #529: the per-column tab strip (chassis+color/weapon/ability/passive) that replaced the old
 // scene-level "MECH LAB" tab-bar button.
@@ -877,6 +889,28 @@ export default class GarageScene extends Phaser.Scene {
     return col.mech.usedSlots(loc) >= 1 ? col.mech.mounts[loc][0] : null;
   }
 
+  // #539: LT/RT/LB/RB pressed while a weapon is catalog-focused mounts it straight into the
+  // slot that button fires in the arena — a one-press shortcut alongside #533's two-step
+  // A-then-place flow, restored after being silently dropped somewhere across the #505/#529/#532
+  // Garage rewrites. Only live on the weapon tab (the merged chassis+color, ability and passive
+  // tabs have no catalog focus these four locations could ever target — WEAPON_SLOTS is the
+  // whole of TILE_ORDER, so `loc` here is always weapon-kind). Funnels through the exact same
+  // `_mountInto` a mouse click or the A-then-place flow already uses (same lock/purchase gate and
+  // canMount validation), so this is a genuine shortcut, not a parallel path. `slotBindAction`
+  // (padNav.js) says whether there's anything to do: nothing catalog-focused, or the slot already
+  // holds exactly that item, is a no-op — a slot bind only ever mounts, never clears.
+  _slotBind(col, loc) {
+    if (!col || !loc || LAB_TABS[col.labTab].id !== 'weapon') return;
+    const highlightedId = col.catalogList.focusedId();
+    if (slotBindAction(this._mountedIn(col, loc), highlightedId) !== 'mount') return;
+    if (isWeapon(highlightedId) && !this.unlocked.has(highlightedId)) { this._purchase(highlightedId); return; }
+    // Mid #533 placement, a slot bind decides the destination outright — same reasoning as a
+    // direct mouse pick on a tile (_clickCatalogItem): abandon the in-progress two-step pick
+    // rather than leave it stranded.
+    if (col.navMode === 'placing') this._cancelPlacement(col);
+    this._mountInto(col, loc, highlightedId);
+  }
+
   _clickCatalogItem(col, id) {
     // #533: same reasoning as _selectSlot above — a direct mouse pick mid pad-placement mounts
     // straight into whatever tile is already selected (the old, pre-#533 mouse flow), so any
@@ -1056,8 +1090,8 @@ export default class GarageScene extends Phaser.Scene {
   // ── Per-player pad controls ──────────────────────────────────────────────────────────────────
   // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
   // every other player's. #533 rework: d-pad left/right cycles the column's own Mech Lab tab
-  // (chassis+color/weapon/ability/passive — same action LB/RB and, for column 0, keyboard '['/']'
-  // already drove — see _cycleLabTab/_navHorizontal), d-pad up/down navigates rows within that
+  // (chassis+color/weapon/ability/passive — column 0's keyboard '['/']' does the same —
+  // see _cycleLabTab/_navHorizontal), d-pad up/down navigates rows within that
   // tab's own list (_navRow), and A is the associated select button (_confirmOrSelect): direct-
   // equip for chassis/color/passive rows, or — for weapon/ability rows — moves the cursor to the
   // loadout tile row for a second A press to confirm which slot to place it into. Mid-placement,
@@ -1068,6 +1102,12 @@ export default class GarageScene extends Phaser.Scene {
   // directly and A/X cycled a pre-selected tile's mount forward/back — colour is now one more row
   // on the merged chassis+color tab's own list (_activateListFocus), reached the same way any
   // other row is: navigate to it, press A.
+  //
+  // #539: LB/RB used to ALSO double as tab-cycle (redundant with D-pad left/right and, for
+  // column 0, the '['/']' keys — see _cycleLabTab/_navHorizontal), but they're the real arena
+  // fire binds for leftTorso/rightTorso (SKILL_BINDS), so they now carry the restored slot-bind
+  // quick-mount instead (alongside LT/RT for the two arms) — nothing is lost since tab-cycle is
+  // still fully reachable via D-pad left/right. See _slotBind for what these four presses do.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -1079,8 +1119,10 @@ export default class GarageScene extends Phaser.Scene {
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
       if (e.pressed(PAD.SELECT)) { this._toggleReady(i); continue; }
-      if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
-      if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
+      if (e.pressed(PAD.LB)) { this._slotBind(col, LOCATION_BY_SLOT_PAD_LABEL.LB); continue; }
+      if (e.pressed(PAD.RB)) { this._slotBind(col, LOCATION_BY_SLOT_PAD_LABEL.RB); continue; }
+      if (e.pressed(PAD.LT)) { this._slotBind(col, LOCATION_BY_SLOT_PAD_LABEL.LT); continue; }
+      if (e.pressed(PAD.RT)) { this._slotBind(col, LOCATION_BY_SLOT_PAD_LABEL.RT); continue; }
       if (e.pressed(PAD.DPAD_LEFT)) { this._navHorizontal(col, -1); continue; }
       if (e.pressed(PAD.DPAD_RIGHT)) { this._navHorizontal(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
