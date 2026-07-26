@@ -21,6 +21,11 @@
 //   spreadJitter  degrees — randomizes each spread shot's angle (and adds a small random
 //             emission stagger) instead of an evenly-spaced, perfectly repeating fan; for
 //             weapons that should feel chaotic shot-to-shot (the flamethrower)
+//   scatterJitter fraction (0..1) — Proximity Mines polish pass: randomizes an ARCING spread
+//             shot's own LANDING DISTANCE by up to this fraction either way (delivery.js
+//             `scatterMaxDist`). Distinct from spreadJitter above (launch angle only) — every
+//             arcing spread weapon before this sent every fanned shot the exact same travel
+//             budget. 0/undefined (every other weapon) is a no-op.
 //   cluster   spread rounds fly as a tight parallel clump (no fan) — dumbfire cluster
 //   fireRate  shots per second for a `stream` weapon (machine gun / beam laser)
 //   burst     { interval } — marks the weapon as a BURST and sets the ms gap between its
@@ -480,12 +485,26 @@ export const WEAPONS = {
     // (data/aoe.js's blast math, but triggered by an enemy walking near it later rather than on
     // impact — see scenes/arena/projectiles.js `_plantHazard`/`_updateHazards`). Lets you blanket
     // a doorway/chokepoint with 5 mines in one pull rather than placing one at a time.
-    id: 'timedCharge', name: 'Timed Charge', category: 'ballistic',
+    // Polish pass: renamed 'Timed Charge' -> 'Proximity Mines' — the id (and every save/roster
+    // reference to it) stays `timedCharge` on purpose, only the player-facing name changes, so
+    // it actually reads as a mine rather than a grenade.
+    id: 'timedCharge', name: 'Proximity Mines', category: 'ballistic',
     damage: 30, range: { min: 0, opt: 150, max: 190 },   // short + absolute: aim only steers direction, not distance
     ammoMax: 4, slots: 2, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
       pattern: 'spread', count: 5, spreadAngle: 55,
+      // Polish pass: a noticeably taller lob (arcBump 1.3 vs the shared ARC_LOFT_BUMP of 0.6 —
+      // see delivery.js) so the toss visibly arcs like a thrown mine instead of a flat dart.
+      arcBump: 1.3,
+      // Polish pass: `spreadJitter` (the existing "randomize a fan's launch angle" field, #46/
+      // #220) so the 5 mines' angular spacing isn't a perfectly even fan every pull.
+      spreadJitter: 18,
+      // Polish pass: `scatterJitter` (delivery.js `scatterMaxDist`) randomizes each mine's own
+      // landing DISTANCE by up to ±35% — spreadJitter above only varies launch angle, and no
+      // weapon before this needed per-shot distance variance, so the 5 mines used to land in a
+      // perfectly even ring. Now they scatter at varied radii too.
+      scatterJitter: 0.35,
       hazard: { kind: 'mine', radius: 55, damage: 30, armDelay: 0.3, life: 7 },
     },
   }),

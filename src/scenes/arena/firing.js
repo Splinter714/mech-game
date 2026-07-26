@@ -6,7 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, wrapAngle } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
@@ -841,6 +841,10 @@ export const FiringMixin = {
         // range and Swarm Rack's flight path.
         maxDist = arcMaxDist(x, y, aimAngle, tgt, maxRange, w.weapon.range?.opt ?? 160);
       }
+      // Polish pass (Proximity Mines): an opt-in per-shot landing-distance jitter, applied AFTER
+      // the shared travel budget above is resolved — see delivery.js `scatterMaxDist`. A no-op
+      // for every weapon that doesn't set `delivery.scatterJitter`.
+      if (d.scatterJitter) maxDist = scatterMaxDist(maxDist, d.scatterJitter);
       // #376: CONSTANT HORIZONTAL SPEED. This deliberately replaces the old constant-apex
       // rule ("hold flight time fixed so every arc peaks at the same height", which derived
       // speed as maxDist / (opt / velocity)). That made velocity a function of RANGE — a
