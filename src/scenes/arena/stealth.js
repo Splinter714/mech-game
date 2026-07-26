@@ -38,21 +38,41 @@ export function isPlayerStealthed(scene, player) {
   return smokeBlocksPoint(scene.players, player.x, player.y);
 }
 
-// #507 second visual pass (owner playtest: "needs to still be way more smoke-like instead of
-// just a few simple circular-ish shapes" — the first pass's 7 discrete puff circles still read
-// as a handful of shapes, not smoke). This codebase has no true Phaser particle emitter
-// anywhere; the closest established convention for "irregular volumetric FX from plain shapes"
-// is combat.js's `_deathFx` fireball — several randomly-offset overlapping circle blobs instead
-// of one clean circle. This pass leans into that idea much harder: instead of 7 lone circles,
-// SMOKE_CLUSTER_COUNT loose "clusters" are scattered through the cloud (denser near the middle,
-// same sqrt-biased scatter as before), and each cluster is itself several overlapping sub-blobs
-// at randomized offsets/radii/alpha/tint — so the silhouette is ragged at every scale, not one
-// layer of circles. No stroke anywhere (a hairline edge is what made the old version read as a
-// UI shape rather than haze). Every sub-blob gets two independent, staggered, endlessly-
-// repeating tweens: a slow positional "drift" wander (so puffs visibly roil instead of
-// breathing in place) and a scale/alpha "breathe" cycle (the billowing read). Neither tween
-// ever touches `ox`/`oy`, which is only ever read at spawn time and has nothing to do with the
-// LOS/stand-in-cloud checks above (those key off `cloud.x/y/radius`, untouched by this pass).
+// #507 THIRD visual pass (owner playtest, after the second pass's 11-cluster/sub-blob rework:
+// "still reads as blobs, not smoke texture"). Both prior passes drew every puff with Phaser
+// `Graphics.fillCircle` — no matter how many circles, how varied their size, or how much drift/
+// breathing animation is layered on, a `fillCircle` has a hard geometric edge (even at low alpha
+// the boundary is still a perfect circle), so it structurally cannot read as soft haze. That
+// needed a different rendering technique, not another iteration on "more circles."
+//
+// This pass switches to the SAME technique every other texture in this game uses (art/_frames.js
+// header, mechArt.js `desaturateTexture`): bake a texture once, then stamp cheap GameObject
+// instances of it at runtime. The bake itself uses real Canvas 2D radial gradients
+// (`createRadialGradient` — see `bakeSmokePuffTexture` below) instead of a flat fill: a gradient
+// fades smoothly from an opaque-ish core to fully-transparent at the rim, which has no edge at
+// all to read as a shape. `scaledGraphics`/`gen()` can't do this (Graphics has no gradient
+// primitive), so this bakes straight onto a Phaser `CanvasTexture`'s own 2D context, exactly like
+// `desaturateTexture` already does for Cloak's greyscale bake — same API, same guard pattern for
+// hand-rolled test scenes.
+//
+// `this.add.particles` (Phaser's built-in emitter) was considered and rejected: this codebase has
+// deliberately never used a live particle system anywhere (checked), every other FX/texture is a
+// baked-texture-plus-manually-animated-GameObject (muzzle flashes, glow overlays, drone views,
+// the death fireball), and introducing the first-ever particle emitter for one effect would add a
+// whole second animation paradigm (its own update loop, its own tween-vs-emitter-config split)
+// for no benefit over just tweening stamped Image instances the same way every other ambient FX
+// in this file already does. Staying with hand-stamped sprites keeps smoke consistent with the
+// rest of the game's "bake once, animate a plain GameObject" convention.
+//
+// The scatter/cluster geometry (loose "clusters" of a few overlapping sub-blobs, sqrt-biased
+// toward the centre) is UNCHANGED from the second pass — that part was never the problem, only
+// what got drawn at each position. Each sub-blob is now one stamped Image of a baked puff
+// texture (randomly one of SMOKE_TEX_VARIANT_COUNT mottled variants, so instances don't look
+// identical when overlapping) instead of a `Graphics` circle. The same two staggered, endlessly-
+// repeating tweens as before ride on top — a slow positional "drift" wander and a scale/alpha
+// "breathe" cycle — neither ever touches `ox`/`oy`, which is only read at spawn time and has
+// nothing to do with the LOS/stand-in-cloud checks above (those key off `cloud.x/y/radius`,
+// untouched by this pass).
 const SMOKE_CLUSTER_COUNT = 11;         // loose "clusters" scattered through the cloud
 const SMOKE_SUBBLOBS_MIN = 2;           // each cluster is 2-3 overlapping sub-blobs, not one circle
 const SMOKE_SUBBLOBS_MAX = 3;
@@ -61,7 +81,74 @@ const SMOKE_PUFF_MAX_FRAC = 0.5;
 const SMOKE_SCATTER_FRAC = 0.7;         // cluster centres land within this fraction of the cloud radius
 const SMOKE_SUBBLOB_JITTER_FRAC = 0.4;  // sub-blob offset from its cluster centre, as a frac of cluster radius
 const SMOKE_COLOR = 0xc8d2dd;
-const SMOKE_COLOR_DARK = 0x9aa3ad;      // a second, slightly darker tint mixed in for shading/depth
+const SMOKE_COLOR_DARK = 0x9aa3ad;      // a second, slightly darker tint mixed into the gradient bake
+
+// --- Baked puff texture (the actual fix) -----------------------------------------------------
+// Bake resolution: a puff instance's on-screen radius `r` is achieved by scaling this texture,
+// never by redrawing it, so one bake covers every size the scatter logic produces.
+const SMOKE_TEX_SIZE = 256;
+// A few mottled variants so overlapping instances never look like the same stamp repeated.
+const SMOKE_TEX_VARIANT_COUNT = 3;
+export const SMOKE_TEX_KEYS = Array.from({ length: SMOKE_TEX_VARIANT_COUNT }, (_, i) => `smokePuff${i}`);
+
+function smokeRgba(hex, a) {
+  return `rgba(${(hex >> 16) & 0xff},${(hex >> 8) & 0xff},${hex & 0xff},${a})`;
+}
+
+// Bake ONE soft smoke-puff texture onto a Phaser CanvasTexture's real 2D context. A big central
+// gradient (opaque-ish core → fully transparent at its own radius, no stroke, no hard edge of any
+// kind) plus 4-6 smaller offset "wisp" gradients — mixed SMOKE_COLOR/SMOKE_COLOR_DARK, randomized
+// position/size/alpha/squash — blended on top so the silhouette is mottled and asymmetric rather
+// than a smooth disc. Idempotent (no-ops if `key` already exists), same as `gen()`.
+function bakeSmokePuffTexture(scene, key) {
+  if (scene.textures.exists(key)) return key;
+  if (typeof scene.textures.createCanvas !== 'function') return key;
+  const size = SMOKE_TEX_SIZE;
+  const tex = scene.textures.createCanvas(key, size, size);
+  const ctx = tex?.context;
+  if (!ctx) return key;
+  const cx = size / 2, cy = size / 2;
+  const coreR = size * 0.39;
+
+  const blob = (ox, oy, r, color, alpha, sx, sy) => {
+    ctx.save();
+    ctx.translate(cx + ox, cy + oy);
+    ctx.scale(sx, sy);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0, smokeRgba(color, alpha));
+    g.addColorStop(0.55, smokeRgba(color, alpha * 0.5));
+    g.addColorStop(1, smokeRgba(color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  // Main body: one dominant soft core, very slightly squashed so even the base shape isn't a
+  // perfect circle before any wisps land on it.
+  blob(0, 0, coreR, SMOKE_COLOR, 0.65, 1, 0.88 + Math.random() * 0.18);
+  const wisps = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < wisps; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.random() * coreR * 0.5;
+    const wr = coreR * (0.3 + Math.random() * 0.4);
+    const color = Math.random() < 0.5 ? SMOKE_COLOR_DARK : SMOKE_COLOR;
+    blob(Math.cos(a) * d, Math.sin(a) * d, wr, color, 0.22 + Math.random() * 0.2,
+      0.75 + Math.random() * 0.5, 0.75 + Math.random() * 0.5);
+  }
+  tex.refresh();
+  return key;
+}
+
+// Bake every puff variant once. Guarded for hand-rolled test scenes that stub `textures.exists`
+// to always report true (same pattern as friendlyDrones.test.js) so real canvas/graphics work is
+// never exercised in unit tests — those assert spawn/despawn orchestration, not the pixel bake,
+// which has no meaningful assertable output of its own and is otherwise verified live.
+export function ensureSmokeTextures(scene) {
+  if (typeof scene.textures?.exists !== 'function') return;
+  for (const key of SMOKE_TEX_KEYS) bakeSmokePuffTexture(scene, key);
+}
 
 export const StealthMixin = {
   // #507: a static cloud at the player's CURRENT position when cast — deliberately doesn't
@@ -71,6 +158,7 @@ export const StealthMixin = {
   // it rather than this module reading the registry itself, same as burstAoeAt's radius/damage.
   _spawnSmokeCloud(player, radius) {
     this._despawnSmokeCloud(player);
+    ensureSmokeTextures(this);
     const puffs = [];
     for (let ci = 0; ci < SMOKE_CLUSTER_COUNT; ci++) {
       // sqrt(random) biases toward the centre (uniform-AREA scatter, not uniform-radius, which
@@ -82,24 +170,28 @@ export const StealthMixin = {
       const subCount = SMOKE_SUBBLOBS_MIN + Math.floor(Math.random() * (SMOKE_SUBBLOBS_MAX - SMOKE_SUBBLOBS_MIN + 1));
       for (let si = 0; si < subCount; si++) {
         // Sub-blobs jitter off their cluster's own centre so they overlap raggedly instead of
-        // stacking exactly — that overlap-of-offset-circles is what breaks up the silhouette.
+        // stacking exactly — that overlap-of-offset-textures is what breaks up the silhouette.
         const sa = Math.random() * Math.PI * 2;
         const sd = Math.random() * clusterR * SMOKE_SUBBLOB_JITTER_FRAC;
         const ox = cx + Math.cos(sa) * sd, oy = cy + Math.sin(sa) * sd;
         const r = clusterR * (0.45 + Math.random() * 0.6);
-        const color = Math.random() < 0.6 ? SMOKE_COLOR : SMOKE_COLOR_DARK;
-        const baseAlpha = 0.14 + Math.random() * 0.18;
-        const circle = this.add.circle(player.x + ox, player.y + oy, r, color, baseAlpha)
-          .setDepth(DEPTH.GROUND_FX);
-        puffs.push({ ox, oy, circle });
+        const texKey = SMOKE_TEX_KEYS[Math.floor(Math.random() * SMOKE_TEX_KEYS.length)];
+        const baseAlpha = 0.5 + Math.random() * 0.32;
+        const scale = (r * 2) / SMOKE_TEX_SIZE;
+        const view = this.add.image(player.x + ox, player.y + oy, texKey)
+          .setDepth(DEPTH.GROUND_FX)
+          .setScale(scale)
+          .setRotation(Math.random() * Math.PI * 2)
+          .setAlpha(baseAlpha);
+        puffs.push({ ox, oy, view });
 
         // Slow independent drift — wanders out and back over several seconds so the cloud
-        // visibly roils rather than reading as a scatter of circles glued in place. Purely
+        // visibly roils rather than reading as a scatter of puffs glued in place. Purely
         // cosmetic (never touches ox/oy, which is what the LOS/stand-in-cloud checks care about).
         const driftDist = r * (0.5 + Math.random() * 0.6);
         const driftAngle = Math.random() * Math.PI * 2;
         this.tweens?.add({
-          targets: circle,
+          targets: view,
           x: player.x + ox + Math.cos(driftAngle) * driftDist,
           y: player.y + oy + Math.sin(driftAngle) * driftDist,
           duration: 2200 + Math.random() * 2000, delay: Math.random() * 900,
@@ -108,8 +200,8 @@ export const StealthMixin = {
 
         // Staggered breathing size/alpha, independent per sub-blob — the "billowing" read.
         this.tweens?.add({
-          targets: circle,
-          scale: { from: 0.8, to: 1.3 }, alpha: { from: baseAlpha, to: baseAlpha * 0.4 },
+          targets: view,
+          scale: { from: scale * 0.8, to: scale * 1.3 }, alpha: { from: baseAlpha, to: baseAlpha * 0.4 },
           duration: 1000 + Math.random() * 1100, delay: Math.random() * 800,
           yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
         });
@@ -120,8 +212,8 @@ export const StealthMixin = {
 
   _despawnSmokeCloud(player) {
     for (const p of player.smokeCloud?.puffs ?? []) {
-      this.tweens?.killTweensOf?.(p.circle);
-      p.circle.destroy();
+      this.tweens?.killTweensOf?.(p.view);
+      p.view.destroy();
     }
     player.smokeCloud = null;
   },
