@@ -91,41 +91,47 @@ export function tileRow(x, w, { y, bottom, order = TILE_ORDER, n = order.length,
 const WIDE_ASPECT = 1.6;
 export function isWideTile(rect) { return rect.w > rect.h * WIDE_ASPECT; }
 
-// Pure geometry for a wide tile's content: a square icon on the left, sized off the tile's own
-// HEIGHT (the limiting dimension, so it actually fills the short tile instead of overflowing
-// it), and a text column (bind glyph + subtitle) filling the remaining width to the right.
-// Exported so the "always inside the rect, column never negative" invariant is unit-testable
-// without booting Phaser.
-export function wideTileLayout(rect, { pad = 6, iconGap = 8 } = {}) {
+// Pure geometry for a wide tile's content: a square icon, sized off the tile's own HEIGHT (the
+// limiting dimension, so it actually fills the short tile instead of overflowing it), followed by
+// a text column (bind glyph + subtitle) — but the icon+text PAIR is centered as one group within
+// the tile, rather than the icon pinned to the left pad and the text column stretched all the way
+// to the right pad. #506 follow-up (Jackson, after trying icon-left/text-right full width: "I like
+// the new ability art and text, although let's center it within the button") — pinning the icon
+// left and stretching the text column to the far pad left the visible content (a small icon plus
+// whatever short text happens to be showing) clustered on the left half of the tile with empty
+// space on the right, even though the abstract box was pad-symmetric. `colW` is capped to a
+// fraction of the tile's own width instead of filling every remaining pixel, so the icon+column
+// block has a real width to center — not the full tile. Exported so the "always inside the rect,
+// column never negative" invariant is unit-testable without booting Phaser.
+export function wideTileLayout(rect, { pad = 6, iconGap = 8, colWFrac = 0.46 } = {}) {
   const iconSize = Math.round(rect.h * 0.8);
-  const iconCx = Math.round(rect.x + pad + iconSize / 2);
+  const maxColW = Math.max(0, rect.w - pad * 2 - iconSize - iconGap);
+  const colW = Math.min(maxColW, Math.round(rect.w * colWFrac));
+  const totalW = iconSize + iconGap + colW;
+  const left = Math.round(rect.x + (rect.w - totalW) / 2);
+  const iconCx = Math.round(left + iconSize / 2);
   const iconCy = Math.round(rect.y + rect.h / 2);
-  const colX = Math.round(iconCx + iconSize / 2 + iconGap);
-  const colW = Math.max(0, rect.x + rect.w - pad - colX);
+  const colX = left + iconSize + iconGap;
   return { iconSize, iconCx, iconCy, colX, colW };
 }
 
-// #506 THIRD rework (playtest experiment, Jackson: "let's try moving [the ability row] below the
-// weapon buttons just to check out how that feels"): the ability row now owns the shared
-// `bottom` anchor `tileRow` always positions against, and the weapon row rides ABOVE it — a
-// straight swap of the SECOND rework's weapons-at-bottom/abilities-above arrangement, not a
-// runtime-togglable option. `tileRow` still supplies each weapon slot's SIZE/X (its own Y is
-// discarded and replaced below), so the horizontal math — width, gaps, centring — is exactly
-// what it always was; only which row sits where changed.
+// #506 FOURTH rework (reverting the THIRD's below-weapons experiment, Jackson: "I want 506 to
+// move the X/Y abilities back to being above the weapons, but I'm glad I tried it"): the ability
+// row is back to owning the space directly ABOVE the weapon row, which itself anchors to the
+// shared `bottom` — the SECOND rework's arrangement, restored. `tileRow` still supplies each
+// weapon slot's SIZE/X, so the horizontal math — width, gaps, centring — is exactly what it
+// always was; only which row sits where changed (again).
 export function weaponAbilityRows(x, w, {
   bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER,
   gap = 12, rowGap = 12, maxSize = 132,
 } = {}) {
-  const sized = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
-  if (!sized.length) return { weapons: [], abilities: [], top: bottom };
-  const size = sized[0].h;
-  const abilityH = Math.round(size / 2);
-  const abilityTop = bottom - abilityH;
-  const weaponTop = abilityTop - rowGap - size;
-  const weapons = sized.map((t) => ({ ...t, y: weaponTop }));
+  const weapons = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
+  if (!weapons.length) return { weapons, abilities: [], top: bottom };
   const half = Math.floor(weapons.length / 2);
   const leftPair = weapons.slice(0, half);
   const rightPair = weapons.slice(half);
+  const abilityH = Math.round(weapons[0].h / 2);
+  const abilityTop = weapons[0].y - rowGap - abilityH;
   const spanOf = (pair) => {
     const last = pair[pair.length - 1];
     return { x: pair[0].x, w: last.x + last.w - pair[0].x };
@@ -136,7 +142,7 @@ export function weaponAbilityRows(x, w, {
     { loc: abilityOrder[0], x: leftSpan.x, y: abilityTop, w: leftSpan.w, h: abilityH },
     { loc: abilityOrder[1], x: rightSpan.x, y: abilityTop, w: rightSpan.w, h: abilityH },
   ];
-  return { weapons, abilities, top: weaponTop };
+  return { weapons, abilities, top: abilityTop };
 }
 
 // Places every ABILITY_SLOTS entry around (cx, cy), using ABILITY_SLOT_LAYOUT's unit dx/dy
@@ -176,9 +182,9 @@ export function drawSkillTile(scene, parent, rect, opts) {
 
   let bind, icon, plus, subtitle;
   if (wide) {
-    // #506 THIRD rework: icon-left / text-right (see `wideTileLayout`) so a wide tile's content
-    // actually spans the double-wide rect, instead of a normal-tile-sized icon centered with a
-    // lot of empty space on both sides.
+    // Icon-left / text-right, but the pair is centered as one group within the rect (see
+    // `wideTileLayout`) — so a wide tile's content sits balanced in the double-wide rect instead
+    // of pinned to the left pad with empty space trailing off to the right.
     const L = wideTileLayout(rect);
     bind = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.1), '', {
       fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.34)}px`, color: TILE_UI.accent,

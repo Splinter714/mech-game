@@ -765,12 +765,12 @@ export default class HudScene extends Phaser.Scene {
     // matching weapon pair ("move x/y abilities in weapon HUD to double-wide half-height buttons
     // ... that sit in a single row above the 4 weapon buttons; so the X ability sits above the
     // left sided weapons and the Y ability above the right sided weapons").
-    // #506 THIRD rework (playtest experiment, Jackson: "let's try moving [the ability row] below
-    // the weapon buttons just to check out how that feels"): `weaponAbilityRows` now puts the
-    // ability row BELOW the weapon row instead of above it — see its own comment in
-    // ui/skillTiles.js. It still computes both rows off ONE shared width so they can never drift
-    // apart horizontally, and reports `top` = whichever row ended up physically highest (the
-    // weapon row, now), so this panel doesn't have to re-derive that itself below.
+    // #506 FOURTH rework (reverting the THIRD's below-weapons experiment, Jackson: "I want 506 to
+    // move the X/Y abilities back to being above the weapons, but I'm glad I tried it"):
+    // `weaponAbilityRows` once again puts the ability row ABOVE the weapon row — see its own
+    // comment in ui/skillTiles.js. It still computes both rows off ONE shared width so they can
+    // never drift apart horizontally, and reports `top` = whichever row ended up physically
+    // highest (the ability row, again), so this panel doesn't have to re-derive that itself below.
     // CONSOLE_TILES.n is back to 4 (hudLayout.js) since the ability row rides within the weapon
     // row's own span rather than adding to it.
     const { weapons: tiles, abilities: abilityTiles, top: rowsTop } =
@@ -837,10 +837,10 @@ export default class HudScene extends Phaser.Scene {
     // Only built for the mode that needs it, same as `fusedGfx` below.
     panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
-    // Skill tiles for THIS player's own mech: the top row is the four weapon slots (unchanged
-    // size/position from either earlier rework); the bottom row is the two mountable abilities in
-    // their own double-wide/half-height tiles, X over the left weapon pair and Y over the right
-    // (see the `weaponAbilityRows` note above — THIRD rework put abilities below, not above).
+    // Skill tiles for THIS player's own mech: the bottom row is the four weapon slots (unchanged
+    // size/position from any of the reworks); the top row is the two mountable abilities in their
+    // own double-wide/half-height tiles, X over the left weapon pair and Y over the right (see the
+    // `weaponAbilityRows` note above — back above the weapon row again, FOURTH rework).
     // The passive core slot deliberately gets no tile here at all (Jackson, playtest: "the
     // passive slot doesn't need to be represented during an actual deployment") — it stays
     // Garage-only chrome; GarageScene and SimulGarageScene still draw it via the original
@@ -861,15 +861,14 @@ export default class HudScene extends Phaser.Scene {
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
     // The block's outer TOP is whichever row `weaponAbilityRows` reported as physically highest
-    // (`rowsTop`) — the weapon row now (THIRD rework), the ability row before it. Falls back to
-    // the weapon row's own top if the rows call returned nothing (no tiles at all).
+    // (`rowsTop`) — the ability row again (FOURTH rework, reverted from the THIRD's weapon-row-on-
+    // top experiment). Falls back to the weapon row's own top if the rows call returned nothing
+    // (no tiles at all).
     panel.tileTop = rowsTop ?? rowTop;
-    // The block's outer box, so the console can recess one bay behind BOTH rows — its bottom
-    // edge is whichever row is now physically LOWEST (the ability row, anchored to the shared
-    // `bottom` line) rather than assuming it's always the weapon row.
-    const boxBottom = abilityTiles.length
-      ? abilityTiles[0].y + abilityTiles[0].h
-      : rowTop + last.h;
+    // The block's outer box, so the console can recess one bay behind BOTH rows — its bottom edge
+    // is now always the weapon row's own bottom (the ability row rides above it, anchored to the
+    // shared `bottom` line via the weapon row).
+    const boxBottom = rowTop + (last ? last.h : 0);
     panel.tileBox = tiles.length
       ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: boxBottom - panel.tileTop }
       : null;

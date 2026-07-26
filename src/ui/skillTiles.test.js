@@ -125,9 +125,10 @@ describe('isWideTile (#506 third rework)', () => {
 });
 
 // `wideTileLayout` is the pure geometry `drawSkillTile`/`updateSkillTile` use to lay a wide
-// tile's icon-left/text-right content out — pinned directly so the "always inside the rect,
-// column never negative" invariant doesn't depend on booting Phaser.
-describe('wideTileLayout (#506 third rework)', () => {
+// tile's icon-left/text-right content out, centered as one group within the tile — pinned
+// directly so the "always inside the rect, column never negative, centered as a group" invariant
+// doesn't depend on booting Phaser.
+describe('wideTileLayout (#506 follow-up: centered content)', () => {
   const rectFor = (weaponSize) => ({
     x: 20, y: 50, w: weaponSize * 2 + 12, h: Math.round(weaponSize / 2),
   });
@@ -158,24 +159,40 @@ describe('wideTileLayout (#506 third rework)', () => {
       expect(L.colX + L.colW).toBeLessThanOrEqual(rect.x + rect.w);
     }
   });
+
+  it('centers the icon+text group as a whole, rather than pinning the icon to the left pad', () => {
+    // #506 follow-up (Jackson: "let's center it within the button"): the icon no longer sits
+    // flush against the tile's left pad — the icon+gap+text block is centered, so it leaves
+    // roughly equal margin on both sides instead of hugging the left edge.
+    for (const weaponSize of [46, 92, 132]) {
+      const rect = rectFor(weaponSize);
+      const L = wideTileLayout(rect);
+      const leftMargin = (L.iconCx - L.iconSize / 2) - rect.x;
+      const rightMargin = (rect.x + rect.w) - (L.colX + L.colW);
+      // Not pinned to the minimum pad on the left — there's real breathing room on both sides,
+      // roughly balanced (within a pixel of rounding).
+      expect(leftMargin).toBeGreaterThan(6);
+      expect(Math.abs(leftMargin - rightMargin)).toBeLessThanOrEqual(2);
+    }
+  });
 });
 
-// #506 THIRD rework (playtest experiment): the ability row moved from above the weapon row to
-// below it. Pinned directly against the pure layout function (HudScene's own geometry tests in
-// hudPanels.test.js pin the same thing through the scene wiring).
-describe('weaponAbilityRows — ability row below the weapon row (#506 third rework)', () => {
-  it('anchors the ability row to `bottom` and puts the weapon row above it', () => {
+// #506 fourth rework (reverting the third's below-weapons experiment): the ability row is back to
+// riding ABOVE the weapon row. Pinned directly against the pure layout function (HudScene's own
+// geometry tests in hudPanels.test.js pin the same thing through the scene wiring).
+describe('weaponAbilityRows — ability row above the weapon row (#506 fourth rework)', () => {
+  it('anchors the weapon row to `bottom` and puts the ability row above it', () => {
     const bottom = 800;
     const { weapons, abilities, top } = weaponAbilityRows(0, 800, { bottom, maxSize: 92 });
     expect(weapons).toHaveLength(4);
     expect(abilities).toHaveLength(2);
-    // Abilities sit at the very bottom of the block...
-    expect(abilities[0].y + abilities[0].h).toBe(bottom);
-    // ...and the weapon row is physically ABOVE them (smaller y), separated by the row gap.
-    expect(weapons[0].y).toBeLessThan(abilities[0].y);
-    expect(abilities[0].y - (weapons[0].y + weapons[0].h)).toBe(12);   // default rowGap
-    // `top` reports whichever row is now highest — the weapon row.
-    expect(top).toBe(weapons[0].y);
+    // Weapons sit at the very bottom of the block...
+    expect(weapons[0].y + weapons[0].h).toBe(bottom);
+    // ...and the ability row is physically ABOVE them (smaller y), separated by the row gap.
+    expect(abilities[0].y).toBeLessThan(weapons[0].y);
+    expect(weapons[0].y - (abilities[0].y + abilities[0].h)).toBe(12);   // default rowGap
+    // `top` reports whichever row is now highest — the ability row.
+    expect(top).toBe(abilities[0].y);
   });
 
   it('still matches each ability tile\'s span exactly to its weapon pair', () => {
