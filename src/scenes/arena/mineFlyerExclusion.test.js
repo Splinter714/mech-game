@@ -7,9 +7,10 @@ function fakeEnemy(x, y, flying = false) {
   return { x, y, flying, mech: { isDestroyed: () => false } };
 }
 
-// `_drawHazard` (called every live frame, including a no-op mine tick) draws into `projFx` —
-// a minimal chainable stub covering the Graphics calls it makes, mirroring the real Phaser API
-// shape closely enough to no-op harmlessly.
+// `_drawHazard` (called every live frame, including a no-op mine tick) draws into `groundFx`
+// (#525 — moved off `projFx` so a planted mine renders at ground level, below units, instead of
+// at the in-flight-projectile depth) — a minimal chainable stub covering the Graphics calls it
+// makes, mirroring the real Phaser API shape closely enough to no-op harmlessly.
 function fakeGraphics() {
   const g = {
     lineStyle: () => g, strokeCircle: () => g, fillStyle: () => g, fillCircle: () => g,
@@ -23,7 +24,7 @@ function makeScene(enemies = []) {
     players: [],
     hazards: [],
     time: { now: 0 },
-    projFx: fakeGraphics(),
+    groundFx: fakeGraphics(),
     _damageEnemyAt: vi.fn(),
     _damagePlayerAt: vi.fn(),
     _impactFx: vi.fn(),

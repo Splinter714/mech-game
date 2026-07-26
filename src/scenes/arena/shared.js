@@ -85,7 +85,8 @@ export const DEPTH = {
   // tile (the black bay they cover) but below every unit and FX, so a mech driving onto a dock hex
   // renders over its doors, exactly like it renders over the floor. A hatch is part of the ground.
   DOCK_DOORS: 0.5,
-  GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch (projectiles.js)
+  GROUND_FX: 1,       // ground-hugging decals: napalm's burning-ground patch and #525's planted
+                      // hazards (Proximity Mines / Gravity Well — `_drawHazard`, projectiles.js)
   // #326 playtest bug (Jackson: "z-ordering on docks reinforcing animation is bad... it's too high
   // compared to the units that are coming out"). The dock resupply FX — the rising platform and its
   // glow (`_resupplyDock`, bases.js) — used to be built on IMPACT_FX (5), far above every unit

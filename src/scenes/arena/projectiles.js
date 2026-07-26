@@ -659,11 +659,18 @@ export const ProjectilesMixin = {
     if (this.hazards.some((hz) => hz.dead)) this.hazards = this.hazards.filter((hz) => !hz.dead);
   },
 
-  // Live visual for one planted hazard, drawn into `projFx` (already cleared/redrawn this frame
-  // by `_updateProjectiles`). A mine reads as a small pulsing warning light; a field reads as a
+  // Live visual for one planted hazard, drawn into `groundFx` (already cleared/redrawn this frame
+  // by `_updateFirePatches`, which now runs first — see the call-order comment in
+  // ArenaScene.update). A mine reads as a small pulsing warning light; a field reads as a
   // swirling dark-purple pull orb — a few dots orbiting the center, faster the longer it's lived.
+  // #525 (playtest: "z-order of placed mines is too high"): this used to draw into `projFx`
+  // (DEPTH.PROJECTILES, above every unit) — a mine sitting on the ground rendered OVER the player
+  // and enemy mechs standing on top of it, same root cause #99 already fixed once for napalm's
+  // burning-ground patch (see the DEPTH.GROUND_FX comment in shared.js and `_updateFirePatches`
+  // below). A planted hazard is ground-level exactly like that patch, so it moves to the same
+  // `groundFx` layer (DEPTH.GROUND_FX) for the same reason.
   _drawHazard(hz) {
-    const g = this.projFx;
+    const g = this.groundFx;
     const now = this.time.now;
     if (hz.kind === 'mine') {
       const pulse = 0.5 + 0.5 * Math.sin(now / 160);
