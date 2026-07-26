@@ -373,6 +373,17 @@ export class WeaponSfxPanel {
     const state = getOverrideRowState(weaponId, stage);
     if (!state.active) return y;
 
+    // #542: self-heal a pool whose variants drifted out of sync BEFORE #209's shared-tuning
+    // model existed (each variant used to carry its own independent volume/trim/etc, under the
+    // per-variant UI #209 replaced) — a pool tuned back then and never touched again since has
+    // no live edit to trigger editShared's syncTuningToVariants below, so it stays permanently
+    // inconsistent (this is legLift's actual bug: its 6 variants were volume-tuned pre-#209 and
+    // never resynced). Simply re-running syncTuningToVariants here means opening this stage's
+    // editor repairs an inconsistent pool with no edit required — a pure re-propagation of
+    // variant 0's CURRENT tuning onto every other loaded variant, a no-op for an
+    // already-consistent pool (idempotent, exactly what every real edit below already triggers).
+    syncTuningToVariants(weaponId, stage);
+
     const editShared = (fn) => {
       this._editOverride(weaponId, stage, () => {
         fn();
