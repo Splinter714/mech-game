@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
-import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
+import { mechColorFor, cycleSwatch } from '../data/mechColors.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
@@ -14,13 +14,14 @@ import {
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
+import { TILE_ORDER, drawSkillTile, updateSkillTile, coreTileRect } from '../ui/skillTiles.js';
 import { stepIndex, cycleListId } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
+import { garageColumnLayout, HEADER_H as COL_HEADER_H } from './garage/columnLayout.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 
@@ -135,6 +136,14 @@ export default class GarageScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-B', () => this.scene.start('BaseScene'));
     this.input.keyboard.on('keydown-PERIOD', () => this._cycleColor(this.cols[0], +1));
     this.input.keyboard.on('keydown-COMMA', () => this._cycleColor(this.cols[0], -1));
+    // #505 THIRD rework (playtest, Jackson: "arrow keys should function the same as d-pad in the
+    // garage") — the exact same actions column 0's own PadEdges drives off DPAD_LEFT/RIGHT/UP/
+    // DOWN in update() below, just off keyboard events instead of a per-frame pad poll. Shares
+    // _cycleColor/_stepSlot with the pad path rather than duplicating the mapping.
+    this.input.keyboard.on('keydown-LEFT', () => this._cycleColor(this.cols[0], -1));
+    this.input.keyboard.on('keydown-RIGHT', () => this._cycleColor(this.cols[0], 1));
+    this.input.keyboard.on('keydown-UP', () => this._stepSlot(this.cols[0], -1));
+    this.input.keyboard.on('keydown-DOWN', () => this._stepSlot(this.cols[0], 1));
 
     // #523: ESC always opens the shared pause menu.
     wirePauseMenu(this);
@@ -201,40 +210,35 @@ export default class GarageScene extends Phaser.Scene {
     col.textureKey = `garageMech${i}`;
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
 
-    const w = this.colW, h = this.colH;
-    const pad = 8;
-    const innerW = w - pad * 2;
+    const w = this.colW, h = this.colH, pad = 8;
+    // #505 THIRD rework (playtest, Jackson's five-part note): the loadout tile block below
+    // reuses the REAL shared HUD layout code (skillTiles.js `weaponAbilityRows`, the exact
+    // function HudScene.js's arena console calls) via garageColumnLayout — this file never
+    // decides tile sizing/position itself, so a future change to the shared layout (row order,
+    // sizing, icon content) applies here automatically once both land. The mech preview sits to
+    // its LEFT at the SAME HEIGHT as that block, and the player-number label moved out of the
+    // header down to just under the preview art. The colour-select swatch+label are gone from
+    // the visual layout entirely (still functional — see the D-pad/arrow-key handling below).
+    const gl = garageColumnLayout(w, h, { pad });
+    col.rects = { catalog: gl.catalog, pad, innerW: gl.innerW };
 
-    // Section heights, top to bottom: header, catalog, weapon row, ability row, preview, colour.
-    const HEADER_H = 30, WEAPON_ROW_H = 66, ABILITY_ROW_H = 56, PREVIEW_BOX = Math.min(150, innerW), COLOR_H = 30, GAP = 8;
-    const catalogY = HEADER_H + GAP;
-    const catalogH = Math.max(70, h - HEADER_H - WEAPON_ROW_H - ABILITY_ROW_H - PREVIEW_BOX - COLOR_H - GAP * 5);
-    const weaponY = catalogY + catalogH + GAP;
-    const abilityY = weaponY + WEAPON_ROW_H + GAP;
-    const previewY = abilityY + ABILITY_ROW_H + GAP;
-    const colorY = previewY + PREVIEW_BOX + GAP;
-
-    col.rects = { catalog: { x: pad, y: catalogY, w: innerW, h: catalogH }, weaponY, abilityY, previewY, colorY, pad, innerW };
-
-    // Header: player number (in their colour) + a clickable READY pill.
-    col.headerColor = this.add.rectangle(pad, 6, 12, 12, mechColorFor(col.mech, i)).setOrigin(0, 0);
-    col.headerLabel = this.add.text(pad + 18, 12, `PLAYER ${i + 1}`, {
-      fontFamily: 'monospace', fontSize: '13px', color: UI.text,
-    }).setOrigin(0, 0.5);
+    // Header band: just the passive core slot (left) and the clickable READY pill (right).
     col.readyBg = this.add.rectangle(w - pad - 70, 4, 70, 20, UI.btn).setOrigin(0, 0)
       .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this._toggleReady(i));
     col.readyText = this.add.text(w - pad - 35, 14, 'READY?', {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
     }).setOrigin(0.5);
-    col.layer.add([col.headerColor, col.headerLabel, col.readyBg, col.readyText]);
+    col.layer.add([col.readyBg, col.readyText]);
 
-    // The weapon-tile row (shared layout with the arena HUD) + the ability diamond + core tile.
+    // The loadout tiles — weapon row + ability row, drawn with the SAME shared tile-drawing code
+    // (drawSkillTile) the arena HUD uses, just with no HP/shield/armor panel chrome around them
+    // (HudScene.js draws those separately, alongside its own call into the same tile rects). The
+    // passive core slot isn't part of that shared HUD layout at all (HudScene deliberately omits
+    // it — it's Garage-only chrome), so it keeps its own small tile up in the header band.
     col.tileRefs = {};
-    for (const rect of tileRow(pad, innerW, { y: weaponY, maxSize: 60 })) this._drawColTile(col, rect);
-    const abilCx = pad + innerW / 2, abilCy = abilityY + ABILITY_ROW_H / 2;
-    for (const rect of diamondLayout(abilCx, abilCy, { size: 40 })) this._drawColTile(col, rect);
-    this._drawColTile(col, coreTileRect(abilCx, abilCy, 28));
+    for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
+    this._drawColTile(col, coreTileRect(pad + 12, COL_HEADER_H / 2, 24));
 
     // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
     // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
@@ -242,7 +246,7 @@ export default class GarageScene extends Phaser.Scene {
     // own top-level container rather than living inside col.layer, so it's positioned in WORLD
     // coordinates (this column's own screen offset + the local catalog rect below). Refiltered/
     // reselected whenever the selected slot or a mount changes, via _refreshCatalogList.
-    const cat = col.rects.catalog;
+    const cat = gl.catalog;
     col.catalogList = new WeaponCardList(this, {
       x: col.layer.x + cat.x, y: col.layer.y + cat.y, w: cat.w, h: cat.h, compact: true,
       ids: this._eligibleIds(col.selectedSlot),
@@ -254,31 +258,30 @@ export default class GarageScene extends Phaser.Scene {
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
 
-    // The live mech preview — built ONCE; every later mount/colour change re-bakes the SAME
-    // texture key in place (buildMechTextures/reskinMech), so these sprites never need rebuilding.
-    const previewCx = pad + innerW / 2, previewCy = previewY + PREVIEW_BOX / 2;
-    col.previewPanel = this.add.rectangle(previewCx, previewCy, PREVIEW_BOX, PREVIEW_BOX, 0x10151c)
+    // The live mech preview — LEFT of the tile block, the SAME HEIGHT as it (both rows
+    // together). Built ONCE; every later mount/colour change re-bakes the SAME texture key in
+    // place (buildMechTextures/reskinMech), so these sprites never need rebuilding.
+    const { cx: previewCx, cy: previewCy, w: previewW, h: previewH } = gl.preview;
+    col.previewPanel = this.add.rectangle(previewCx, previewCy, previewW, previewH, 0x10151c)
       .setStrokeStyle(1, UI.panelEdge);
-    const scale = (PREVIEW_BOX - 24) / 230;
+    const scale = (Math.min(previewW, previewH) - 24) / 230;
     col.previewScale = scale; col.previewCx = previewCx; col.previewCy = previewCy;
     col.preview = makeMechParts(this, col.textureKey, { x: previewCx, y: previewCy, scale, isPlayer: true });
     col.layer.add([col.previewPanel, ...col.preview.children]);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
 
-    // The colour cycle — bottom of the column. Click either half to cycle forward; the pad's
-    // d-pad left/right (see update()) is the primary control.
-    const cy = colorY + COLOR_H / 2;
-    col.colorSwatch = this.add.rectangle(pad + 10, cy, 14, 14, 0xffffff).setOrigin(0.5)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this._cycleColor(col, 1));
-    col.colorName = this.add.text(pad + 22, cy, '', {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.text,
-    }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true }).on('pointerdown', () => this._cycleColor(col, 1));
-    col.colorHint = this.add.text(w - pad, cy, '◀ ▶ D-PAD', {
-      fontFamily: 'monospace', fontSize: '9px', color: UI.dim,
-    }).setOrigin(1, 0.5);
-    col.layer.add([col.colorSwatch, col.colorName, col.colorHint]);
-    this._refreshColorControl(col);
+    // The player-number label — now sits directly under the preview art (Jackson: "any player1
+    // label should just be at the bottom below the mech preview art"), with the identity-colour
+    // dot right beside it instead of up in the header.
+    col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
+      fontFamily: 'monospace', fontSize: '12px', color: UI.text,
+    }).setOrigin(0.5, 0);
+    col.headerColor = this.add.rectangle(
+      col.headerLabel.x - col.headerLabel.width / 2 - 10, gl.label.y + col.headerLabel.height / 2,
+      9, 9, mechColorFor(col.mech, i),
+    ).setOrigin(0.5);
+    col.layer.add([col.headerLabel, col.headerColor]);
+
     this._refreshReady(col);
   }
 
@@ -342,6 +345,14 @@ export default class GarageScene extends Phaser.Scene {
     col.selectedSlot = loc;
     this._refreshAllTiles(col);
     this._refreshCatalogList(col);
+  }
+
+  // Step the focused slot forward/back through the seven-slot cycle (ALL_SLOTS) — shared by the
+  // pad's d-pad up/down (update(), below) and column 0's keyboard up/down arrows (create()), so
+  // the two devices are always driving the identical mapping rather than two copies of it.
+  _stepSlot(col, dir) {
+    if (!col) return;
+    this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), dir, ALL_SLOTS.length)]);
   }
 
   _mountedIn(col, loc) {
@@ -431,6 +442,12 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── Colour cycle ─────────────────────────────────────────────────────────────────────────────
+  // #505 THIRD rework: the dedicated colour-select SWATCH + NAME LABEL (and their "◀ ▶ D-PAD"
+  // hint) are gone from the visual layout — Jackson: "it's taking unnecessary space." The
+  // cycling itself is untouched: pad d-pad left/right (update(), below) and, new this rework,
+  // keyboard LEFT/RIGHT for column 0 (create(), mirroring the pad exactly — see the arrow-key
+  // handlers). The mech re-baking its own texture + the small identity dot next to the player
+  // label (both still repainted below) ARE the colour's visible feedback now.
   _cycleColor(col, dir) {
     if (!col) return;
     const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
@@ -442,15 +459,8 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
-    this._refreshColorControl(col);
-    // The header swatch shows the same colour — cheap enough to just repaint it too.
+    // The identity dot beside the player label shows the same colour — repaint it in place.
     col.headerColor?.setFillStyle(next, 1);
-  }
-
-  _refreshColorControl(col) {
-    const current = mechColorFor(col.mech, col.index);
-    col.colorSwatch.setFillStyle(current, 1);
-    col.colorName.setText(swatchName(current));
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
@@ -536,8 +546,8 @@ export default class GarageScene extends Phaser.Scene {
       if (e.pressed(PAD.START)) { this._toggleReady(i); continue; }
       if (e.pressed(PAD.DPAD_LEFT)) { this._cycleColor(col, -1); continue; }
       if (e.pressed(PAD.DPAD_RIGHT)) { this._cycleColor(col, 1); continue; }
-      if (e.pressed(PAD.DPAD_UP)) { this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), -1, ALL_SLOTS.length)]); continue; }
-      if (e.pressed(PAD.DPAD_DOWN)) { this._selectSlot(col, ALL_SLOTS[stepIndex(ALL_SLOTS.indexOf(col.selectedSlot), 1, ALL_SLOTS.length)]); continue; }
+      if (e.pressed(PAD.DPAD_UP)) { this._stepSlot(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_DOWN)) { this._stepSlot(col, 1); continue; }
       if (e.pressed(PAD.A)) { this._cycleMount(col, 1); continue; }
       if (e.pressed(PAD.X)) { this._cycleMount(col, -1); continue; }
       if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
