@@ -8,6 +8,7 @@ import {
 } from './players.js';
 import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
+import { isMobileEnemy } from '../../data/bases.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
 import { drawSlash } from '../../art/index.js';
@@ -532,8 +533,13 @@ export const FiringMixin = {
       const dist = Math.hypot(ex, ey);
       if (dist >= radius || dist < 1) continue;
       if (Math.abs(wrapAngle(Math.atan2(ey, ex) - angle)) > halfCone) continue;
-      const { dx, dy } = computeImpulse(mx, my, radius, strength, sign, e.x, e.y, 1);
-      e.x += dx; e.y += dy;
+      // #491 playtest fix: same stationary-kind exclusion as the pull-side hazard/travel-force
+      // ticks in projectiles.js — a turret/wallTurret still takes the wave's damage, it just
+      // never gets shoved off its mount.
+      if (isMobileEnemy(e)) {
+        const { dx, dy } = computeImpulse(mx, my, radius, strength, sign, e.x, e.y, 1);
+        e.x += dx; e.y += dy;
+      }
       const dmg = Math.max(1, Math.round(w.weapon.damage * (1 - dist / radius)));
       this._damageEnemyAt(e, e.x, e.y, dmg, color, false, { weaponId: w.weapon.id });
     }
