@@ -484,11 +484,13 @@ export const ProjectilesMixin = {
   // victims instead of damage happening invisibly. Drawn into `projFx`, already cleared/redrawn
   // this frame by `_updateProjectiles` above, so it needs no lifetime/cleanup of its own — it's
   // just gone next frame unless the tick fires again.
+  // Playtest follow-up #3 (2026-07-25, #492): "slightly thicker tendrils" — lineStyle width
+  // 2 -> 3.
   _drawAoeTendril(p, tx, ty) {
     const g = this.projFx;
     const midX = (p.x + tx) / 2 + (Math.random() - 0.5) * 14;
     const midY = (p.y + ty) / 2 + (Math.random() - 0.5) * 14;
-    g.lineStyle(2, p.color, 0.85);
+    g.lineStyle(3, p.color, 0.85);
     g.beginPath();
     g.moveTo(p.x, p.y);
     g.lineTo(midX, midY);

@@ -468,12 +468,24 @@ export const WEAPONS = {
     // travelAoe tick — `ignoresEnemyHit` removes that so the canister drifts THROUGH a crowd,
     // dragging its (now much wider) tendril reach across everyone in range the whole way, and
     // stops for nothing but a wall/soft cover or its own max range.
+    // Playtest follow-up #3 (2026-07-25, #492): tuning + reskin.
+    //   * velocity 100 -> 130 (+30%) — "slightly faster" so the toss doesn't crawl quite so long
+    //     before its cloud starts reaching enemies; still by far the slowest round in the
+    //     catalog (everything else sits at 300+) since the whole point is a lingering cloud.
+    //   * range.opt 380 -> 700, range.max 560 -> 900 — "much longer range." Puts it clearly past
+    //     napalm (500/780), its closest lobbed-AoE sibling, without reaching into missile
+    //     territory (swarmRack/streakPod opt 900-1050+).
+    //   * `kind: 'shadow'` (was `'fire'`, napalm's shared steel-drum art) — its own reskin: a
+    //     dark, swirling shadow-magic purple orb (art/projectiles/shadow.js) instead of a fuel
+    //     canister, so it no longer looks like a smaller napalm round.
+    //   * the damage tendril (`_drawAoeTendril`, scenes/arena/projectiles.js) is drawn thicker —
+    //     tuned there since it's shared drawing code, not a per-weapon field.
     id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
-    damage: 18, range: { min: 40, opt: 380, max: 560 },
+    damage: 18, range: { min: 40, opt: 700, max: 900 },
     ammoMax: 3, slots: 2, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'straight', velocity: 100,   // deliberately slow — the "cloud" has to linger to matter
-      splash: 30, kind: 'fire', scale: 1.6, ignoresEnemyHit: true,
+      hit: 'projectile', path: 'straight', velocity: 130,   // deliberately slow — the "cloud" has to linger to matter
+      splash: 30, kind: 'shadow', scale: 1.6, ignoresEnemyHit: true,
       travelAoe: { radius: 130, dps: 14 },
     },
   }),
@@ -688,10 +700,17 @@ export const WEAPONS = {
     //     area the field can grab from.
     //   * the field's own pull tick no longer chunks into a 250ms lump (visibly jerky); it now
     //     applies every frame at the real frame `dt`, same net pull, smooth drift.
-    //   * `fixedRange` + `ignoresEnemyHit` + `hitsCoverWhileArcing`: the lob no longer shortens to
-    //     land near whatever's locked (always flies its own `range.opt`), no longer detonates
-    //     early just because it drifted near an enemy on the way, and — despite still being an
-    //     arcing lob — now stops on a wall/destructible hex instead of lobbing clean over it.
+    //   * `fixedRange` + `hitsCoverWhileArcing`: the lob no longer shortens to land near whatever's
+    //     locked (always flies its own `range.opt`), and — despite still being an arcing lob — now
+    //     stops on a wall/destructible hex instead of lobbing clean over it.
+    // Playtest follow-up #2 (2026-07-25, #491): "should detonate/begin on hit" — the round used to
+    // carry `ignoresEnemyHit`, so it never resolved a hit on an enemy at all and only ever planted
+    // after flying its full `fixedRange` distance (or fizzling on a wall, with no field at all).
+    // Dropped that flag: the round now runs the normal nearest-enemy hit test (projectiles.js) like
+    // any other dumbfire lob, and since it still carries `hazard`, closing within HIT_RADIUS of an
+    // enemy plants the field right there instead of resolving a direct hit — the pull now begins ON
+    // CONTACT. It still also plants at `range.opt` if it never gets close to anyone, so a miss still
+    // lands a zone rather than vanishing.
     id: 'gravityWell', name: 'Gravity Well', category: 'support',
     // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead of
     // resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card math.
@@ -699,7 +718,7 @@ export const WEAPONS = {
     ammoMax: 3, slots: 2, cycleTime: 2000,   // #402: ~6.0s burst (3 pulls × 2s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
-      fixedRange: true, ignoresEnemyHit: true, hitsCoverWhileArcing: true,
+      fixedRange: true, hitsCoverWhileArcing: true,
       hazard: { kind: 'field', radius: 210, visualRadius: 65, life: 5, force: { strength: 330, sign: -1 } },
     },
   }),
@@ -729,7 +748,10 @@ export const WEAPONS = {
 // napalm not on the keep-list, siegeShell enemy-only); #118 graduated plasmaLance back off.
 // #244 emptied the list entirely: every remaining weapon is player-mountable again
 // (siegeShell no longer exists — consolidated into napalm via the turret's weaponOverride).
-export const SHELVED_WEAPON_IDS = [];
+// #499: Jackson, playtest — "repulsor pulse is dumb, turn it off." Shelved rather than
+// deleted: its WEAPONS entry (data/art/sfx) stays fully intact, it's just unreachable from
+// the garage catalog/shop — the exact mechanism this list exists for.
+export const SHELVED_WEAPON_IDS = ['repulsorPulse'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 

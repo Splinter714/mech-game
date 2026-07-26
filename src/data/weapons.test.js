@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WEAPONS, WEAPON_IDS, catalogMaxRange, previewRangeFrac, getWeapon, resolveWeapon } from './weapons.js';
+import { WEAPONS, WEAPON_IDS, SHELVED_WEAPON_IDS, catalogMaxRange, previewRangeFrac, getWeapon, resolveWeapon } from './weapons.js';
 
 // #120: the weapon catalog card preview scales its shot/beam travel distance by each
 // weapon's range relative to the rest of the catalog, instead of every card maxing out its
@@ -17,10 +17,14 @@ describe('catalogMaxRange', () => {
     expect(max).toBe(expected);
   });
 
-  it('defaults to the player-facing WEAPON_IDS set (#244: the shelve list is empty — every weapon is mountable)', () => {
-    // #244 un-shelved everything: WEAPON_IDS is the whole registry, so the garage/weapon-lab
-    // catalog and the shop see every weapon.
-    expect(WEAPON_IDS).toEqual(Object.keys(WEAPONS));
+  it('defaults to the player-facing WEAPON_IDS set, excluding whatever is shelved (#499: Repulsor Pulse)', () => {
+    // #499 shelved Repulsor Pulse ("turn it off") — WEAPON_IDS is the registry minus the
+    // shelve list, so the garage/weapon-lab catalog and the shop no longer see it, while its
+    // WEAPONS entry (data/art/sfx) stays fully intact.
+    expect(SHELVED_WEAPON_IDS).toEqual(['repulsorPulse']);
+    expect(WEAPON_IDS).toEqual(Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id)));
+    expect(WEAPON_IDS).not.toContain('repulsorPulse');
+    expect(WEAPONS.repulsorPulse).toBeDefined();
     expect(catalogMaxRange()).toBe(catalogMaxRange(WEAPON_IDS));
   });
 });

@@ -10,8 +10,9 @@ import { draw as flame } from './flame.js';
 import { draw as fire } from './fire.js';
 import { draw as bullet } from './bullet.js';
 import { draw as slug } from './slug.js';
+import { draw as shadow } from './shadow.js';
 
-export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug };
+export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug, shadow };
 
 // A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
 // flame flicker (the arena passes the round's distance; icons pass 0). Computes the heading
