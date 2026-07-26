@@ -1,5 +1,5 @@
-// #529 — pure logic behind the Mech Lab's per-column 5-tab system (chassis/weapon/ability/
-// passive/color), replacing the old scene-level "MECH LAB" tab-bar button. Kept separate from
+// #529 — pure logic behind the Mech Lab's per-column tab system (chassis+color/weapon/ability/
+// passive), replacing the old scene-level "MECH LAB" tab-bar button. Kept separate from
 // GarageScene.js (Phaser-heavy, not instantiable under Vitest) so the tab math itself is fully
 // unit-tested, same split as ui/padNav.js.
 //
@@ -8,28 +8,34 @@
 // multi-cursor Garage being per-player (own catalog, own selected slot, own colour). This module
 // only supplies the shared step/lookup math both a mouse click and a per-column pad/keyboard
 // cycle use.
+//
+// #532 (quick-wins batch): down from FIVE tabs to FOUR — chassis and color used to be separate
+// tabs (index 0 and 4); Jackson's Garage feedback batch asked they live on one shared tab instead
+// ("chassis and color pickers should live on the SAME tab"). The 'chassis' id/index is reused for
+// the merged tab (GarageScene renders both a chassis list and a color list into that one tab's
+// catalog-area surface — see GarageScene.js's `_buildChassisList`/`_buildColorList`); there is no
+// 'color' tab id any more.
 import { WEAPON_SLOTS, ABILITY_SLOTS, CORE_SLOTS } from '../data/anatomy.js';
 
-// The five tabs, in fixed display/cycle order.
+// The four tabs, in fixed display/cycle order.
 export const LAB_TABS = [
-  { id: 'chassis', label: 'CHASSIS' },
+  { id: 'chassis', label: 'CHASSIS/COLOR' },
   { id: 'weapon', label: 'WEAPON' },
   { id: 'ability', label: 'ABILITY' },
   { id: 'passive', label: 'PASSIVE' },
-  { id: 'color', label: 'COLOR' },
 ];
 
 export const LAB_TAB_IDS = LAB_TABS.map((t) => t.id);
 
 // Index of the tab whose catalog is a slot-kind catalog (weapon/ability/passive) — the three
-// tabs that share the existing WeaponCardList-per-selected-slot mechanism. Chassis/color are the
-// other two, with their own bespoke catalog-area UI.
+// tabs that share the existing WeaponCardList-per-selected-slot mechanism. The merged chassis+
+// color tab is the other one, with its own bespoke catalog-area UI.
 export const SLOT_KIND_TO_TAB = { weapon: 1, ability: 2, core: 3 };
 
 // The default slot a tab should focus when switched TO, if the column's currently-selected slot
 // doesn't already belong to that tab's kind (e.g. switching from the ability tab to the weapon
 // tab should land on a real weapon slot, not leave an ability slot selected under a weapon
-// catalog). Chassis/color tabs have no slot at all.
+// catalog). The chassis+color tab has no slot at all.
 export const TAB_DEFAULT_SLOT = {
   weapon: WEAPON_SLOTS[0],
   ability: ABILITY_SLOTS[0],
