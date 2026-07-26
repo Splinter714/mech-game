@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../audio/index.js', () => ({ Audio: { ui: vi.fn() } }));
 
-import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_ALPHA, CLOAK_GLOW_ALPHA, CLOAK_GLOW_TINT } from './abilities.js';
+import { updateAbilities, initAbilityStates, activeSpeedMult, CLOAK_GLOW_ALPHA, CLOAK_GLOW_TINT } from './abilities.js';
 import { ABILITIES } from '../../data/abilities.js';
 
 // Mirrors art/mechArt.js's own `PIVOT_LOCATIONS` (side torsos then arms) — the four weapon-carrying
@@ -151,14 +151,16 @@ describe('#498 jumpBlast — movement burst that blasts on arrival', () => {
 });
 
 describe('#500 cloak (follow-up) — GENUINE desaturation (not a tint) + translucency, ring excluded', () => {
-  it('swaps every non-hull part sprite to its own desaturated _grey texture and sets the container translucent on activation', () => {
+  it('swaps every non-hull part sprite to its own desaturated _grey texture (translucency is applied by cloakFlatten.js to the flattened RenderTexture, not to the container)', () => {
     const scene = makeScene([]);
     const player = makePlayer({ abilityX: 'cloak' });
     player.view = fakeMechView();
 
     updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
 
-    expect(player.view.setAlpha).toHaveBeenCalledWith(CLOAK_ALPHA);
+    // #500 (fifth pass): setCloakVisual no longer touches the container's own alpha at all — that
+    // was the root cause of the leg/torso bleed-through (see abilities.js's CLOAK_ALPHA comment).
+    expect(player.view.setAlpha).not.toHaveBeenCalled();
     for (const part of CLOAK_SWAPPABLE_PARTS) {
       expect(player.view[part].setTexture).toHaveBeenCalledWith(`mechTex_${part}_grey`);
       expect(player.view[part].texture.key).toBe(`mechTex_${part}_grey`);
@@ -169,7 +171,7 @@ describe('#500 cloak (follow-up) — GENUINE desaturation (not a tint) + translu
     expect(player.view.hull.setTexture).not.toHaveBeenCalled();
   });
 
-  it('restores each part to its EXACT pre-cloak texture key and full opacity the instant the burst ends', () => {
+  it('restores each part to its EXACT pre-cloak texture key the instant the burst ends', () => {
     const scene = makeScene([]);
     const player = makePlayer({ abilityX: 'cloak' });
     player.view = fakeMechView();
@@ -177,7 +179,7 @@ describe('#500 cloak (follow-up) — GENUINE desaturation (not a tint) + translu
     updateAbilities(scene, { ability: { ...noAbility, abilityX: true } }, 16, player);
     updateAbilities(scene, { ability: noAbility }, ABILITIES.cloak.duration * 1000, player);
 
-    expect(player.view.setAlpha).toHaveBeenLastCalledWith(1);
+    expect(player.view.setAlpha).not.toHaveBeenCalled();
     for (const part of CLOAK_SWAPPABLE_PARTS) {
       expect(player.view[part].texture.key).toBe(`mechTex_${part}`);
     }

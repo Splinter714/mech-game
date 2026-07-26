@@ -39,6 +39,17 @@ const CLOAK_SWAPPABLE_PARTS = MECH_PART_KEYS.filter((p) => p !== 'hull');
 // desaturation needs real per-pixel access, which `desaturateTexture` (art/mechArt.js) provides by
 // baking a true greyscale `_grey` variant of each part texture via Canvas 2D `getImageData` — see
 // its header for why that (not a WebGL postFX pipeline) is what works under both renderers.
+//
+// #500 (fifth pass — owner playtest, TWICE, still saw legs bleeding through the torso): this
+// constant is now applied EXACTLY ONCE — to the single flattened RenderTexture image
+// (`scenes/arena/cloakFlatten.js`), never to `player.view` (the container) itself. Applying it at
+// the container level (the ORIGINAL implementation here) was the actual root cause of the
+// bleed-through: a Phaser container multiplies its own alpha into every sibling sprite as it
+// draws them independently, which is a second, uncontrollable source of translucency on top of
+// whatever each part's own texture already carries — no per-part texture alpha can prevent a
+// translucent sibling from letting whatever's behind it (in local z-order) show through. See
+// cloakFlatten.js's header for the full explanation and the fix (flatten first at full opacity —
+// real occlusion — then dim the flattened result once).
 export const CLOAK_ALPHA = 0.45;      // dim enough to read as translucent; the desaturation itself
                                        // (not this container alpha) carries the "ghostly" cue, and
                                        // (#500 third pass) `desaturateTexture` now bakes its OWN
@@ -60,17 +71,22 @@ export const CLOAK_GLOW_TINT = 0x8a8a8a; // mid-grey multiply — knocks the hot
 
 // Apply/clear Cloak's visual on a player's mech view: swap every non-hull part sprite to a
 // genuinely-desaturated `_grey` texture variant (baked fresh from whatever the part's CURRENT
-// texture is, so it always matches the mech's live damage state) plus the container's own alpha
-// for translucency. `active` false restores every swapped part to the exact texture key it had
-// before cloaking, and restores full opacity. Guarded per-part (`?.`) so a hand-rolled test
-// double's partial view (or a torso/arm currently missing after part loss — see anatomy.js) never
-// throws. Deliberately does NOT touch `player.marker` — the co-op ground identity ring (coop.js) —
-// which lives entirely outside `player.view` and is never in scope of this loop at all, so the
-// ring keeps its own player colour while the mech greys out around it.
+// texture is, so it always matches the mech's live damage state). `active` false restores every
+// swapped part to the exact texture key it had before cloaking. Guarded per-part (`?.`) so a
+// hand-rolled test double's partial view (or a torso/arm currently missing after part loss — see
+// anatomy.js) never throws. Deliberately does NOT touch `player.marker` — the co-op ground
+// identity ring (coop.js) — which lives entirely outside `player.view` and is never in scope of
+// this loop at all, so the ring keeps its own player colour while the mech greys out around it.
+//
+// #500 (fifth pass): this used to also set the CONTAINER's own alpha to CLOAK_ALPHA/1 here — that
+// was the actual root cause of the leg/torso bleed-through the owner kept seeing (see CLOAK_ALPHA's
+// comment above). Translucency is now applied exactly once, to the flattened RenderTexture image
+// `scenes/arena/cloakFlatten.js` builds and shows in the container's place every frame cloak is
+// active — this function's job is purely the per-part texture swap (the individual "ghostly wire-
+// frame" look), not the overall see-through-ness.
 function setCloakVisual(scene, player, active) {
   const view = player.view;
   if (!view) return;
-  view.setAlpha?.(active ? CLOAK_ALPHA : 1);
   for (const part of CLOAK_SWAPPABLE_PARTS) {
     const sprite = view[part];
     if (!sprite?.setTexture) continue;
