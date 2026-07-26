@@ -1,8 +1,9 @@
-// Pure column-geometry math for GarageScene's per-column layout (#505 THIRD rework, playtest
-// feedback — Jackson's exact asks: the loadout section should be "nearly identical to the
-// in-game UI... just that same layout of buttons," the mech preview should be "the same height
-// as that button layout AND should be left of those buttons," and the player label should sit
-// "at the bottom below the mech preview art").
+// Pure column-geometry math for GarageScene's per-column layout (#505 FOURTH rework, a fresh
+// layout correction from Jackson on top of the THIRD rework's "preview left of tiles" move —
+// his exact words: "I was expecting the mech preview and ability layout to be next to each
+// other and then that whole bunch center aligned; I was also expecting the mech preview to be
+// square and taller, matching the height of the ability layout, which should be the same size
+// as it is in arena").
 //
 // GarageScene.js is Phaser-API-heavy and isn't instantiable under Vitest (see the sibling guard
 // tests in src/scenes/GarageScene.*.guard.test.js), so the actual pixel math that decides where
@@ -11,59 +12,83 @@
 // Critically, the loadout tile block itself is NOT reimplemented here — this module calls the
 // REAL shared HUD layout function, `weaponAbilityRows` from ui/skillTiles.js (the exact function
 // HudScene.js's arena console calls), so a future change to that shared layout (tile sizing, row
-// order, spacing) applies to the Garage automatically. This module only decides the geometry
-// AROUND that block: how much width the mech preview claims to its left, where the catalog and
-// footer land relative to it.
+// order, spacing) applies to the Garage automatically. The tile SIZE is pinned to the arena's own
+// `CONSOLE_TILES.max` (data/hudLayout.js) rather than fit to the column's width — "the same size
+// as it is in arena," not a scaled-down copy — so the tile block always renders at full arena
+// pixel dimensions here too. This module only decides the geometry AROUND that fixed-size block:
+// the square preview's size (derived FROM the block's height), and how the preview+tiles pair,
+// as ONE unit, centers in the column.
 import { weaponAbilityRows } from '../../ui/skillTiles.js';
+import { CONSOLE_TILES, tileRowWidth } from '../../data/hudLayout.js';
 
 export const COLUMN_PAD = 8;
 export const HEADER_H = 34;
 export const FOOTER_H = 18;
 export const GAP = 8;
 export const PREVIEW_TILE_GAP = 10;
-export const PREVIEW_FRACTION = 0.38;   // share of the column's inner width the preview claims
-export const TILE_MAX_SIZE = 60;
+// The loadout block's tile size/gap/count are pinned to the arena's own dial (CONSOLE_TILES),
+// not a Garage-local constant — "the same size as it is in arena" means literally the same
+// pixels, so there is nothing left here to independently tune.
+export const TILE_SIZE = CONSOLE_TILES.max;
+export const TILE_GAP = CONSOLE_TILES.gap;
+export const TILE_N = CONSOLE_TILES.n;
 
 // Full column layout for a `w` x `h` column. Returns:
 //   innerW    — usable width inside the column's own padding
 //   catalog   — { x, y, w, h } for the WeaponCardList catalog
 //   tiles     — { weapons, abilities } — the exact rects weaponAbilityRows returned, ready to
-//               hand straight to drawSkillTile
-//   preview   — { cx, cy, w, h } for the mech-preview panel, LEFT of the tile block, same
-//               height as the block (both rows together)
+//               hand straight to drawSkillTile — always at the arena's full TILE_SIZE
+//   preview   — { cx, cy, w, h } for the mech-preview panel: SQUARE, sized to the tile block's
+//               own height, sitting immediately LEFT of it
 //   label     — { cx, y } — where the player-number label sits, centered under the preview
+//
+// The preview+tiles pair is centered as ONE unit within the column's inner width. At a narrow
+// column width (more players, smaller colW — see GarageScene's `colW = W / session.count`) the
+// pair's fixed width (full arena tile size + square preview) can exceed the column's own inner
+// width; this deliberately does NOT shrink the tiles or the preview to compensate (that would
+// contradict "the same size as it is in arena") — `pairX` simply goes negative and the group
+// overflows the column visually. See columnLayout.test.js for the width this becomes a problem at.
 export function garageColumnLayout(w, h, opts = {}) {
   const {
     pad = COLUMN_PAD, headerH = HEADER_H, footerH = FOOTER_H, gap = GAP,
-    previewFraction = PREVIEW_FRACTION, previewTileGap = PREVIEW_TILE_GAP, tileMaxSize = TILE_MAX_SIZE,
+    previewTileGap = PREVIEW_TILE_GAP, tileSize = TILE_SIZE, tileGap = TILE_GAP, tileN = TILE_N,
   } = opts;
   const innerW = Math.max(0, w - pad * 2);
-  const previewW = Math.max(0, Math.round(innerW * previewFraction));
-  const tileAreaX = pad + previewW + previewTileGap;
-  const tileAreaW = Math.max(0, innerW - previewW - previewTileGap);
+  const tileBlockW = tileRowWidth(tileSize, tileN, tileGap);
   // The tile block is anchored to its own BOTTOM (leaving room for the footer label below it) —
   // weaponAbilityRows lays out from that bottom anchor upward and reports back `top`, whichever
   // row ended up physically highest, so this stays correct regardless of which row (weapon or
   // ability) the shared layout currently puts on top.
   const blockBottom = Math.max(headerH + gap, h - pad - footerH - gap);
 
-  const { weapons, abilities, top } = weaponAbilityRows(tileAreaX, tileAreaW, {
-    bottom: blockBottom, maxSize: tileMaxSize,
+  // First pass at x=0 purely to measure the block's real height (weapon row + row gap + the half-
+  // height ability row above it) — `top` doesn't depend on x, only on width/bottom/maxSize, so
+  // this is safe to throw away once the pair's real x offset is known.
+  const probe = weaponAbilityRows(0, tileBlockW, { bottom: blockBottom, maxSize: tileSize });
+  const blockH = probe.weapons.length ? blockBottom - probe.top : 0;
+  const previewSize = blockH;
+
+  // The pair — square preview, then the fixed-width tile block — centered as ONE unit.
+  const pairW = previewSize + previewTileGap + tileBlockW;
+  const pairX = pad + (innerW - pairW) / 2;
+  const tileAreaX = pairX + previewSize + previewTileGap;
+
+  const { weapons, abilities, top } = weaponAbilityRows(tileAreaX, tileBlockW, {
+    bottom: blockBottom, maxSize: tileSize,
   });
   const blockTop = weapons.length ? top : blockBottom;
-  const blockH = Math.max(0, blockBottom - blockTop);
 
   const catalogY = headerH + gap;
   const catalogH = Math.max(70, blockTop - gap - catalogY);
 
-  const previewCx = pad + previewW / 2;
+  const previewCx = pairX + previewSize / 2;
   const previewCy = blockTop + blockH / 2;
 
   return {
     innerW,
     catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
-    preview: { cx: previewCx, cy: previewCy, w: previewW, h: blockH },
+    preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
     label: { cx: previewCx, y: blockBottom + gap * 0.5 },
   };
 }

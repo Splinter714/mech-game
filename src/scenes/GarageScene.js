@@ -211,14 +211,15 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
 
     const w = this.colW, h = this.colH, pad = 8;
-    // #505 THIRD rework (playtest, Jackson's five-part note): the loadout tile block below
-    // reuses the REAL shared HUD layout code (skillTiles.js `weaponAbilityRows`, the exact
-    // function HudScene.js's arena console calls) via garageColumnLayout — this file never
-    // decides tile sizing/position itself, so a future change to the shared layout (row order,
-    // sizing, icon content) applies here automatically once both land. The mech preview sits to
-    // its LEFT at the SAME HEIGHT as that block, and the player-number label moved out of the
-    // header down to just under the preview art. The colour-select swatch+label are gone from
-    // the visual layout entirely (still functional — see the D-pad/arrow-key handling below).
+    // #505 FOURTH rework (a fresh layout correction from Jackson on top of the THIRD rework): the
+    // loadout tile block below reuses the REAL shared HUD layout code (skillTiles.js
+    // `weaponAbilityRows`, the exact function HudScene.js's arena console calls) via
+    // garageColumnLayout, rendered at the arena's own FULL tile size (not scaled down to fit the
+    // column). The mech preview is now SQUARE, sized to that block's height, and the two sit side
+    // by side as ONE unit, centered together in the column — see columnLayout.js for the pixel
+    // math and the narrow-column note. The player-number label sits just under the preview art.
+    // The colour-select swatch+label are gone from the visual layout entirely (still functional —
+    // see the D-pad/arrow-key handling below).
     const gl = garageColumnLayout(w, h, { pad });
     col.rects = { catalog: gl.catalog, pad, innerW: gl.innerW };
 
@@ -258,9 +259,10 @@ export default class GarageScene extends Phaser.Scene {
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
 
-    // The live mech preview — LEFT of the tile block, the SAME HEIGHT as it (both rows
-    // together). Built ONCE; every later mount/colour change re-bakes the SAME texture key in
-    // place (buildMechTextures/reskinMech), so these sprites never need rebuilding.
+    // The live mech preview — SQUARE, sized to the tile block's own height (both rows together),
+    // sitting immediately LEFT of it as one centered pair (see garageColumnLayout). Built ONCE;
+    // every later mount/colour change re-bakes the SAME texture key in place
+    // (buildMechTextures/reskinMech), so these sprites never need rebuilding.
     const { cx: previewCx, cy: previewCy, w: previewW, h: previewH } = gl.preview;
     col.previewPanel = this.add.rectangle(previewCx, previewCy, previewW, previewH, 0x10151c)
       .setStrokeStyle(1, UI.panelEdge);

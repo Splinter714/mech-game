@@ -34,7 +34,7 @@ describe('#505 THIRD rework — loadout tiles reuse the real shared HUD layout c
   it('columnLayout.js itself calls the REAL skillTiles.js weaponAbilityRows, not a reimplementation', () => {
     const layout = readFileSync(join(DIR, 'garage', 'columnLayout.js'), 'utf8');
     expect(layout).toMatch(/import \{ weaponAbilityRows \} from '\.\.\/\.\.\/ui\/skillTiles\.js';/);
-    expect(layout).toContain('weaponAbilityRows(tileAreaX, tileAreaW');
+    expect(layout).toContain('weaponAbilityRows(tileAreaX, tileBlockW');
     // No hardcoded ability-below-weapon or icon-layout assumption baked in here — the block's
     // own top/bottom fall out of whatever weaponAbilityRows currently returns.
     expect(layout).not.toMatch(/abilityTop|weaponTop|iconCx|iconCy/);
