@@ -22,6 +22,7 @@
 // `partHealthFraction` returns the whole-unit health for every part (they're one pool), which
 // is exactly what the damage-visual code wants (the unit greys out uniformly as it dies).
 import { createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent } from './shield.js';
+import { applyStatusEffect as applyEffect, tickStatusEffects as tickEffects } from './statusEffects.js';
 
 // Build the parts map from a layout spec: { locId: { x, y, w, h } }. Each part carries the
 // FULL unit hp as its max so a single part's health fraction reads the whole-unit health.
@@ -52,6 +53,10 @@ export class HpBody {
     this._layout = def.parts ?? { core: { x: 0, y: 0, w: 20, h: 20 } };
     this.parts = makeParts(this._layout, this.maxHp);
     this._syncParts();
+    // #536: status effects (Plasma's burn DoT) — same pure array-of-effects model Mech uses
+    // (data/statusEffects.js), so a vehicle-kind enemy can carry/tick a DoT exactly like a mech
+    // can. One shared pool since HpBody has no per-location tracking (mirrors applyDamage above).
+    this.statusEffects = [];
   }
 
   // #106: total health across EVERY layer an attacker has to chew through — hp (structure) +
@@ -132,6 +137,19 @@ export class HpBody {
   shieldFraction() { return shieldFraction(this.shield); }
   hasShield() { return shieldPresent(this.shield); }
   tickShield(dt) { tickShieldState(this.shield, dt); }
+
+  // ── Status effects (#536, mirrors Mech.applyStatusEffect/tickStatusEffects) ────────────────
+  // `location` is accepted for interface parity with Mech (every part shares the one pool here,
+  // same as applyDamage) — the pure helper doesn't care what it means, it's just carried through
+  // to the tick so the eventual applyDamage call has SOME location to report.
+  applyStatusEffect(kind, opts) {
+    this.statusEffects = applyEffect(this.statusEffects, kind, opts);
+  }
+  tickStatusEffects(dt) {
+    const { effects, ticks } = tickEffects(this.statusEffects, dt);
+    this.statusEffects = effects;
+    for (const t of ticks) this.applyDamage(t.location, t.tickDamage);
+  }
 
   // Push the current pool values into every part's `armor`/`hp` so any reader that inspects the
   // raw part records (rather than partHealthFraction) still sees the live health.

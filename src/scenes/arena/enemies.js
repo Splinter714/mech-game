@@ -1450,8 +1450,8 @@ export const EnemiesMixin = {
     // #246: mech-kind enemies with no `shield` config in data/enemies.js are a no-op tick
     // (shield.max stays 0) — same as the vehicle path above.
     e.mech.tickShield(dt);
-    // #489: status effects (Plasma's burn DoT) — mech-kind enemies only, since it's a Mech
-    // method; vehicle-kind enemies (HpBody, `_updateVehicle` below) are out of scope for now.
+    // #489/#536: status effects (Plasma's burn DoT) — HpBody (vehicle-kind, `_updateVehicle`
+    // below) now carries the same tick method, so this is no longer mech-kind only.
     e.mech.tickStatusEffects(dt);
 
     // #398 fourth pass: the stompy stepped gait (see ENEMY_STEP_BOB_FRAC above) — an enemy mech
@@ -1507,6 +1507,9 @@ export const EnemiesMixin = {
     // #246: passive shield regen (with its brief post-hit pause) for kinds configured with one
     // (enemyKinds.js `shield`) — a no-op for the majority that have none (shield.max stays 0).
     e.mech.tickShield(dt);
+    // #536: status effects (Plasma's burn DoT) — vehicle-kind enemies are HpBody-backed, which
+    // now carries the same applyStatusEffect/tickStatusEffects pair as a Mech.
+    e.mech.tickStatusEffects(dt);
     // #115: a ground unit (infantry/tank/turret) should never be sitting on off-map/impassable
     // terrain to begin with — the per-frame integration below already blocks it from MOVING
     // there, but this recovers one that somehow ended up there anyway (a bad spawn placement
