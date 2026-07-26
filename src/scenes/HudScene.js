@@ -759,16 +759,21 @@ export default class HudScene extends Phaser.Scene {
     // then this player's tile row immediately to its right — rather than each hugging a screen
     // edge with the leftovers in between. Nothing here has to negotiate for room any more: the
     // band already sized the group, so the block is laid out at full size (`availW: 0`).
-    // #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick — Jackson wants
-    // TWO rows instead: the four weapon tiles at their normal size on the bottom, and the two
-    // mountable abilities (X left, Y right) as double-wide/half-height tiles riding directly above
-    // their matching weapon pair ("move x/y abilities in weapon HUD to double-wide half-height
-    // buttons ... that sit in a single row above the 4 weapon buttons; so the X ability sits above
-    // the left sided weapons and the Y ability above the right sided weapons").
-    // `weaponAbilityRows` (ui/skillTiles.js) computes both rows off ONE shared width so they can
-    // never drift apart horizontally; CONSOLE_TILES.n is back to 4 (hudLayout.js) since the
-    // ability row rides within the weapon row's own span rather than adding to it.
-    const { weapons: tiles, abilities: abilityTiles } =
+    // #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick — Jackson wanted
+    // TWO rows instead: the four weapon tiles at their normal size, and the two mountable
+    // abilities (X left, Y right) as double-wide/half-height tiles riding directly over their
+    // matching weapon pair ("move x/y abilities in weapon HUD to double-wide half-height buttons
+    // ... that sit in a single row above the 4 weapon buttons; so the X ability sits above the
+    // left sided weapons and the Y ability above the right sided weapons").
+    // #506 THIRD rework (playtest experiment, Jackson: "let's try moving [the ability row] below
+    // the weapon buttons just to check out how that feels"): `weaponAbilityRows` now puts the
+    // ability row BELOW the weapon row instead of above it — see its own comment in
+    // ui/skillTiles.js. It still computes both rows off ONE shared width so they can never drift
+    // apart horizontally, and reports `top` = whichever row ended up physically highest (the
+    // weapon row, now), so this panel doesn't have to re-derive that itself below.
+    // CONSOLE_TILES.n is back to 4 (hudLayout.js) since the ability row rides within the weapon
+    // row's own span rather than adding to it.
+    const { weapons: tiles, abilities: abilityTiles, top: rowsTop } =
       weaponAbilityRows(group.tilesX, group.tilesW, { bottom: this.H - 10, maxSize: CONSOLE_TILES.max });
     const last = tiles[tiles.length - 1];
     // #448: whichever of the three readouts is switched on. Same shape either way, so everything
@@ -832,13 +837,14 @@ export default class HudScene extends Phaser.Scene {
     // Only built for the mode that needs it, same as `fusedGfx` below.
     panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
-    // Skill tiles for THIS player's own mech: the bottom row is the four weapon slots (unchanged
-    // size/position from before either rework); the top row is the two mountable abilities in
+    // Skill tiles for THIS player's own mech: the top row is the four weapon slots (unchanged
+    // size/position from either earlier rework); the bottom row is the two mountable abilities in
     // their own double-wide/half-height tiles, X over the left weapon pair and Y over the right
-    // (see the `weaponAbilityRows` note above). The passive core slot deliberately gets no tile
-    // here at all (Jackson, playtest: "the passive slot doesn't need to be represented during an
-    // actual deployment") — it stays Garage-only chrome; GarageScene and SimulGarageScene still
-    // draw it via the original diamondLayout/coreTileRect, untouched by this rework.
+    // (see the `weaponAbilityRows` note above — THIRD rework put abilities below, not above).
+    // The passive core slot deliberately gets no tile here at all (Jackson, playtest: "the
+    // passive slot doesn't need to be represented during an actual deployment") — it stays
+    // Garage-only chrome; GarageScene and SimulGarageScene still draw it via the original
+    // diamondLayout/coreTileRect, untouched by this rework.
     const mode = this._panelMode(panel);
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
@@ -854,13 +860,18 @@ export default class HudScene extends Phaser.Scene {
       });
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
-    // The block's outer TOP is the ability row's top edge — it sits above the weapon row, so it's
-    // the taller of the two (mirrors the pre-#506 diamond-above-row shape, just with a flat
-    // double-wide pair instead of a diamond+core cluster).
-    panel.tileTop = abilityTiles.length ? abilityTiles[0].y : rowTop;
-    // The block's outer box, so the console can recess one bay behind BOTH rows.
+    // The block's outer TOP is whichever row `weaponAbilityRows` reported as physically highest
+    // (`rowsTop`) — the weapon row now (THIRD rework), the ability row before it. Falls back to
+    // the weapon row's own top if the rows call returned nothing (no tiles at all).
+    panel.tileTop = rowsTop ?? rowTop;
+    // The block's outer box, so the console can recess one bay behind BOTH rows — its bottom
+    // edge is whichever row is now physically LOWEST (the ability row, anchored to the shared
+    // `bottom` line) rather than assuming it's always the weapon row.
+    const boxBottom = abilityTiles.length
+      ? abilityTiles[0].y + abilityTiles[0].h
+      : rowTop + last.h;
     panel.tileBox = tiles.length
-      ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: (rowTop + last.h) - panel.tileTop }
+      ? { x: tiles[0].x, y: panel.tileTop, w: last.x + last.w - tiles[0].x, h: boxBottom - panel.tileTop }
       : null;
     // #495: one extra Graphics layer, added AFTER (so painted on TOP of) the tile row, for the
     // structure WASH and shield BRACKET that fuse onto/around the tiles themselves. Armor moved

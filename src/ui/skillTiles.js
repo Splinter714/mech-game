@@ -82,24 +82,50 @@ export function tileRow(x, w, { y, bottom, order = TILE_ORDER, n = order.length,
   return order.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
 }
 
-// #506 SECOND rework: the arena HUD's tile block, not the Garage's — TWO rows instead of the
-// first rework's single row of six. The bottom row is `tileRow`'s normal 4 weapon tiles,
-// unchanged in size/position. The top row is exactly 2 ability tiles, each spanning the same
-// horizontal run as the weapon PAIR below it (so X's width matches leftArm+leftTorso combined,
-// Y's matches rightTorso+rightArm combined) and half a weapon tile's height, separated from the
-// weapon row by `rowGap`. Built ON TOP of `tileRow`'s own output rather than duplicating its
-// centring math, so the two rows can never drift apart horizontally.
+// A tile counts as WIDE when it departs meaningfully from square — the #506 ability tiles
+// (double-wide/half-height) vs. every weapon tile (always square). `drawSkillTile` uses this to
+// pick icon-left/text-right content instead of the square tile's icon-centered/text-stacked
+// layout, so a wide tile's drawn content actually spans the extra width instead of a
+// normal-tile-sized icon floating centered with empty space on both sides (Jackson, playtest:
+// "the buttons themselves should be double-width also").
+const WIDE_ASPECT = 1.6;
+export function isWideTile(rect) { return rect.w > rect.h * WIDE_ASPECT; }
+
+// Pure geometry for a wide tile's content: a square icon on the left, sized off the tile's own
+// HEIGHT (the limiting dimension, so it actually fills the short tile instead of overflowing
+// it), and a text column (bind glyph + subtitle) filling the remaining width to the right.
+// Exported so the "always inside the rect, column never negative" invariant is unit-testable
+// without booting Phaser.
+export function wideTileLayout(rect, { pad = 6, iconGap = 8 } = {}) {
+  const iconSize = Math.round(rect.h * 0.8);
+  const iconCx = Math.round(rect.x + pad + iconSize / 2);
+  const iconCy = Math.round(rect.y + rect.h / 2);
+  const colX = Math.round(iconCx + iconSize / 2 + iconGap);
+  const colW = Math.max(0, rect.x + rect.w - pad - colX);
+  return { iconSize, iconCx, iconCy, colX, colW };
+}
+
+// #506 THIRD rework (playtest experiment, Jackson: "let's try moving [the ability row] below the
+// weapon buttons just to check out how that feels"): the ability row now owns the shared
+// `bottom` anchor `tileRow` always positions against, and the weapon row rides ABOVE it — a
+// straight swap of the SECOND rework's weapons-at-bottom/abilities-above arrangement, not a
+// runtime-togglable option. `tileRow` still supplies each weapon slot's SIZE/X (its own Y is
+// discarded and replaced below), so the horizontal math — width, gaps, centring — is exactly
+// what it always was; only which row sits where changed.
 export function weaponAbilityRows(x, w, {
   bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER,
   gap = 12, rowGap = 12, maxSize = 132,
 } = {}) {
-  const weapons = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
-  if (!weapons.length) return { weapons, abilities: [], top: bottom };
+  const sized = tileRow(x, w, { bottom, order: weaponOrder, gap, maxSize });
+  if (!sized.length) return { weapons: [], abilities: [], top: bottom };
+  const size = sized[0].h;
+  const abilityH = Math.round(size / 2);
+  const abilityTop = bottom - abilityH;
+  const weaponTop = abilityTop - rowGap - size;
+  const weapons = sized.map((t) => ({ ...t, y: weaponTop }));
   const half = Math.floor(weapons.length / 2);
   const leftPair = weapons.slice(0, half);
   const rightPair = weapons.slice(half);
-  const abilityH = Math.round(weapons[0].h / 2);
-  const abilityTop = weapons[0].y - rowGap - abilityH;
   const spanOf = (pair) => {
     const last = pair[pair.length - 1];
     return { x: pair[0].x, w: last.x + last.w - pair[0].x };
@@ -110,7 +136,7 @@ export function weaponAbilityRows(x, w, {
     { loc: abilityOrder[0], x: leftSpan.x, y: abilityTop, w: leftSpan.w, h: abilityH },
     { loc: abilityOrder[1], x: rightSpan.x, y: abilityTop, w: rightSpan.w, h: abilityH },
   ];
-  return { weapons, abilities, top: abilityTop };
+  return { weapons, abilities, top: weaponTop };
 }
 
 // Places every ABILITY_SLOTS entry around (cx, cy), using ABILITY_SLOT_LAYOUT's unit dx/dy
@@ -139,6 +165,7 @@ export function coreTileRect(cx, cy, size = 30) {
 // iconAlpha, ammoFrac, emptyLabel }.
 export function drawSkillTile(scene, parent, rect, opts) {
   const cx = rect.x + rect.w / 2;
+  const wide = isWideTile(rect);
   // #452: the visible body of the tile is `plate` (a Graphics, so it can round its corners and
   // carry a halo). `bg` survives as an INVISIBLE rectangle covering the same box — it is the hit
   // area the garage attaches its click handler to (`refs.bg.setInteractive(...)`), which a
@@ -146,27 +173,47 @@ export function drawSkillTile(scene, parent, rect, opts) {
   const plate = scene.add.graphics();
   const bg = scene.add.rectangle(rect.x, rect.y, rect.w, rect.h, TILE_UI.card, 0)
     .setOrigin(0, 0);
-  const bind = scene.add.text(cx, rect.y + 6, '', {
-    fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.13)}px`, color: TILE_UI.accent,
-  }).setOrigin(0.5, 0);
-  const icon = scene.add.image(cx, rect.y + rect.h * 0.5, '__WHITE').setVisible(false);
-  const plus = scene.add.text(cx, rect.y + rect.h * 0.46, '+', {
-    fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.2)}px`, color: TILE_UI.slotEdge,
-  }).setOrigin(0.5).setVisible(false);
-  // #121 follow-up: at narrow window widths the tile row shrinks (see GarageScene's
-  // dollW/tileRow), and a single long item name (e.g. "Autocannon", "Repeater" — one word,
-  // nothing to break on) doesn't fit the default wordWrap's whitespace-only splitting, so it
-  // overflows the tile and visually runs into the next one, reading as "smashed together."
-  // useAdvancedWrap makes Phaser break mid-word when a word alone exceeds the wrap width, so
-  // the label always stays inside its own tile.
-  const subtitle = scene.add.text(cx, rect.y + rect.h - 22, '', {
-    fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'center',
-    wordWrap: { width: rect.w - 6, useAdvancedWrap: true },
-  }).setOrigin(0.5, 0);
+
+  let bind, icon, plus, subtitle;
+  if (wide) {
+    // #506 THIRD rework: icon-left / text-right (see `wideTileLayout`) so a wide tile's content
+    // actually spans the double-wide rect, instead of a normal-tile-sized icon centered with a
+    // lot of empty space on both sides.
+    const L = wideTileLayout(rect);
+    bind = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.1), '', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.34)}px`, color: TILE_UI.accent,
+    }).setOrigin(0, 0);
+    icon = scene.add.image(L.iconCx, L.iconCy, '__WHITE').setVisible(false);
+    plus = scene.add.text(L.iconCx, L.iconCy, '+', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.5)}px`, color: TILE_UI.slotEdge,
+    }).setOrigin(0.5).setVisible(false);
+    subtitle = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.56), '', {
+      fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'left',
+      wordWrap: { width: L.colW, useAdvancedWrap: true },
+    }).setOrigin(0, 0);
+  } else {
+    bind = scene.add.text(cx, rect.y + 6, '', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.13)}px`, color: TILE_UI.accent,
+    }).setOrigin(0.5, 0);
+    icon = scene.add.image(cx, rect.y + rect.h * 0.5, '__WHITE').setVisible(false);
+    plus = scene.add.text(cx, rect.y + rect.h * 0.46, '+', {
+      fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.2)}px`, color: TILE_UI.slotEdge,
+    }).setOrigin(0.5).setVisible(false);
+    // #121 follow-up: at narrow window widths the tile row shrinks (see GarageScene's
+    // dollW/tileRow), and a single long item name (e.g. "Autocannon", "Repeater" — one word,
+    // nothing to break on) doesn't fit the default wordWrap's whitespace-only splitting, so it
+    // overflows the tile and visually runs into the next one, reading as "smashed together."
+    // useAdvancedWrap makes Phaser break mid-word when a word alone exceeds the wrap width, so
+    // the label always stays inside its own tile.
+    subtitle = scene.add.text(cx, rect.y + rect.h - 22, '', {
+      fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'center',
+      wordWrap: { width: rect.w - 6, useAdvancedWrap: true },
+    }).setOrigin(0.5, 0);
+  }
   const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
   const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - 5, rect.w - 10, 3, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
   parent.add([plate, bg, bind, icon, plus, subtitle, barTrack, bar]);
-  const refs = { rect, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
+  const refs = { rect, wide, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
   updateSkillTile(refs, opts);
   return refs;
 }
@@ -178,7 +225,7 @@ export function drawSkillTile(scene, parent, rect, opts) {
 // bind source (SKILL_BINDS vs. ABILITY_BINDS vs. none) and empty-state copy. Omitting them
 // reproduces the old weapon-tile defaults exactly, so no existing behavior changes.
 export function updateSkillTile(refs, opts) {
-  const { rect, plate, bind, icon, plus, subtitle, barTrack, bar } = refs;
+  const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
     iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0,
     // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
@@ -190,8 +237,13 @@ export function updateSkillTile(refs, opts) {
   paintTilePlate(plate, rect, { selected });
   bind.setText(bindGlyph).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
+  // #506 THIRD rework: a wide tile sizes its icon off the tile's own HEIGHT (via
+  // `wideTileLayout`, the limiting dimension for a double-wide/half-height tile) instead of its
+  // width — sizing off `rect.w` here is what made the old icon overflow the tile vertically
+  // while only covering half the width horizontally.
+  const iconSize = wide ? wideTileLayout(rect).iconSize : rect.w * 0.46;
   if (itemId) {
-    icon.setTexture(itemFxKey(itemId)).setDisplaySize(rect.w * 0.46, rect.w * 0.46).setAlpha(iconAlpha).setVisible(true);
+    icon.setTexture(itemFxKey(itemId)).setDisplaySize(iconSize, iconSize).setAlpha(iconAlpha).setVisible(true);
     plus.setVisible(false);
     subtitle.setText(sub).setColor(subtitleColor);
     if (onCooldown) {

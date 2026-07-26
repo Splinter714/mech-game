@@ -667,14 +667,15 @@ describe('HudScene health readout modes (#448)', () => {
       expect(scene._band.x + scene._band.w / 2).toBeCloseTo(scene.W / 2, 0);
     });
 
-    it('takes its console ceiling from the ability row, not a floating empty header line', () => {
+    it('takes its console ceiling from the weapon row, not a floating empty header line', () => {
       const { scene } = noneScene();
       const p = scene.panels[0];
       // `_paintConsole` takes the shell's ceiling as min(tileTop, bars.headerY). NONE reserves no
-      // header caption (bars.headerY sits on the bare weapon row), but the #506 second rework's
-      // always-on ability row sits ABOVE that row and is folded into tileTop — so the ability
-      // row, not an empty header slot, is what the shell actually grows to fit.
-      expect(p.tileTop).toBeLessThan(p.bars.headerY);
+      // header caption (bars.headerY sits on the bare weapon row) — and #506's THIRD rework put
+      // the weapon row itself physically highest, so tileTop and bars.headerY now land on the
+      // exact same edge (unlike the second rework, where the ability row sat above the weapon row
+      // and tileTop was strictly higher than bars.headerY).
+      expect(p.tileTop).toBe(p.bars.headerY);
       const shell = consoleLayout(scene.H, Math.min(p.tileTop, p.bars.headerY), scene._band);
       expect(shell.y).toBe(p.tileTop - CONSOLE.padTop);
       // ...and it still runs all the way down to the bottom of the screen.
@@ -721,8 +722,9 @@ describe('HudScene health readout modes (#448)', () => {
     it("reserves headroom above the tile row for the shield dome, pulled up by FUSED_DOME_RISE", () => {
       const { scene } = fusedScene();
       const p = scene.panels[0];
-      // #506: `tileTop` now also folds in the always-on ability row above the weapon row, so this
-      // pins FUSED_DOME_RISE against the weapon row's own top edge directly rather than tileTop.
+      // #506: `bars.headerY`'s blank-mode fallback is always derived from the weapon row's own
+      // top edge (`tiles[0].y`) regardless of which row `weaponAbilityRows` puts on top, so this
+      // pins FUSED_DOME_RISE against that edge directly rather than tileTop.
       const rowTop = p.skillRefs.leftArm.rect.y;
       expect(rowTop - p.bars.headerY).toBe(FUSED_DOME_RISE);
     });
@@ -840,12 +842,16 @@ describe('HudScene health readout modes (#448)', () => {
 // #506 SECOND rework (playtest, superseding the first rework's one-row-of-6): Jackson — "move x/y
 // abilities in weapon HUD to double-wide half-height buttons (as compared to the weapon buttons)
 // that sit in a single row above the 4 weapon buttons; so the X ability sits above the left sided
-// weapons and the Y ability above the right sided weapons." Two rows now: a bottom row of the 4
-// normal-size weapon tiles (ui/skillTiles.js TILE_ORDER, unchanged), and a top row of 2 ability
-// tiles (HUD_ABILITY_ORDER — X then Y), each double-wide/half-height and aligned over its matching
-// weapon pair. The passive core slot still gets no HUD tile at all during a deployment (it's
-// Garage-only chrome — see GarageScene/SimulGarageScene, untouched).
-describe('HudScene panels — the two-row ability/weapon block (#506 second rework)', () => {
+// weapons and the Y ability above the right sided weapons." Two rows: a row of the 4 normal-size
+// weapon tiles (ui/skillTiles.js TILE_ORDER, unchanged), and a row of 2 ability tiles
+// (HUD_ABILITY_ORDER — X then Y), each double-wide/half-height and aligned over its matching
+// weapon pair. #506 THIRD rework (playtest experiment, Jackson: "let's try moving [the ability
+// row] below the weapon buttons just to check out how that feels") swapped which row is on top —
+// the ability row now sits BELOW the weapon row instead of above it; everything else about the
+// two-row shape (sizing, span-matching) is unchanged. The passive core slot still gets no HUD
+// tile at all during a deployment (it's Garage-only chrome — see GarageScene/SimulGarageScene,
+// untouched).
+describe('HudScene panels — the two-row ability/weapon block (#506 third rework)', () => {
   it('builds one tile for each of the 4 weapon slots and both ability slots — no core tile', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
@@ -863,7 +869,7 @@ describe('HudScene panels — the two-row ability/weapon block (#506 second rewo
     expect(refs.abilityY.bind.text).toBe('1');   // ABILITY_BINDS.abilityY.key
   });
 
-  it('places X above the left weapon pair and Y above the right pair, double-wide/half-height, in their own row above the weapons', () => {
+  it('places X below the left weapon pair and Y below the right pair, double-wide/half-height, in their own row below the weapons', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
@@ -871,9 +877,10 @@ describe('HudScene panels — the two-row ability/weapon block (#506 second rewo
     const leftArm = panel.skillRefs.leftArm.rect, leftTorso = panel.skillRefs.leftTorso.rect;
     const rightTorso = panel.skillRefs.rightTorso.rect, rightArm = panel.skillRefs.rightArm.rect;
     const x = panel.skillRefs.abilityX.rect, y = panel.skillRefs.abilityY.rect;
-    // Same row, above both weapon rows entirely.
+    // Same row, below both weapon rows entirely (#506 THIRD rework: swapped from above).
     expect(x.y).toBe(y.y);
-    expect(x.y).toBeLessThan(leftArm.y);
+    expect(x.y).toBeGreaterThan(leftArm.y);
+    expect(x.y).toBe(leftArm.y + leftArm.h + 12);   // rowGap default
     // Half the weapon tile's height.
     expect(x.h).toBe(Math.round(leftArm.h / 2));
     expect(y.h).toBe(x.h);
@@ -888,12 +895,13 @@ describe('HudScene panels — the two-row ability/weapon block (#506 second rewo
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
-    expect(panel.tileTop).toBe(panel.skillRefs.abilityX.rect.y);
-    expect(panel.tileTop).toBeLessThan(panel.skillRefs.leftArm.rect.y);
+    // #506 THIRD rework: the weapon row is now physically highest, so it's the block's own top.
+    expect(panel.tileTop).toBe(panel.skillRefs.leftArm.rect.y);
+    expect(panel.tileTop).toBeLessThan(panel.skillRefs.abilityX.rect.y);
     expect(panel.tileBox.y).toBe(panel.tileTop);
-    // The bay's height reaches all the way down to the bottom of the weapon row.
-    const weaponBottom = panel.skillRefs.leftArm.rect.y + panel.skillRefs.leftArm.rect.h;
-    expect(panel.tileBox.y + panel.tileBox.h).toBe(weaponBottom);
+    // The bay's height reaches all the way down to the bottom of the (now lower) ability row.
+    const abilityBottom = panel.skillRefs.abilityX.rect.y + panel.skillRefs.abilityX.rect.h;
+    expect(panel.tileBox.y + panel.tileBox.h).toBe(abilityBottom);
   });
 
   it('shows a mounted ability\'s live cooldown countdown, filling the bar as it recharges', () => {
