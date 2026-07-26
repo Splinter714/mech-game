@@ -21,3 +21,7 @@ export const OUTPOSTS_KEY = 'outposts';
 // `unlockedBiomes` reads this to decide which biomes are unlocked. Loaded once at boot
 // (save.js loadDeepMissionsWon) and persisted (saveDeepMissionsWon) on a deep-mission win.
 export const DEEP_MISSIONS_WON_KEY = 'deepMissionsWon';
+
+// #517: the registry key for the biome → regional-base pointer (data/regionalBases.js), loaded
+// once at boot (save.js loadRegionalBases) and persisted (saveRegionalBases) whenever it changes.
+export const REGIONAL_BASES_KEY = 'regionalBases';

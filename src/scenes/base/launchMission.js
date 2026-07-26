@@ -9,7 +9,7 @@ import { PLAYER_MECH_KEYS } from '../../data/coopGarage.js';
 import { MECH_DEPLOYED, OUTPOSTS_KEY } from '../../data/events.js';
 import { RECENCY_WINDOW } from '../../data/biomes.js';
 import { saveAllMechs, saveOutposts } from '../../data/save.js';
-import { resolveAllUndefendedLosses } from '../../data/outposts.js';
+import { resolveAllUndefendedLosses, rollRegarrisonForBiome } from '../../data/outposts.js';
 
 export function launchMission(scene, biomeId, isDeep = false) {
   const allMechs = scene.registry.get('allMechs');
@@ -42,9 +42,15 @@ export function launchMission(scene, biomeId, isDeep = false) {
   // itself from this by resolving its OWN target outpost differently instead of calling this.
   const outposts = scene.registry.get(OUTPOSTS_KEY) ?? [];
   const resolved = resolveAllUndefendedLosses(outposts);
-  if (resolved !== outposts) {
-    scene.registry.set(OUTPOSTS_KEY, resolved);
-    saveOutposts(resolved);
+  // #519: regarrison — an escalating percentage chance PER DEPLOYMENT (not real time) that a
+  // claimed base in the biome about to be deployed into flips back to contested. Rolled here, once
+  // per deploy, for every base sharing this `biomeId` — "the point [the deploy flow] already
+  // builds the corridor" per the issue; this is that point (world-gen itself, scenes/arena/
+  // world.js, only ever reads the outposts already in the registry, it never rolls anything).
+  const regarrisoned = rollRegarrisonForBiome(resolved, biomeId);
+  if (regarrisoned !== outposts) {
+    scene.registry.set(OUTPOSTS_KEY, regarrisoned);
+    saveOutposts(regarrisoned);
   }
   scene.game.events.emit(MECH_DEPLOYED, ACTIVE_MECH_KEY);
   scene.scene.start('ArenaScene');

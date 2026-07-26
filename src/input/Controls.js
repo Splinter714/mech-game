@@ -79,6 +79,14 @@ export const SKILL_BINDS = {
 export const RELOAD_BIND = { key: 'F', pad: 'B' };
 const PAD_RELOAD = PAD.B;
 
+// #517: pad A was left explicitly RESERVED "for a generic interact we may need" (see the file
+// header) — this is the first concrete use of it. T on keyboard (unused by any existing bind).
+// Scene-level, one-shot (ArenaScene's own `keydown-T` + `padEdges.pressed(PAD.A)`, same pattern
+// as the G/SELECT return-to-garage bind), not part of the per-frame `read()` intent below — there
+// is currently exactly one thing it does (answer the #517 post-clear base-capture choice), so it
+// doesn't need a slot in the intent object the way a sustained held action would.
+export const INTERACT_BIND = { key: 'T', pad: 'A' };
+
 // The two mountable ability slots, one per gamepad face button, with a keyboard row alongside.
 // A is deliberately UNBOUND (reserved, no ability, no other function — see the file header); B
 // went to RELOAD_BIND above instead of an ability.

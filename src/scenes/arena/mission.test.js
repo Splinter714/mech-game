@@ -42,6 +42,11 @@ function fakeScene(overrides = {}) {
     // #371 follow-up: record tween configs so the "every marker pulses" rule can be asserted.
     tweens: { add: (cfg) => { scene._tweenCalls.push(cfg); return {}; }, killTweensOf: () => {} },
     _tweenCalls: [],
+    // #517: `_advanceObjective` now presents a post-clear choice (`_presentBaseCaptureChoice`)
+    // before it actually advances — see `advanceObjective` below, this file's own helper that
+    // resolves it the same way every one of these sequencing-only tests wants (declined, so the
+    // mission moves on without any outpost-claiming assertions to keep in sync here).
+    time: { delayedCall: () => ({ remove: () => {} }) },
     registry: {
       get: (k) => registryStore.get(k),
       set: (k, v) => registryStore.set(k, v),
@@ -50,6 +55,16 @@ function fakeScene(overrides = {}) {
     enemies: [],
   }, MissionMixin, RunMixin, overrides);
   return scene;
+}
+
+// #517: `scene._advanceObjective()` alone now only PRESENTS the post-clear base-capture choice
+// (run.js `_presentBaseCaptureChoice`) — it no longer advances the mission by itself. Every test
+// in this file only cares about SEQUENCING, not about outpost-claiming (that's outpostClaim.test.js's
+// job), so this helper declines the choice on the caller's behalf, which is exactly what the old
+// synchronous `_advanceObjective()` behaved like for sequencing purposes.
+function advanceObjective(scene) {
+  scene._advanceObjective();
+  scene._resolveBaseCaptureChoice(false);
 }
 
 function makeBase(id, q, r) {
@@ -94,7 +109,7 @@ describe('objective sequencing walks through bases in index order (#269 playtest
     expect(scene.mission.status).toBe('complete');
 
     // The run mixin reacts to a completed mission by advancing to the next base.
-    scene._advanceObjective();
+    advanceObjective(scene);
     expect(scene._objectiveBaseIndex).toBe(1);
     expect(scene._objectiveBase).toBe(bases[1]);
     expect(scene.objectiveHex).toBe(axialKey(20, 0));
@@ -111,7 +126,7 @@ describe('objective sequencing walks through bases in index order (#269 playtest
       expect(scene._objectiveBase).toBe(bases[i]);
       scene._updateMission();   // no enemies left anywhere ⇒ immediately cleared
       expect(scene.mission.status).toBe('complete');
-      scene._advanceObjective();
+      advanceObjective(scene);
     }
     // Ran off the end — no more bases to target.
     expect(scene._objectiveBaseIndex).toBe(bases.length);
@@ -128,7 +143,7 @@ describe('objective sequencing walks through bases in index order (#269 playtest
 
     scene._updateMission();
     expect(scene.mission.status).toBe('complete');
-    scene._advanceObjective();
+    advanceObjective(scene);
 
     expect(scene._objectiveBase).toBeNull();
     expect(scene.objectiveHex).toBeNull();
@@ -146,7 +161,7 @@ describe('objective sequencing walks through bases in index order (#269 playtest
     scene._initMission();
     scene._updateMission();   // base0 has zero enemies tagged to it ⇒ immediately complete
     expect(scene.mission.status).toBe('complete');
-    scene._advanceObjective();
+    advanceObjective(scene);
     expect(scene._objectiveBase.id).toBe('base1');
   });
 });
@@ -335,7 +350,7 @@ describe('#371 spreading objective markers', () => {
     s._updateMission();
     expect(s.mission.status).toBe('complete');
     expect(enemyCount(s)).toBe(0);
-    s._advanceObjective();
+    advanceObjective(s);
     expect(enemyCount(s)).toBe(0);
     expect(dockCount(s)).toBe(0);
   });

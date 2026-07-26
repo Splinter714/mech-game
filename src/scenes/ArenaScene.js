@@ -3,7 +3,7 @@ import { buildHexTextures } from '../art/hexArt.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { shieldConfigFor } from '../data/coreItems.js';
 import { range } from '../data/hexgrid.js';
-import { PadEdges, PAD } from '../input/Controls.js';
+import { PadEdges, PAD, INTERACT_BIND } from '../input/Controls.js';
 import { TouchStickHud } from '../input/TouchStickHud.js';
 import { Audio } from '../audio/index.js';
 import { WorldMixin } from './arena/world.js';
@@ -216,6 +216,10 @@ export default class ArenaScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
     this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
     this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
+    // #517: the interact bind (Controls.js `INTERACT_BIND` — pad A's first concrete use) answers
+    // the post-clear base-capture choice. One-shot, same pattern as every other scene-level key
+    // above; the pad side is polled via `this.padEdges` in update() below.
+    this.input.keyboard.on(`keydown-${INTERACT_BIND.key}`, () => this._onInteractPressed?.());
     // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
@@ -356,6 +360,7 @@ export default class ArenaScene extends Phaser.Scene {
     // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js);
     // SELECT is the sole pad return-to-garage button (the G key path is unchanged).
     if (this.padEdges.pressed(PAD.SELECT)) this.toGarage();
+    if (this.padEdges.pressed(PAD.A)) this._onInteractPressed?.();   // #517: pad A's interact bind
     if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
     if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
     if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)

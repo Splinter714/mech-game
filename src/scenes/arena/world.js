@@ -11,7 +11,7 @@ import {
 } from '../../data/terrain.js';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, wallEdgeSeparating, nearestWallEdge, damageWallEdge, liveWallEdges,
-  WALL_THICKNESS_PX, isOutwardOfSpan, blocksShot,
+  WALL_THICKNESS_PX, isOutwardOfSpan, blocksShot, baseGateHex, SPAN_ROLE_TURRET, SPAN_ROLE_WALL,
 } from '../../data/wallEdges.js';
 import { drawWallEdges } from '../../art/wallArt.js';
 import { getBiome, DEFAULT_BIOME } from '../../data/biomes.js';
@@ -20,6 +20,9 @@ import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, MAX_WORLD_RADIUS, spineSpawnHex,
 } from '../../data/worldgen.js';
+import { capturedBaseIdsFor, applyCapturedBases } from '../../data/baseCapture.js';
+import { regionalBaseFor } from '../../data/regionalBases.js';
+import { OUTPOSTS_KEY, REGIONAL_BASES_KEY } from '../../data/events.js';
 import { Audio } from '../../audio/index.js';
 import {
   DUMMY_HEX, groundEnemyRadius, circleContains, DEPTH,
@@ -177,6 +180,24 @@ export const WorldMixin = {
     // (same file) completely unchanged; only WHERE the positions in that list came from moved.
     this.bases = bases;
     this.alertTowerHexes = alertTowers;
+    // #518: wire any already-claimed bases (data/outposts.js) back into this freshly generated
+    // `bases` list — matched by INDEX (`base.id`, e.g. "base2"), never by coord, because terrain
+    // regenerates from a brand-new random seed every deploy (see data/baseCapture.js's header for
+    // why coord can't be the identity here). A captured base loses its dormant garrison (no docks,
+    // no destructible objective — `applyCapturedBases` nulls both) and its dock/objective hexes
+    // swap to the neutral `playerStructure` placeholder below. Its GATES are left to the existing
+    // #355 fail-open latch (scenes/arena/bases.js `_failedOpenBases`) — that already reads a base
+    // with `objectiveHex: null` and no live enemies as "beaten", so a captured base's gates open
+    // for the player with no new mechanism. Its wall-TURRET spans are reconciled a few lines below,
+    // once `this.wallEdges` exists.
+    const outposts = this.registry?.get?.(OUTPOSTS_KEY) ?? [];
+    const capturedBaseIds = capturedBaseIdsFor(outposts, this.biomeId);
+    this._capturedBaseIds = capturedBaseIds;
+    const capturedHexKeys = applyCapturedBases(bases, capturedBaseIds);
+    for (const k of capturedHexKeys) {
+      terrain.set(k, 'playerStructure');
+      buildingHp.delete(k);
+    }
     // #288 (rebuilt as edge geometry): each base's approach wall, as destructible spans living on
     // the BOUNDARIES between hexes rather than on hexes of their own — so the barrier eats none of
     // the play space it crosses. This is a completely separate layer from `this.terrain`: nothing
@@ -184,12 +205,41 @@ export const WorldMixin = {
     // world queries below (`_blocked`/`_blockedAlongSegment`/`_isWall*`/`_wallDistance*`) each
     // consult this set alongside the terrain map.
     this.wallEdges = makeWallEdgeSet(wallEdges ?? []);
+    // #518: a captured base's own guns don't belong to it anymore — strip the TURRET role from its
+    // wall spans (back to a plain wall span) so `_spawnWallTurrets` (bases.js, called later from
+    // `_spawnDormantUnits`) never seats a hostile gun on a base the player holds.
+    if (capturedBaseIds.size) {
+      for (const edge of this.wallEdges.edges.values()) {
+        if (edge.role === SPAN_ROLE_TURRET && capturedBaseIds.has(edge.baseId)) edge.role = SPAN_ROLE_WALL;
+      }
+    }
+    // #517: regional-base SPAWN OVERRIDE. Corridor generation above is completely untouched — the
+    // spine/safe-zone are still anchored at world origin exactly as always ("corridor shape doesn't
+    // change"), this only moves WHERE the player's mech is actually placed once bases/gates exist to
+    // place it against. A biome with no regional base yet (`regional` null) keeps the ordinary
+    // corridor-origin spawn from above and gets the drop-pod/staging visual instead (below).
+    const regionalBases = this.registry?.get?.(REGIONAL_BASES_KEY) ?? [];
+    const regional = regionalBaseFor(regionalBases, this.biomeId);
+    this._hasRegionalBase = !!regional;
+    if (regional) {
+      const regionalBase = bases.find((b) => b.id === regional.baseId);
+      const gateHex = regionalBase ? baseGateHex(this.wallEdges, regionalBase.id) : null;
+      if (gateHex) {
+        this._spawnHex = gateHex;
+        this._spawnPoint = hexToPixel(gateHex.q, gateHex.r);
+      }
+    }
     // #321: per-ring wall Graphics + their world bounds, populated by `_redrawWallEdges`.
     this._wallGfxByBase = new Map();
     this._wallGfxBounds = new Map();
     // #309: one sally-port cycle per gate span, all shut. Must run after the set exists and
     // before the first `_updateGates` tick.
     this._initGates?.();
+    // #517: no foothold in this biome yet — a distinct drop-pod/staging visual at the spawn point
+    // instead of a plain corridor start. Purely cosmetic (Graphics only, same convention as
+    // `_gateOpenFx`/muzzle flash — no new art asset): a scorched landing ring with a few impact
+    // streaks, baked permanently into the ground, plus a brief fading flash for the touchdown beat.
+    if (!this._hasRegionalBase) this._drawDropPodFx(this._spawnPoint.x, this._spawnPoint.y);
 
     this.terrain = terrain;
     this.buildingHp = buildingHp;   // hexKey → remaining HP for destructible OUTPOST (solid) hexes
@@ -347,6 +397,31 @@ export const WorldMixin = {
     this._wallGfxByBase = new Map();
     this._wallGfxBounds = new Map();
     this._redrawWallEdges();
+  },
+
+  // #517: the "no foothold here yet" first-deploy visual — a scorched drop-pod landing at the
+  // corridor-origin spawn point. Built from `add.circle`/`setStrokeStyle` shape GameObjects
+  // (the same primitives `_outpostCollapseFx` below already uses for live scene FX — unlike the
+  // texture-baking Graphics API in art/hexArt.js, this file's own live FX never draws with raw
+  // Graphics fill calls), so it needs nothing beyond what every scene stub in this file's test
+  // suite already provides.
+  _drawDropPodFx(x, y) {
+    if (typeof this.add?.circle !== 'function') return;
+    this.add.circle(x, y, 46, 0x0b0e14, 0.55).setDepth(DEPTH.GROUND_FX);   // scorched crater
+    this.add.circle(x, y, 30, 0x1c2128, 0.65).setDepth(DEPTH.GROUND_FX);
+    this.add.circle(x, y, 38).setStrokeStyle(3, 0xffb347, 0.8).setDepth(DEPTH.GROUND_FX);   // hazard ring
+    for (let i = 0; i < 6; i++) {                                          // scorch-mark scatter
+      const a = (i / 6) * Math.PI * 2;
+      this.add.circle(x + Math.cos(a) * 40, y + Math.sin(a) * 40, 5, 0x3a4250, 0.7).setDepth(DEPTH.GROUND_FX);
+    }
+    // A brief bright flash reads as the pod's own touchdown, fading out over the drive-away beat.
+    if (this.tweens?.add) {
+      const flash = this.add.circle(x, y, 60, 0xbfe8ff, 0.5).setDepth(DEPTH.GROUND_FX);
+      this.tweens.add({
+        targets: flash, radius: 90, alpha: 0, duration: 900, ease: 'Cubic.easeOut',
+        onComplete: () => flash.destroy(),
+      });
+    }
   },
 
   // #288: repaint the wall line from its current per-span HP/destroyed state. Cheap (a few dozen

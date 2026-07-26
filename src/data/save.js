@@ -149,6 +149,28 @@ export function saveOutposts(outposts) {
   }
 }
 
+// #517: the biome → regional-base pointer (data/regionalBases.js). Same array-of-plain-objects
+// pattern, own storage key, own load/save pair — mirrors OUTPOSTS_STORAGE_KEY immediately above.
+const REGIONAL_BASES_STORAGE_KEY = 'mech-game-regional-bases-v1';
+
+export function loadRegionalBases() {
+  try {
+    const raw = localStorage.getItem(REGIONAL_BASES_STORAGE_KEY);
+    const arr = raw != null ? JSON.parse(raw) : null;
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRegionalBases(regionalBases) {
+  try {
+    localStorage.setItem(REGIONAL_BASES_STORAGE_KEY, JSON.stringify(regionalBases));
+  } catch {
+    // localStorage blocked/unavailable — the game still plays this session.
+  }
+}
+
 // #514: how many "deep missions" the player has won (data/missions.js `unlockedBiomes` reads
 // this to decide which biomes are unlocked). Mirrors the run-currency pattern — a plain number,
 // defaults to 0, never throws.

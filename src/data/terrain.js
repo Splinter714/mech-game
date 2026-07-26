@@ -265,6 +265,18 @@ export const TERRAIN = {
                destructible: true, hp: 200, rubbleId: 'rubble',
                category: 'base', movement: 'none', cover: 'hard' },
 
+  // #518 (captured base): what a base's dock/objective hexes become once the base is a claimed
+  // player holding (data/outposts.js) — "player buildings replace enemy docks/objective... this
+  // is where an in-arena garage/scanner would live later; just make the hex slot swap correctly,
+  // don't build the garage/scanner itself." So this is deliberately a plain, non-hostile, non-
+  // destructible marker (passable, no LOS block, no HP) rather than a real building with mechanics
+  // — the visual placeholder a future garage/scanner slots into. `setDressing: true` keeps it out
+  // of the mission-objective pool the same way `alertTower`/`dockClosed` are — a captured base's
+  // hexes are never something to destroy.
+  playerStructure: { id: 'playerStructure', tex: 'hex_playerStructure', passable: true, blocksLOS: false,
+               speedFactor: 1, setDressing: true,
+               category: 'base', movement: 'full', cover: 'open' },
+
   // ── Desert / badlands (#67) — warm sandy palette. Reuses the same ROLES as grassland. ──
   sand:      { id: 'sand',      tex: 'hex_sand',      passable: true,  blocksLOS: false, speedFactor: 1,
                category: 'terrain', movement: 'full', cover: 'open' },
