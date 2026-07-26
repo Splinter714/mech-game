@@ -1,18 +1,23 @@
 // Stealth (#500 Cloak, #507 Smoke Screen) — both grant the SAME underlying effect, "suppress
 // noise-aggro" (data/awareness.js NOISE_AGGRO_RANGE — the only detection channel independent of
 // line-of-sight), delivered two different ways: Cloak is personal and mobile, Smoke Screen is a
-// stationary area any live player can stand in. Cloak does NOT hide the player from an enemy
-// that's already engaged — reaching into the awareness/targeting state machine enemies.js
-// already drives for a purely visual personal effect was ruled out as a much bigger change than
-// #500 asked for. This is "go quiet," not true invisibility.
+// stationary area any live player can stand in.
 //
-// Smoke Screen is the exception (#507 follow-up, owner playtest: "not sure if it blocks LOS
-// though... it should truly obscure stuff"): a real deployed obscurant SHOULD stop an
-// already-engaged enemy's shot, not just avoid drawing new attention — so unlike Cloak, its
-// cloud is wired into the real per-enemy firing-lane raycast (`smokeBlocksPoint` below, consumed
-// by world.js's `_wallDistanceLos`), the same one solid walls/hard cover already use. An enemy
-// with a stale lock from before the cloud dropped keeps it for up to one LOS refresh window
-// (~120ms, `LOS_REFRESH_MS`) — identical latency to ducking behind a wall.
+// #500 follow-up (owner design decision): Cloak now ALSO blocks the real per-enemy firing-lane
+// raycast, same as Smoke Screen — full invisibility, not just "go quiet." An already-aware/
+// engaged enemy can no longer see or hit a cloaked player either. Cloak has no spatial extent of
+// its own to sample a ray through the way a smoke cloud does (it isn't an area you can walk out
+// of — it's anchored to whichever player is wearing it), so it's checked once against the ray's
+// TARGET endpoint (`cloakBlocksTarget` below, consumed by world.js's `_wallDistanceLos` via
+// `_cloakBlocksSight`) rather than per-8px-sample like `smokeBlocksPoint`. An enemy with a stale
+// lock from before Cloak activated keeps it for up to one LOS refresh window (~120ms,
+// `LOS_REFRESH_MS`) — identical latency to ducking behind a wall or into smoke.
+//
+// Smoke Screen (#507 follow-up, owner playtest: "not sure if it blocks LOS though... it should
+// truly obscure stuff"): a real deployed obscurant SHOULD stop an already-engaged enemy's shot,
+// not just avoid drawing new attention — so its cloud is wired into the real per-enemy
+// firing-lane raycast (`smokeBlocksPoint` below, consumed by world.js's `_wallDistanceLos`), the
+// same one solid walls/hard cover already use.
 import { DEPTH } from './shared.js';
 import { hasActiveEffect } from './abilities.js';
 
@@ -36,6 +41,22 @@ export function smokeBlocksPoint(players, x, y) {
 export function isPlayerStealthed(scene, player) {
   if (hasActiveEffect(player, 'cloak')) return true;
   return smokeBlocksPoint(scene.players, player.x, player.y);
+}
+
+// #500: is the ray's TARGET endpoint (x, y) a live, currently-cloaked player? Cloak is anchored
+// to a specific player's own live position rather than a fixed-radius area, so this matches the
+// endpoint outright instead of sampling a radius the way `smokeBlocksPoint` does — every real
+// caller passes that target player's own `x`/`y` straight through with no intervening arithmetic
+// (`_cachedLosToPlayer`/`_wallDistanceLos`'s `x1, y1` is always `tp.x, tp.y` for an enemy-vs-
+// player raycast), so an exact match reliably identifies "this ray's target is this player."
+// A raycast whose endpoint ISN'T a player (e.g. visibility.js's player-looking-OUT-at-an-enemy
+// check, or enemies.js's cover-point search) simply never matches here, so Cloak correctly has
+// no effect on those.
+export function cloakBlocksTarget(players, x, y) {
+  for (const pl of players ?? []) {
+    if (pl.x === x && pl.y === y && hasActiveEffect(pl, 'cloak')) return true;
+  }
+  return false;
 }
 
 // #507 THIRD visual pass (owner playtest, after the second pass's 11-cluster/sub-blob rework:
@@ -224,5 +245,13 @@ export const StealthMixin = {
   // sampled inside any live cloud is blocked, same as it would be by a solid wall.
   _smokeBlocksSight(x, y) {
     return smokeBlocksPoint(this.players, x, y);
+  },
+
+  // #500: the Cloak equivalent of `_smokeBlocksSight` — called from world.js's
+  // `_wallDistanceLos` against the ray's TARGET endpoint (not per-sample; see `cloakBlocksTarget`
+  // above for why) so an already-aware enemy loses its firing lane the instant a player cloaks,
+  // exactly like ducking behind a wall or into smoke.
+  _cloakBlocksSight(x, y) {
+    return cloakBlocksTarget(this.players, x, y);
   },
 };

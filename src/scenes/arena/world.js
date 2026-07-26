@@ -1260,6 +1260,12 @@ export const WorldMixin = {
   // `_isWall` above; propagated through `_cachedLosToPlayer` so a caller with a live enemy handle
   // can pass `isSmallUnit(e)`.
   _wallDistanceLos(x0, y0, angle, maxT, x1, y1, ignoreSpanKey = null) {
+    // #500: Cloak blocks the whole sightline outright the instant its target endpoint is a
+    // cloaked player — checked once up front rather than per-sample, since (unlike Smoke
+    // Screen's cloud) Cloak has no spatial extent for a ray to pass through. `_cloakBlocksSight`
+    // is optional-chained so a hand-rolled scene double without StealthMixin (most of this
+    // file's own tests) is unaffected, exactly like `_smokeBlocksSight` below.
+    if (this._cloakBlocksSight?.(x1, y1)) return 0;
     const cx = Math.cos(angle), cy = Math.sin(angle);
     const oh = pixelToHex(x0, y0);          // shooter/muzzle endpoint hex (soft-cover-transparent)
     const eh = pixelToHex(x1, y1);          // target endpoint hex (soft-cover-transparent)
