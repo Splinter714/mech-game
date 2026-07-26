@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildMechTextures, reskinMech, HULL_FRAMES, itemFxKey } from '../art/index.js';
+import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
 import { mechColorFor, swatchName, cycleSwatch } from '../data/mechColors.js';
@@ -22,6 +22,7 @@ import { buildTabBar, TAB_BAR_H } from '../ui/tabBar.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
+import { WeaponCardList } from '../ui/weaponCardList.js';
 
 // The mech lab (#505 rework — this scene absorbed the SIMULTANEOUS multi-cursor build layout
 // that used to live as a separate SimulGarageScene, per Jackson's playtest feedback: "the
@@ -41,10 +42,15 @@ import { wirePauseMenu } from './PauseMenuScene.js';
 // ready — which for a lone player just means "press ready, go," identical in feel to the old
 // single-player Deploy button.
 //
-// The condensed square-icon catalog (one column-sized grid, no scrolling, no live per-card fx
-// preview) replaces the old full-width animated WeaponCardList — that catalog assumed exactly one
-// editing surface on screen; a layout that can show up to four at once needs a much smaller
-// footprint per column, and it is now what every player count sees, including solo.
+// #505 (second correction — Jackson, after playtesting the merged scene): "bring back the
+// simulgaragescene, we wanted THAT to be the main garage scene, but not save space for players
+// that haven't joined yet" — clarified further, the per-column layout above IS the wanted
+// direction; the actual complaint was narrower: "the square-only weapon selection (it should
+// still be the rows of weapon firing live preview." So the condensed square-icon grid this scene
+// shipped with is gone again — each column's catalog is the real WeaponCardList (ui/
+// weaponCardList.js, the same component the standalone Weapon Lab tab uses), in its `compact`
+// mode: rows of weapons, each with its own live-firing shot/beam preview, scrolled inside the
+// column's own catalog rect rather than a fixed-size no-scroll grid.
 //
 // This still deploys onto the same four persistent build slots (data/rosters.js's mech1..mech4,
 // PLAYER_MECH_KEYS) and publishes the same registry keys (`coopMechKeys`/`coopPlayerCount`) the
@@ -132,6 +138,11 @@ export default class GarageScene extends Phaser.Scene {
 
     // #523: ESC always opens the shared pause menu.
     wirePauseMenu(this);
+
+    // Every column's catalogList registers its own wheel/pointer listeners on the scene's input
+    // plugin (WeaponCardList's constructor) — clean them up on the way out, mirroring the old
+    // single-editor garage's `this.events.once('shutdown', () => this.list.destroy())`.
+    this.events.once('shutdown', () => { for (const col of this.cols) col?.catalogList?.destroy(); });
   }
 
   // ── Header chrome (tab bar + SCRAP/last-run + join hint) ─────────────────────────────────────
@@ -170,7 +181,10 @@ export default class GarageScene extends Phaser.Scene {
   // again on every join, so an existing column reflows wider→narrower as the squad grows, and a
   // solo column always fills the whole width rather than sitting squished next to empty ones.
   _relayoutColumns() {
-    for (const col of this.cols) col?.layer?.destroy(true);
+    // catalogList is its own top-level container (WeaponCardList doesn't live inside col.layer —
+    // see _buildColumn), so destroying col.layer alone would leak it (and its wheel/pointer
+    // listeners on the scene's input plugin).
+    for (const col of this.cols) { col?.catalogList?.destroy(); col?.layer?.destroy(true); }
     this.cols = [];
     this.colW = Math.floor(this.W / this.session.count);
     this.colH = this.H - this.colTop;
@@ -222,9 +236,23 @@ export default class GarageScene extends Phaser.Scene {
     for (const rect of diamondLayout(abilCx, abilCy, { size: 40 })) this._drawColTile(col, rect);
     this._drawColTile(col, coreTileRect(abilCx, abilCy, 28));
 
-    // The condensed catalog grid — rebuilt whenever the selected slot (or a mount) changes.
-    col.catalogIcons = [];
-    this._refreshCatalog(col);
+    // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
+    // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
+    // stats + a live-firing shot/beam preview per card) fits this column's width. It owns its
+    // own top-level container rather than living inside col.layer, so it's positioned in WORLD
+    // coordinates (this column's own screen offset + the local catalog rect below). Refiltered/
+    // reselected whenever the selected slot or a mount changes, via _refreshCatalogList.
+    const cat = col.rects.catalog;
+    col.catalogList = new WeaponCardList(this, {
+      x: col.layer.x + cat.x, y: col.layer.y + cat.y, w: cat.w, h: cat.h, compact: true,
+      ids: this._eligibleIds(col.selectedSlot),
+      onSelect: (id) => this._clickCatalogItem(col, id),
+      selectedId: this._mountedIn(col, col.selectedSlot),
+      // #506: abilities/core items have no SCRAP-unlock data at all (shop.js's catalog is
+      // weapon-only) — always unlocked and free to mount, so only a weapon id is ever gated here.
+      isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
+      costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
+    });
 
     // The live mech preview — built ONCE; every later mount/colour change re-bakes the SAME
     // texture key in place (buildMechTextures/reskinMech), so these sprites never need rebuilding.
@@ -288,7 +316,7 @@ export default class GarageScene extends Phaser.Scene {
     for (const loc of ALL_SLOTS) this._refreshTile(col, loc);
   }
 
-  // ── The condensed catalog grid ───────────────────────────────────────────────────────────────
+  // ── The catalog (WeaponCardList, compact) ────────────────────────────────────────────────────
   _eligibleIds(loc) {
     const kind = slotKind(loc);
     if (kind === 'ability') return Object.keys(ABILITIES);
@@ -300,61 +328,20 @@ export default class GarageScene extends Phaser.Scene {
     });
   }
 
-  // Auto-fit a square grid of `n` icons into `w`x`h` with no scrolling — shrink the square size
-  // (down to a hard floor) until every row fits, rather than a fixed size that might overflow.
-  _fitGrid(n, w, h, { gap = 4, min = 20, max = 34 } = {}) {
-    for (let size = max; size >= min; size--) {
-      const cols = Math.max(1, Math.floor((w + gap) / (size + gap)));
-      const rows = Math.ceil(n / cols);
-      if (rows * (size + gap) - gap <= h) return { size, cols };
-    }
-    const cols = Math.max(1, Math.floor((w + gap) / (min + gap)));
-    return { size: min, cols };
-  }
-
-  _refreshCatalog(col) {
-    for (const o of col.catalogIcons) o.destroy();
-    col.catalogIcons = [];
-    const ids = this._eligibleIds(col.selectedSlot);
-    const { x, y, w, h } = col.rects.catalog;
-    const gap = 4;
-    const { size, cols } = this._fitGrid(ids.length, w, h, { gap });
-    const mountedId = this._mountedIn(col, col.selectedSlot);
-    ids.forEach((id, idx) => {
-      const cx = x + (idx % cols) * (size + gap);
-      const cy = y + Math.floor(idx / cols) * (size + gap);
-      const locked = isWeapon(id) && !this.unlocked.has(id);
-      const mounted = id === mountedId;
-      const bg = this.add.rectangle(cx, cy, size, size, 0x131820, 1).setOrigin(0, 0)
-        .setStrokeStyle(mounted ? 2 : 1, mounted ? 0xefc14a : 0x2a333f, mounted ? 1 : 0.7)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => this._clickCatalogItem(col, id));
-      const icon = this.add.image(cx + size / 2, cy + size / 2, itemFxKey(id))
-        .setDisplaySize(size * 0.62, size * 0.62).setAlpha(locked ? 0.35 : 1);
-      col.layer.add([bg, icon]);
-      col.catalogIcons.push(bg, icon);
-      if (locked) {
-        const lock = this.add.text(cx + size / 2, cy + size / 2, '🔒', {
-          fontFamily: 'monospace', fontSize: `${Math.max(9, Math.floor(size * 0.4))}px`,
-        }).setOrigin(0.5);
-        col.layer.add(lock);
-        col.catalogIcons.push(lock);
-      }
-    });
-    if (!ids.length) {
-      const empty = this.add.text(x + w / 2, y + 12, 'nothing eligible', {
-        fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-      }).setOrigin(0.5, 0);
-      col.layer.add(empty);
-      col.catalogIcons.push(empty);
-    }
+  // Refilter the column's catalog to the currently-selected slot's eligible items and highlight
+  // whatever's mounted there — called on a slot change and after any mount/unmount. The list's
+  // own scroll/lock overlay/live-fire state is otherwise untouched (setIds rebuilds cards;
+  // WeaponCardList.setIds resets scroll to the top, matching the old single-editor garage).
+  _refreshCatalogList(col) {
+    col.catalogList.setIds(this._eligibleIds(col.selectedSlot));
+    col.catalogList.setSelected(this._mountedIn(col, col.selectedSlot));
   }
 
   _selectSlot(col, loc) {
     Audio.ui('menuNav');
     col.selectedSlot = loc;
     this._refreshAllTiles(col);
-    this._refreshCatalog(col);
+    this._refreshCatalogList(col);
   }
 
   _mountedIn(col, loc) {
@@ -411,7 +398,10 @@ export default class GarageScene extends Phaser.Scene {
     reskinMech(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     this._refreshAllTiles(col);
-    this._refreshCatalog(col);
+    // Just the highlighted card, not a full setIds() rebuild — the eligible set for the
+    // currently-selected slot doesn't change on a mount/unmount, and rebuilding would reset the
+    // list's scroll position and interrupt every card's live-fire preview loop for no reason.
+    col.catalogList.setSelected(this._mountedIn(col, col.selectedSlot));
   }
 
   // Pad A/X: cycle the focused slot's mount forward/back through its own eligible list, reusing
@@ -434,7 +424,9 @@ export default class GarageScene extends Phaser.Scene {
     this.registry.set(RUN_CURRENCY_KEY, remaining);
     saveRunCurrency(remaining);
     this._refreshCurrency();
-    for (const col of this.cols) if (col) this._refreshCatalog(col);
+    // Every column shares the one unlock set/wallet — refresh each column's lock overlays in
+    // place (no rebuild, no scroll reset), same as the old single-editor garage's _purchase.
+    for (const col of this.cols) col?.catalogList?.refreshLocks();
     this.toast(`UNLOCKED ${getItem(id).name}`, UI.accent);
   }
 
@@ -531,8 +523,12 @@ export default class GarageScene extends Phaser.Scene {
   // every other player's: d-pad left/right cycles colour, up/down moves which of the seven slots
   // is focused, A/X cycle that slot's mount forward/back, B clears an ability/core slot (weapon
   // slots can't be cleared), START toggles ready.
-  update() {
+  update(time, delta) {
     this._updateJoin();
+    // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
+    // of whether that column's pad is connected (a mouse/keyboard-only player still needs their
+    // catalog animating).
+    for (const col of this.cols) col?.catalogList?.update(time, delta);
     for (const i of activeIndices(this.session)) {
       const col = this.cols[i];
       const e = this.padEdges[i];
