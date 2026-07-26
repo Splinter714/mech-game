@@ -17,11 +17,11 @@ vi.mock('phaser', () => ({
 }));
 
 const { default: HudScene, ARMOR_PEEK_PAD } = await import('./HudScene.js');
-const { Mech } = await import('../data/Mech.js');
+const { Mech, RELOAD_SECONDS } = await import('../data/Mech.js');
 const { PLAYER_COLORS } = await import('../data/players.js');
 const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await import('../data/hudLayout.js');
 const { getWeapon } = await import('../data/weapons.js');
-const { structureColor, FUSED_DOME_RISE } = await import('../data/healthReadout.js');
+const { structureColor, FUSED_DOME_RISE, bracketOutline } = await import('../data/healthReadout.js');
 const { ABILITY_SLOTS } = await import('../data/anatomy.js');
 const { TILE_ORDER, HUD_ABILITY_ORDER } = await import('../ui/skillTiles.js');
 
@@ -38,7 +38,10 @@ function stub(extra = {}) {
     setText(t) { o.text = t; return o; },
     setColor(c) { o.color = c; return o; },
     setSize() { return o; },
-    setScale() { return o; },
+    // #526: the ammo/cooldown bar's fill fraction is now the ONLY ammo readout on a weapon tile
+    // (the numeric "left/max" text is gone) — record what it was scaled to so tests can assert on
+    // it directly instead of parsing removed subtitle text.
+    setScale(x, y) { o.scaleX = x; o.scaleY = y; return o; },
     setDepth() { return o; },
     setStrokeStyle() { return o; },
     setFillStyle() { return o; },
@@ -50,22 +53,32 @@ function stub(extra = {}) {
     clear() { return o; },
     fillStyle(color, alpha) { o._fillColor = color; o._fillAlpha = alpha; return o; },
     fillRect() { return o; },
-    lineStyle(_w, color) { o._lineColor = color; return o; },
+    lineStyle(w, color, alpha) { o._lineWidth = w; o._lineColor = color; o._lineAlpha = alpha; return o; },
     strokeRect() { return o; },
     // #452: the console shell, the recessed bays and the rounded skill-tile plates.
     // #495: also the fused readout's per-tile HP wash and armor drain overlay — tracked (colour +
     // geometry) so the armor-drain tests below can assert the overlay anchors to the tile's own
     // BOTTOM edge and grows/shrinks in HEIGHT rather than being a stroked outline any more.
-    fillRoundedRect(x, y, w, h) {
-      (o.fillRuns ??= []).push({ color: o._fillColor, alpha: o._fillAlpha, x, y, w, h });
+    fillRoundedRect(x, y, w, h, radius) {
+      (o.fillRuns ??= []).push({ color: o._fillColor, alpha: o._fillAlpha, x, y, w, h, radius });
       return o;
     },
-    strokeRoundedRect() { return o; },
+    strokeRoundedRect(x, y, w, h, radius) {
+      (o.strokeRRRuns ??= []).push({ color: o._lineColor, x, y, w, h, radius });
+      return o;
+    },
     fillCircle() { return o; },
     // #448: the paper doll's draining outlines.
     strokeCircle() { return o; },
-    fillPoints(pts) { o.filledPoints = pts; return o; },
-    strokePoints(pts) { o.strokedPoints = pts; (o.strokeRuns ??= []).push({ color: o._lineColor, pts }); return o; },
+    // #526: the fused tile bay's own filled panel shape — recorded as a run (not just the last
+    // call) so a test can tell a bars/paperdoll panel's rect-shaped bay apart from a fused panel's
+    // bracket-shaped one drawn later in the same `_paintConsole` pass.
+    fillPoints(pts) { o.filledPoints = pts; (o.fillPointsRuns ??= []).push({ color: o._fillColor, pts }); return o; },
+    strokePoints(pts) {
+      o.strokedPoints = pts;
+      (o.strokeRuns ??= []).push({ color: o._lineColor, alpha: o._lineAlpha, width: o._lineWidth, pts });
+      return o;
+    },
     beginPath() { return o; },
     // #452 (style pass): the target disc's gauge arcs, and the circular clip its pose sits in.
     arc() { return o; },
@@ -408,17 +421,18 @@ describe('HudScene lock chevron — co-op', () => {
 // Three modes (none / bars / paper doll) exist to be compared IN PLAY, so what matters here is
 // the wiring: H cycles the mode, the mode is shared by every panel, switching actually rebuilds
 // the panels at the new geometry, and each one paints against a real Mech without throwing.
-// #451 — the ammo line on a skill tile counts PROJECTILES, not trigger pulls. The conversion is
-// pinned in data/weaponStats.test.js; what is pinned here is that the HUD actually uses it.
-describe('HudScene ammo readout (#451)', () => {
+// #451 — the ammo BAR on a skill tile fills/drains off PROJECTILES, not trigger pulls. The
+// conversion itself is pinned in data/weaponStats.test.js; what is pinned here is that the HUD
+// actually uses it. #526 (playtest: "remove the numeric ammo count text, but keep the bar itself")
+// removed the "left/max" TEXT this describe block used to assert on — the bar's own fill fraction
+// (`ammoFrac`, applied as the tile's `bar.setScale`) is now the only ammo readout, so that is what
+// these tests read instead.
+describe('HudScene ammo readout (#451, #526)', () => {
   const armed = (id) => {
     const mech = new Mech({ chassisId: 'medium' });
     mech.mount('rightArm', id);
     return hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
   };
-  const subtitles = (created) => created
-    .filter((o) => typeof o.text === 'string' && /^\d+\/\d+$/.test(o.text))
-    .map((o) => o.text);
 
   const run = (weaponId) => {
     const built = fakeScene([armed(weaponId)]);
@@ -428,19 +442,46 @@ describe('HudScene ammo readout (#451)', () => {
     return built;
   };
 
-  it('shows a missile rack\'s TOTAL missiles, not its magazine of pulls', () => {
-    const { created } = run('swarmRack');
-    const rack = getWeapon('swarmRack');
-    const total = rack.ammoMax * rack.delivery.count;
-    expect(subtitles(created)).toContain(`${total}/${total}`);
-    // …and specifically NOT the old shot count.
-    expect(subtitles(created)).not.toContain(`${rack.ammoMax}/${rack.ammoMax}`);
+  it('a fresh, full missile rack fills the bar to 1 — its TOTAL missiles, not its magazine of pulls', () => {
+    const { scene } = run('swarmRack');
+    // A fresh mech's magazine starts full, so the projectile-based fraction (total/total) and the
+    // old shot-based fraction (pulls/pulls) both happen to be 1 — the point #451 actually pins
+    // (a mid-magazine PARTIAL fraction diverging between the two countings) is covered directly
+    // against the pure `magazineReadout` conversion in data/weaponStats.test.js; this just pins
+    // that the HUD wires that fraction onto the bar at all.
+    expect(scene.panels[0].skillRefs.rightArm.bar.scaleX).toBeCloseTo(1, 6);
   });
 
-  it('leaves a single-projectile weapon\'s line exactly as it was', () => {
+  it('leaves a single-projectile weapon\'s full-bar behaviour exactly as it was', () => {
+    const { scene } = run('autocannon');
+    expect(scene.panels[0].skillRefs.rightArm.bar.scaleX).toBeCloseTo(1, 6);
+  });
+
+  it('removed the numeric ammo count text — no "left/max" digits appear anywhere on the tile', () => {
     const { created } = run('autocannon');
-    const gun = getWeapon('autocannon');
-    expect(subtitles(created)).toContain(`${gun.ammoMax}/${gun.ammoMax}`);
+    const digitPairs = created.filter((o) => typeof o.text === 'string' && /^\d+\/\d+$/.test(o.text));
+    expect(digitPairs).toEqual([]);
+  });
+
+  it('removed the RELOAD text label — the reload-progress bar itself is unaffected', () => {
+    const mech = new Mech({ chassisId: 'medium' });
+    mech.mount('rightArm', 'autocannon');
+    // Force the slot into RELOAD directly (mirrors what an emptied magazine auto-triggers, #402).
+    mech.ammo.rightArm[0] = 0;
+    mech.reload.rightArm[0] = RELOAD_SECONDS;
+    const w = mech.weapons().find((x) => x.location === 'rightArm');
+    expect(w.reloading).toBe(true);   // sanity: the fixture actually exercises the RELOAD path
+    const snapshot = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
+    const built = fakeScene([snapshot]);
+    built.scene._syncPanels();
+    built.scene._updateTargetPod = () => {};
+    built.scene._updatePanel(built.scene.panels[0], snapshot, 16);
+    // No "RELOAD 2.0s" (or any other) text anywhere on the tile...
+    expect(built.created.some((o) => typeof o.text === 'string' && /RELOAD/.test(o.text))).toBe(false);
+    // ...but the non-text fill/wipe indicator (the cooldown-tinted bar) is still driven.
+    const ref = built.scene.panels[0].skillRefs.rightArm;
+    expect(ref.bar.visible).toBe(true);
+    expect(ref.bar.scaleX).toBeCloseTo(0, 6);   // just started reloading: 1 - reload/reloadMax ≈ 0
   });
 });
 
@@ -824,6 +865,109 @@ describe('HudScene health readout modes (#448)', () => {
         hasShield: () => false,
       };
       expect(() => scene._paintFusedReadout(scene.panels[0], mech)).not.toThrow();
+    });
+
+    const shieldedMech = (fracs = {}) => ({
+      parts: Object.fromEntries(
+        INTEGRITY_ORDER.map((loc) => [loc, { hp: 10, maxHp: 10, armor: 10, maxArmor: 10 }]),
+      ),
+      isPartDestroyed: () => false,
+      hasShield: () => true,
+      shield: { hp: (fracs.shield ?? 1) * 10, max: 10 },
+      shieldTotalHp: () => (fracs.shield ?? 1) * 10,
+    });
+
+    // #526 point 3: the shield meter reaches the true bottom of the screen, not just the tile
+    // row's own (slightly higher) bottom edge.
+    it('extends the shield bracket all the way to the bottom of the screen', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      expect(p.tileBox.y + p.tileBox.h).toBeLessThan(scene.H);   // the tile row itself stops short
+      const rect = scene._fusedShieldRect(p.tileBox);
+      expect(rect.y + rect.h).toBe(scene.H);
+    });
+
+    // #526 point 4/5: the outline shape is FIXED (never depends on the live fraction) and is drawn
+    // as several concentric layers at decreasing alpha the further they sit from the panel — a
+    // real directional gradient, not just a soft uniform glow.
+    it('draws the shield as several gradient layers, strongest near the panel and unchanged in shape by depletion', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      scene._paintFusedReadout(p, shieldedMech({ shield: 0.1 }));
+      // One TRACK stroke per gradient layer (the always-drawn fixed shape, colour SHIELD_BAR_COLOR).
+      const trackAlphas = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.alpha);
+      expect(trackAlphas.length).toBeGreaterThanOrEqual(3);
+      // Alpha strictly decreases from the first (nearest-panel) layer to the last (outermost).
+      for (let i = 1; i < trackAlphas.length; i++) expect(trackAlphas[i]).toBeLessThan(trackAlphas[i - 1]);
+      const lowTrackPts = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.pts);
+      // Every layer's TRACK is the exact same shape regardless of how little shield survives — redo
+      // at a high fraction (into a FRESH capture) and confirm the track points are identical.
+      p.fusedGfx.strokeRuns = [];
+      scene._paintFusedReadout(p, shieldedMech({ shield: 0.95 }));
+      const highTrackPts = (p.fusedGfx.strokeRuns ?? []).filter((r) => r.color === 0x5ec8e0).map((r) => r.pts);
+      expect(highTrackPts).toEqual(lowTrackPts);
+    });
+
+    it('is stroked with the bumped-up FUSED_SHIELD_WIDTH, not the old thinner line', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      scene._paintFusedReadout(p, shieldedMech({ shield: 1 }));
+      const widths = (p.fusedGfx.strokeRuns ?? []).map((r) => r.width);
+      expect(Math.max(...widths)).toBeGreaterThanOrEqual(5);
+    });
+
+    // #526 point 1: the FUSED tile bay's own background fills the SAME fixed bracket shape the
+    // shield meter is drawn from (not a plain rounded rect), so the two read as one console.
+    it('gives the FUSED tile bay the shield bracket\'s own outline shape, reaching the same floor', () => {
+      const { scene } = fusedScene();
+      const p = scene.panels[0];
+      // The test harness's `fakeScene` never calls the real `create()`, so `consoleGfx` (normally
+      // built there) doesn't exist yet — supply one and repaint, mirroring what a real deploy does.
+      scene.consoleGfx = stub({ kind: 'graphics' });
+      scene._paintConsole();
+      const bayPoly = (scene.consoleGfx.fillPointsRuns ?? []).find((r) => r.pts?.length > 10);
+      expect(bayPoly).toBeTruthy();
+      const expected = bracketOutline(scene._fusedShieldRect(p.tileBox));
+      expect(bayPoly.pts).toEqual(expected);
+      // And it reaches the true screen floor, same as the shield meter (point 3).
+      const ys = bayPoly.pts.map((pt) => pt.y);
+      expect(Math.max(...ys)).toBe(scene.H);
+    });
+
+    // #526 point 6/7: the armor peek plate is a sharp-cornered bar (radius 0), in the new
+    // steel/gunmetal tone rather than the old bronze/gold.
+    it('draws the armor peek plate as a sharp-cornered bar in the new steel/gunmetal tone', () => {
+      const { scene } = fusedScene();
+      const mech = new Mech({ chassisId: 'medium' });
+      mech.applyDamage('leftArm', 20);
+      scene._updateIntegrity(scene.panels[0], mech);
+      const runs = scene.panels[0].armorBackGfx.fillRuns ?? [];
+      const armorRun = runs.find((r) => r.color !== undefined && r.h > 0);
+      expect(armorRun).toBeTruthy();
+      expect(armorRun.radius).toBe(0);
+      expect(armorRun.color).not.toBe(0x8a6a3a);   // the old bronze tone is gone
+      const strokeRuns = scene.panels[0].armorBackGfx.strokeRRRuns ?? [];
+      expect(strokeRuns.some((r) => r.radius === 0)).toBe(true);
+    });
+
+    // #526 point 10: a LIVE (non-destroyed) part gets no health-based colour wash any more — only
+    // the flicker/static/sparks damage feedback, which is independent of any colour ramp. A
+    // DESTROYED part still gets its fixed (non-ramped) dead-cell fill.
+    it('paints no health-ramped colour wash over a live part — only a destroyed one gets a fixed fill', () => {
+      const { scene } = fusedScene();
+      const mech = new Mech({ chassisId: 'medium' });
+      mech.applyDamage('leftArm', 30);   // dents structure without destroying it
+      expect(mech.isPartDestroyed('leftArm')).toBe(false);
+      scene._paintFusedReadout(scene.panels[0], mech);
+      const fillColors = (scene.panels[0].fusedGfx.fillRuns ?? []).map((r) => r.color);
+      const hpFrac = mech.parts.leftArm.hp / mech.parts.leftArm.maxHp;
+      expect(fillColors).not.toContain(structureColor(hpFrac));
+
+      mech.applyDamage('leftArm', 9999);
+      expect(mech.isPartDestroyed('leftArm')).toBe(true);
+      scene._paintFusedReadout(scene.panels[0], mech);
+      const destroyedFills = (scene.panels[0].fusedGfx.fillRuns ?? []).map((r) => r.color);
+      expect(destroyedFills.length).toBeGreaterThan(0);   // the dead-cell fill is still drawn
     });
   });
 

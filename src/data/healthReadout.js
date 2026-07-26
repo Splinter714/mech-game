@@ -345,12 +345,18 @@ export const SHIELD_ARC = {
 // side x's, the shared centre-x the top rail runs to, and the corner radius — clamped so it can
 // never exceed the space actually available (a defensive floor for an unusually short/narrow row,
 // not something normal HUD sizes ever hit).
-function bracketGeometry(rect) {
+//
+// #526 (playtest: "shield opacity should be a gradient, strongest facing the panel and weakest
+// facing away"): `pad` grows the bracket OUTWARD — bigger overhang/rise, same `bottomY` — without
+// touching the shape's own corner language. HudScene draws several copies of the SAME fixed shape
+// at increasing `pad`/decreasing alpha to fake that gradient (plain Graphics has no true gradient
+// stroke); `pad` defaults to 0, so every existing call site is byte-identical to before.
+function bracketGeometry(rect, pad = 0) {
   const S = SHIELD_ARC;
   const bottomY = rect.y + rect.h * S.sideDrop;
-  const topY = rect.y - S.rise;
-  const leftX = rect.x - S.overhang;
-  const rightX = rect.x + rect.w + S.overhang;
+  const topY = rect.y - (S.rise + pad);
+  const leftX = rect.x - (S.overhang + pad);
+  const rightX = rect.x + rect.w + (S.overhang + pad);
   const cx = rect.x + rect.w / 2;
   const r = Math.max(0, Math.min(S.corner, bottomY - topY, cx - leftX));
   return { bottomY, topY, leftX, rightX, cx, r };
@@ -396,14 +402,29 @@ function bracketPoint(geo, side, u) {
 
 // A polyline from `u0` to `u1` on one side's path, in `steps` segments — the same "hand back a
 // drawable polyline" idiom `perimeterRun` uses, so HudScene paints both with `strokePoints`.
-function bracketArc(rect, side, u0, u1, steps) {
-  const geo = bracketGeometry(rect);
+function bracketArc(rect, side, u0, u1, steps, pad = 0) {
+  const geo = bracketGeometry(rect, pad);
   const pts = [];
   for (let i = 0; i <= steps; i++) {
     const u = u0 + (u1 - u0) * (i / steps);
     pts.push(bracketPoint(geo, side, u));
   }
   return pts;
+}
+
+// The bracket's full closed OUTLINE (both sides' complete paths, joined at the shared apex) for a
+// given rect — the fixed SHAPE, independent of the live shield fraction. `pad` (see
+// `bracketGeometry`) grows it outward for the #526 opacity-gradient layers; the default (0) is
+// exactly what `shieldArcLayout`'s own `track` used to compute inline, and is also what #526
+// reuses to give the FUSED tile panel's own background the same nipped-corner shape as the shield
+// meter sitting above it (HudScene `_paintConsole`), so the two read as one continuous console
+// outline instead of a differently-shaped panel under a differently-shaped frame.
+export function bracketOutline(rect, pad = 0) {
+  const S = SHIELD_ARC;
+  return [
+    ...bracketArc(rect, 'left', 0, 1, S.steps, pad),
+    ...bracketArc(rect, 'right', 1, 0, S.steps, pad).slice(1),
+  ];
 }
 
 // `rect` is the tile row's own bounding box (HudScene's `panel.tileBox`, off `ui/skillTiles.js`
@@ -420,16 +441,20 @@ function bracketArc(rect, side, u0, u1, steps) {
 // left at all. Untouched by the 2nd round's shape rewrite — `u` replaces the old arc angle
 // one-for-one, so this indexing (index 0 = fixed outer stub, last = growth toward the apex) still
 // holds.
-export function shieldArcLayout(rect, frac) {
+//
+// #526 (playtest: "the shield should stay on its full-shape outline even when depleted, not
+// distort as it drains"): `track` was already frac-independent — the real fix was on the PAINT
+// side (HudScene now draws it thicker and at several gradient layers so it actually reads as an
+// always-present shape rather than a near-invisible hairline next to the bright partial fill).
+// `pad` (optional, defaults to 0 = old behaviour exactly) is what lets HudScene draw those extra
+// gradient layers as the SAME shape grown outward, instead of a different shape.
+export function shieldArcLayout(rect, frac, pad = 0) {
   const S = SHIELD_ARC;
   const f = Math.max(0, Math.min(1, frac ?? 0));
   return {
-    track: [
-      ...bracketArc(rect, 'left', 0, 1, S.steps),
-      ...bracketArc(rect, 'right', 1, 0, S.steps).slice(1),
-    ],
-    left: f > 0 ? bracketArc(rect, 'left', 0, f, S.steps) : [],
-    right: f > 0 ? bracketArc(rect, 'right', 0, f, S.steps) : [],
+    track: bracketOutline(rect, pad),
+    left: f > 0 ? bracketArc(rect, 'left', 0, f, S.steps, pad) : [],
+    right: f > 0 ? bracketArc(rect, 'right', 0, f, S.steps, pad) : [],
   };
 }
 
