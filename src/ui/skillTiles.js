@@ -14,8 +14,15 @@ import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
 // centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
-// this is now four weapon slots only.
+// this is now four weapon slots only. Still what the Garage's paper-doll tile row uses.
 export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
+
+// #506 rework (playtest): the arena HUD's tile row, not the Garage's. Jackson: "the two active
+// skills X/Y should be represented as the same size as weapons, and should be the middle two of
+// 6 buttons" — every combat-bound button the arena shows at once, one row, same tile size
+// throughout: the four weapon slots flanking the two mountable abilities in the middle. The
+// passive core slot is deliberately NOT in this list at all — see HudScene.js's `_makePanel`.
+export const HUD_TILE_ORDER = ['leftArm', 'leftTorso', ...ABILITY_SLOTS, 'rightTorso', 'rightArm'];
 
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
@@ -63,13 +70,16 @@ export function paintTilePlate(g, rect, { selected = false } = {}) {
   g.strokeRoundedRect(x, y, w, h, r);
 }
 
-// A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`.
-export function tileRow(x, w, { y, bottom, n = TILE_ORDER.length, gap = 12, maxSize = 132 } = {}) {
+// A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`. `order`
+// is the location/slot id list to draw from — defaults to the Garage's plain weapon-only
+// TILE_ORDER; the arena HUD passes HUD_TILE_ORDER (#506 rework) to get all six combat-bound
+// buttons in one row instead.
+export function tileRow(x, w, { y, bottom, order = TILE_ORDER, n = order.length, gap = 12, maxSize = 132 } = {}) {
   const size = Math.min(maxSize, Math.floor((w - gap * (n - 1)) / n));
   const totalW = size * n + gap * (n - 1);
   const x0 = Math.round(x + (w - totalW) / 2);
   const top = bottom != null ? bottom - size : y;
-  return TILE_ORDER.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
+  return order.slice(0, n).map((loc, i) => ({ loc, x: x0 + i * (size + gap), y: top, w: size, h: size }));
 }
 
 // Places every ABILITY_SLOTS entry around (cx, cy), using ABILITY_SLOT_LAYOUT's unit dx/dy

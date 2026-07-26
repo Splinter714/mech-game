@@ -248,9 +248,14 @@ export const CONSOLE = {
   playerGap: 34,    // one player's whole group ↔ the next player's
 };
 
-// The skill tile row's own dial. The row is FOUR tiles, and in a centred console they want their
-// natural size — only a genuinely narrow window (or a co-op pair) ever squeezes them.
-export const CONSOLE_TILES = { n: 4, gap: 12, max: 92, min: 46 };
+// The skill tile row's own dial. #506 rework: the row is now SIX tiles — the four weapon slots
+// plus the two mountable abilities, all one size, abilities riding the middle two seats (the
+// passive core slot dropped out of the in-mission HUD entirely). In a centred console they want
+// their natural size — only a genuinely narrow window (or a co-op pair) ever squeezes them.
+// `min` dropped from the old 4-tile row's 46 to 34: six tiles need noticeably more width than
+// four did, and 34 is the largest floor that still keeps a 2-player co-op band on screen at the
+// narrowest width this HUD is exercised at (900px, see hudLayout.test.js).
+export const CONSOLE_TILES = { n: 6, gap: 12, max: 92, min: 34 };
 
 export function tileRowWidth(size, n = CONSOLE_TILES.n, gap = CONSOLE_TILES.gap) {
   return size * n + gap * (n - 1);

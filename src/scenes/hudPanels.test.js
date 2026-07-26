@@ -23,6 +23,7 @@ const { hudPlayerSnapshot, CONSOLE, consoleLayout, INTEGRITY_ORDER } = await imp
 const { getWeapon } = await import('../data/weapons.js');
 const { structureColor, FUSED_DOME_RISE } = await import('../data/healthReadout.js');
 const { ABILITY_SLOTS } = await import('../data/anatomy.js');
+const { TILE_ORDER, HUD_TILE_ORDER } = await import('../ui/skillTiles.js');
 
 // A chainable display-object stub: every method returns itself, so the real widget-building code
 // runs unmodified against it and we can inspect the positions it asked for.
@@ -666,14 +667,14 @@ describe('HudScene health readout modes (#448)', () => {
       expect(scene._band.x + scene._band.w / 2).toBeCloseTo(scene.W / 2, 0);
     });
 
-    it('takes its console ceiling from the ability diamond, not a floating empty header line', () => {
+    it('takes its console ceiling from the (single-row) tile row', () => {
       const { scene } = noneScene();
       const p = scene.panels[0];
       // `_paintConsole` takes the shell's ceiling as min(tileTop, bars.headerY). NONE reserves no
-      // header caption (bars.headerY sits on the bare tile row), but #506's always-on ability
-      // diamond sits ABOVE that row and is folded into tileTop — so the diamond, not an empty
-      // header slot, is what the shell actually grows to fit.
-      expect(p.tileTop).toBeLessThan(p.bars.headerY);
+      // header caption, so `bars.headerY` is set to fall back to the tile row's own top edge —
+      // #506's rework put the abilities IN that row rather than in a diamond stacked above it, so
+      // there is no longer a taller thing for tileTop to fold in: it's just the row's own top.
+      expect(p.tileTop).toBe(p.bars.headerY);
       const shell = consoleLayout(scene.H, Math.min(p.tileTop, p.bars.headerY), scene._band);
       expect(shell.y).toBe(p.tileTop - CONSOLE.padTop);
       // ...and it still runs all the way down to the bottom of the screen.
@@ -836,49 +837,55 @@ describe('HudScene health readout modes (#448)', () => {
   });
 });
 
-// #506: the ability tiles (Y/X — down from four, see anatomy.js) + core tile, always rendered
-// above the weapon tile row — same "empty + tile, live cooldown/subtitle when mounted" language
-// the 4 weapon tiles already use, generalized via skillTiles.js's diamondLayout/coreTileRect +
-// bindGlyph/emptyLabel opts (pinned directly in src/ui/skillTiles.test.js; this file pins the
-// WIRING).
-describe('HudScene panels — the ability tiles + core tile (#506)', () => {
-  it('builds a tile for both ability slots plus the core slot, unconditionally', () => {
+// #506 rework (playtest, superseding the original diamond): Jackson — "needs a rework; the
+// passive slot doesn't need to be represented during an actual deployment; the two active skills
+// X/Y should be represented as the same size as weapons, and should be the middle two of 6
+// buttons." The ability tiles now live IN the weapon tile row (ui/skillTiles.js HUD_TILE_ORDER),
+// same size as every weapon tile, and the passive core slot gets no HUD tile at all during a
+// deployment (it's Garage-only chrome — see GarageScene/SimulGarageScene, untouched).
+describe('HudScene panels — the six-button row + no in-mission core tile (#506 rework)', () => {
+  it('builds one tile for each of the 4 weapon slots and both ability slots — no core tile', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const refs = scene.panels[0].skillRefs;
+    for (const loc of TILE_ORDER) expect(refs[loc]).toBeTruthy();
     for (const slot of ABILITY_SLOTS) expect(refs[slot]).toBeTruthy();
-    expect(refs.core).toBeTruthy();
+    expect(refs.core).toBeUndefined();
   });
 
-  it('shows the empty "ability"/"core" placeholder label and the ability keyboard bind when unmounted', () => {
+  it('shows the empty "ability" placeholder label and the ability keyboard bind when unmounted', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const refs = scene.panels[0].skillRefs;
     expect(refs.abilityY.subtitle.text).toBe('ability');
     expect(refs.abilityY.bind.text).toBe('1');   // ABILITY_BINDS.abilityY.key
-    expect(refs.core.subtitle.text).toBe('core');
-    expect(refs.core.bind.text).toBe('');        // core is passive — no button at all
   });
 
-  it('positions the ability tiles ABOVE the weapon tile row, centred on the same horizontal midpoint', () => {
+  it('places the ability tiles in the middle two seats of one row of six, same size as the weapon tiles', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
-    const weaponTop = panel.skillRefs.leftArm.rect.y;
-    expect(panel.skillRefs.abilityY.rect.y).toBeLessThan(weaponTop);   // above the weapon row
-    // Y/X flank the core tile left/right (ABILITY_SLOT_LAYOUT dy:0 for both), so they sit at the
-    // SAME height rather than one above the other the way the old 4-slot diamond's corners did.
-    expect(panel.skillRefs.abilityX.rect.y).toBe(panel.skillRefs.abilityY.rect.y);
-    const groupMidX = scene._band.groups[0].tilesX + scene._band.groups[0].tilesW / 2;
-    const coreCx = panel.skillRefs.core.rect.x + panel.skillRefs.core.rect.w / 2;
-    expect(Math.abs(coreCx - groupMidX)).toBeLessThanOrEqual(1);
+    const row = HUD_TILE_ORDER.map((loc) => panel.skillRefs[loc]);
+    expect(HUD_TILE_ORDER).toHaveLength(6);
+    expect(HUD_TILE_ORDER.slice(2, 4)).toEqual(['abilityY', 'abilityX']);   // the middle two seats
+    // Every tile shares the row's baseline and the same square size — abilities included.
+    const weaponSize = panel.skillRefs.leftArm.rect.w;
+    for (const ref of row) {
+      expect(ref.rect.y).toBe(panel.skillRefs.leftArm.rect.y);
+      expect(ref.rect.w).toBe(weaponSize);
+      expect(ref.rect.h).toBe(weaponSize);
+    }
+    // Left-to-right screen order matches HUD_TILE_ORDER.
+    const xs = row.map((r) => r.rect.x);
+    expect(xs).toEqual([...xs].sort((a, b) => a - b));
   });
 
-  it('folds the ability row into panel.tileTop/tileBox so the console bay recesses behind both', () => {
+  it('folds the single tile row into panel.tileTop/tileBox — one baseline, no separate cluster', () => {
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     const panel = scene.panels[0];
-    expect(panel.tileTop).toBeLessThanOrEqual(panel.skillRefs.abilityY.rect.y);
+    expect(panel.tileTop).toBe(panel.skillRefs.abilityY.rect.y);
+    expect(panel.tileTop).toBe(panel.skillRefs.leftArm.rect.y);
     expect(panel.tileBox.y).toBe(panel.tileTop);
   });
 
@@ -917,13 +924,12 @@ describe('HudScene panels — the ability tiles + core tile (#506)', () => {
     expect(scene.panels[0].skillRefs.abilityY.subtitle.text).toBe('ACTIVE');
   });
 
-  it('shows PASSIVE for a mounted core item, with no cooldown state at all', () => {
+  it('never builds a core tile in the arena HUD, even when a core item is mounted', () => {
     const mech = new Mech({ chassisId: 'medium', coreMounts: { core: 'shield' } });
     const snapshot = hudPlayerSnapshot({ id: 0, color: PLAYER_COLORS[0], mech, dead: false, respawn: null });
     const { scene } = fakeScene([snap(0)]);
     scene._syncPanels();
     scene._updatePanel(scene.panels[0], snapshot);
-    const ref = scene.panels[0].skillRefs.core;
-    expect(ref.subtitle.text).toBe('PASSIVE');
+    expect(scene.panels[0].skillRefs.core).toBeUndefined();
   });
 });
