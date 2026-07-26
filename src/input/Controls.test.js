@@ -40,6 +40,7 @@ function fakeControlsScene({ pads = [] } = {}) {
   }
   const pointer = { x: 0, y: 0, worldX: 0, worldY: 0, wasTouch: false, leftButtonDown: () => false, rightButtonDown: () => false };
   const handlers = {};
+  const gamepadHandlers = {};
   return {
     input: {
       keyboard: { addKeys: () => keys, on: () => {} },
@@ -51,6 +52,7 @@ function fakeControlsScene({ pads = [] } = {}) {
         total: pads.length,
         getPad: (i) => pads[i] ?? null,
         getAll: () => pads,
+        on: (evt, fn) => { (gamepadHandlers[evt] ||= []).push(fn); },
       },
     },
     cameras: { main: { width: 800, height: 400 } },
@@ -58,6 +60,9 @@ function fakeControlsScene({ pads = [] } = {}) {
     _keys: keys,
     _pointer: pointer,
     _emit: (evt, p) => { for (const fn of handlers[evt] ?? []) fn(p); },
+    // #524: fire the gamepad plugin's own 'connected' event, as it would for a pad that shows
+    // up for the first time mid-scene (as opposed to one already known at construction).
+    _emitGamepadConnected: (pad) => { for (const fn of gamepadHandlers.connected ?? []) fn(pad); },
   };
 }
 
@@ -142,6 +147,44 @@ describe('Controls / PadEdges — resync a carried-over pad on scene transition 
 
   it('does not throw when the scene has no gamepad plugin or no pads connected', () => {
     const scene = fakeControlsScene({ pads: [] });
+    expect(() => new Controls(scene)).not.toThrow();
+    expect(() => new PadEdges(scene)).not.toThrow();
+  });
+});
+
+// #524: BaseScene reported "controller doesn't work until you visit the garage." Root cause —
+// the #122 fix above only resyncs pads ALREADY known to this scene's GamepadPlugin at
+// construction time (the scene-TRANSITION case). It does nothing for a pad that connects to the
+// BROWSER for the very first time DURING this scene's life, which is exactly what happens on a
+// fresh load of BaseScene: it's the game's entry point and driving around needs only the analog
+// stick, so it's commonly the first place all session a controller is ever touched at all. The
+// browser only exposes an already-plugged-in-but-untouched pad once it sees real input, and the
+// wrapper Phaser then creates (off the native 'gamepadconnected' event) is stamped with
+// `_created` at essentially that same instant — so if the player holds the stick steady with no
+// further state change, it never resyncs (identical symptom to #122, just arriving later than
+// construction). Controls/PadEdges now also listen for the plugin's own 'connected' event and
+// zero out `_created` on whatever pad arrives, so a pad connecting mid-scene gets the same
+// unconditional-resync treatment as one already known up front.
+describe('Controls / PadEdges — resync a pad that connects mid-scene, not just at construction (issue #524)', () => {
+  it('Controls zeroes _created on a pad that connects after construction', () => {
+    const scene = fakeControlsScene({ pads: [] });
+    new Controls(scene);
+    const latePad = { connected: true, buttons: [], leftStick: { x: 0, y: 0 }, rightStick: { x: 0, y: 0 }, _created: performance.now() + 10000 };
+    scene._emitGamepadConnected(latePad);
+    expect(latePad._created).toBe(0);
+  });
+
+  it('PadEdges zeroes _created on a pad that connects after construction', () => {
+    const scene = fakeControlsScene({ pads: [] });
+    new PadEdges(scene);
+    const latePad = { connected: true, buttons: [], _created: performance.now() + 10000 };
+    scene._emitGamepadConnected(latePad);
+    expect(latePad._created).toBe(0);
+  });
+
+  it('does not throw when the gamepad plugin has no `on` method', () => {
+    const scene = fakeControlsScene({ pads: [] });
+    delete scene.input.gamepad.on;
     expect(() => new Controls(scene)).not.toThrow();
     expect(() => new PadEdges(scene)).not.toThrow();
   });
