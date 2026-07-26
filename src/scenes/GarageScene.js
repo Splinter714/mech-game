@@ -62,6 +62,12 @@ const UI = {
   panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
 };
 
+// A Phaser text `color` style wants a CSS string; mechColorFor (and the rest of the identity-
+// colour machinery) works in numeric hex, same conversion arena/coop.js uses for its respawn readout.
+function hexColor(n) {
+  return '#' + n.toString(16).padStart(6, '0');
+}
+
 // Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
 const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
 
@@ -290,26 +296,26 @@ export default class GarageScene extends Phaser.Scene {
     poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
 
     // The player-number label — sits INSIDE the preview box, at its bottom (#505 playtest
-    // follow-up on top of the earlier "just below the mech preview art" placement), with the
-    // identity-colour dot to its left. #505 fifth rework adds a compact checkmark-style READY
-    // indicator to its right — the old top-of-column "READY?" pill is gone; this is where it
-    // moved to.
+    // follow-up on top of the earlier "just below the mech preview art" placement). #505 seventh
+    // rework (playtest follow-up): the separate identity-colour dot that used to sit to its left
+    // is gone — the label text itself is now painted in the player's identity colour, so there's
+    // one element carrying that information instead of two. #505 fifth rework adds a compact
+    // checkmark-style READY indicator to its right — the old top-of-column "READY?" pill is gone;
+    // this is where it moved to.
     col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
-      fontFamily: 'monospace', fontSize: '12px', color: UI.text,
+      fontFamily: 'monospace', fontSize: '12px', color: hexColor(mechColorFor(col.mech, i)),
     }).setOrigin(0.5, 0);
-    col.headerColor = this.add.rectangle(
-      col.headerLabel.x - col.headerLabel.width / 2 - 10, gl.label.y + col.headerLabel.height / 2,
-      9, 9, mechColorFor(col.mech, i),
-    ).setOrigin(0.5);
     const readyCx = col.headerLabel.x + col.headerLabel.width / 2 + 12;
     const readyCy = gl.label.y + col.headerLabel.height / 2;
+    // #505 playtest follow-up: this is a pure status light, not a button — ready is toggled via
+    // the D key / gamepad START (see keydown-D and the pad-edge handling below), never a click
+    // here. No setInteractive/pointerdown on purpose.
     col.readyBg = this.add.rectangle(readyCx, readyCy, 16, 16, UI.btn).setOrigin(0.5)
-      .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this._toggleReady(i));
+      .setStrokeStyle(1, UI.panelEdge);
     col.readyGlyph = this.add.text(readyCx, readyCy, '✓', {
       fontFamily: 'monospace', fontSize: '11px', color: UI.dim,
     }).setOrigin(0.5);
-    col.layer.add([col.headerLabel, col.headerColor, col.readyBg, col.readyGlyph]);
+    col.layer.add([col.headerLabel, col.readyBg, col.readyGlyph]);
 
     // #528 fix: WeaponCardList (col.catalogList, built above) owns its own top-level container
     // added to the scene AFTER col.layer, so by default it — and every card inside it — renders
@@ -485,8 +491,9 @@ export default class GarageScene extends Phaser.Scene {
   // hint) are gone from the visual layout — Jackson: "it's taking unnecessary space." The
   // cycling itself is untouched: pad d-pad left/right (update(), below) and, new this rework,
   // keyboard LEFT/RIGHT for column 0 (create(), mirroring the pad exactly — see the arrow-key
-  // handlers). The mech re-baking its own texture + the small identity dot next to the player
-  // label (both still repainted below) ARE the colour's visible feedback now.
+  // handlers). The mech re-baking its own texture + the PLAYER # label's own text colour (both
+  // still repainted below) ARE the colour's visible feedback now — #505 seventh rework folded
+  // the old separate identity dot into the label itself, so there's one thing left to repaint.
   _cycleColor(col, dir) {
     if (!col) return;
     const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
@@ -498,8 +505,8 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
-    // The identity dot beside the player label shows the same colour — repaint it in place.
-    col.headerColor?.setFillStyle(next, 1);
+    // The PLAYER # label is painted in the identity colour — repaint it in place.
+    col.headerLabel?.setColor(hexColor(next));
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────

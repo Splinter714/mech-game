@@ -125,11 +125,26 @@ describe('#505 THIRD rework — player label moved onto the preview art (now INS
     expect(body).toMatch(/col\.headerLabel = this\.add\.text\(gl\.label\.cx, gl\.label\.y, `PLAYER \$\{i \+ 1\}`/);
   });
 
-  it('the identity colour dot moved down alongside the label rather than staying in the header', () => {
+  it('#505 seventh rework (playtest follow-up): the separate identity-colour dot is gone — the label text itself carries the colour instead', () => {
     const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
-    // headerColor is now positioned relative to headerLabel's own (bottom-anchored) position,
-    // not the old fixed `(pad, 6)` header-row coordinate.
+    expect(body).not.toContain('col.headerColor');
     expect(body).not.toMatch(/col\.headerColor = this\.add\.rectangle\(pad, 6,/);
-    expect(body).toMatch(/col\.headerColor = this\.add\.rectangle\(\s*\n\s*col\.headerLabel\.x/);
+    expect(body).toMatch(/col\.headerLabel = this\.add\.text\(gl\.label\.cx, gl\.label\.y, `PLAYER \$\{i \+ 1\}`, \{\s*\n\s*fontFamily: 'monospace', fontSize: '12px', color: hexColor\(mechColorFor\(col\.mech, i\)\),/);
+  });
+});
+
+describe('#505 seventh rework (playtest follow-up) — the compact ready indicator is a pure status light, not a button', () => {
+  it('col.readyBg is created with no setInteractive/pointerdown — clicking it does nothing', () => {
+    const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
+    const readyBgStatement = body.match(/col\.readyBg = this\.add\.rectangle\([^;]*;/)?.[0];
+    expect(readyBgStatement, 'expected a col.readyBg = this.add.rectangle(...) statement').toBeTruthy();
+    expect(readyBgStatement).not.toContain('setInteractive');
+    expect(readyBgStatement).not.toContain('pointerdown');
+    expect(readyBgStatement).not.toContain('useHandCursor');
+  });
+
+  it('ready still toggles via its other existing triggers — keyboard D and gamepad START — independent of any click on the indicator', () => {
+    expect(src).toContain("this.input.keyboard.on('keydown-D', () => this._toggleReady(0));");
+    expect(src).toMatch(/if \(e\.pressed\(PAD\.START\)\) \{ this\._toggleReady\(i\); continue; \}/);
   });
 });
