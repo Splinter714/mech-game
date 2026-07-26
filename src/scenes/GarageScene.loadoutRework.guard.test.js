@@ -103,11 +103,15 @@ describe('#505 THIRD rework — arrow keys mirror the pad d-pad exactly', () => 
   });
 });
 
-describe('#505 THIRD rework — colour-select swatch/label hidden, cycling still works', () => {
-  it('no colorSwatch/colorName/colorHint display objects are created any more', () => {
-    expect(src).not.toContain('colorSwatch');
-    expect(src).not.toContain('colorName');
-    expect(src).not.toContain('colorHint');
+describe('#505 THIRD rework — the old single "current colour" indicator/name-label is gone, cycling still works', () => {
+  // #529 legitimately reintroduces a colour picker (the COLOR tab's swatch grid — col.
+  // colorSwatchRefs/col.colorNameText), so this guard is narrowed to the OLD pre-#505 identifiers
+  // (this.colorSwatch/this.colorName/this.colorHint, a single "current colour" indicator + ‹ ›
+  // hint) rather than banning the substring "colorSwatch" outright.
+  it('no this.colorSwatch/this.colorName/this.colorHint (the old single-indicator UI) or _refreshColorControl', () => {
+    expect(src).not.toMatch(/this\.colorSwatch\b/);
+    expect(src).not.toMatch(/this\.colorName\b/);
+    expect(src).not.toMatch(/this\.colorHint\b/);
     expect(src).not.toContain('_refreshColorControl');
   });
 
@@ -133,17 +137,16 @@ describe('#505 THIRD rework — player label moved onto the preview art (now INS
   });
 });
 
-describe('#505 seventh rework (playtest follow-up) — the compact ready indicator is a pure status light, not a button', () => {
-  it('col.readyBg is created with no setInteractive/pointerdown — clicking it does nothing', () => {
-    const body = bodyOf(/_buildColumn\(i\)\s*\{[\s\S]*?\n {2}\}/);
-    const readyBgStatement = body.match(/col\.readyBg = this\.add\.rectangle\([^;]*;/)?.[0];
-    expect(readyBgStatement, 'expected a col.readyBg = this.add.rectangle(...) statement').toBeTruthy();
-    expect(readyBgStatement).not.toContain('setInteractive');
-    expect(readyBgStatement).not.toContain('pointerdown');
-    expect(readyBgStatement).not.toContain('useHandCursor');
+// #529: the old compact checkmark-style ready indicator (col.readyBg/col.readyGlyph) is GONE —
+// see GarageScene.readyButton.guard.test.js for its replacement (the pinned tab-bar Deploy/Ready
+// button's own visual, plus the PLAYER # label's own trailing "✓" for non-column-0 players).
+describe('#529 — the old separate per-column ready icon is removed entirely', () => {
+  it('col.readyBg/col.readyGlyph no longer exist anywhere in the file', () => {
+    expect(src).not.toContain('readyBg');
+    expect(src).not.toContain('readyGlyph');
   });
 
-  it('ready still toggles via its other existing triggers — keyboard D and gamepad START — independent of any click on the indicator', () => {
+  it('ready still toggles via its existing triggers — keyboard D and gamepad START', () => {
     expect(src).toContain("this.input.keyboard.on('keydown-D', () => this._toggleReady(0));");
     expect(src).toMatch(/if \(e\.pressed\(PAD\.START\)\) \{ this\._toggleReady\(i\); continue; \}/);
   });
