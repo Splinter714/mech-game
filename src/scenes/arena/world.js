@@ -185,11 +185,15 @@ export const WorldMixin = {
     // regenerates from a brand-new random seed every deploy (see data/baseCapture.js's header for
     // why coord can't be the identity here). A captured base loses its dormant garrison (no docks,
     // no destructible objective — `applyCapturedBases` nulls both) and its dock/objective hexes
-    // swap to the neutral `playerStructure` placeholder below. Its GATES are left to the existing
-    // #355 fail-open latch (scenes/arena/bases.js `_failedOpenBases`) — that already reads a base
-    // with `objectiveHex: null` and no live enemies as "beaten", so a captured base's gates open
-    // for the player with no new mechanism. Its wall-TURRET spans are reconciled a few lines below,
-    // once `this.wallEdges` exists.
+    // swap to the neutral `playerStructure` placeholder below. Its GATES used to fall through to
+    // #355's fail-open latch (scenes/arena/bases.js `_failedOpenBases`) — that reads a base with
+    // `objectiveHex: null` and no live enemies as "beaten" — which meant every gate on every
+    // captured base locked open at once, everywhere, the moment it was captured (#531). Captured
+    // bases are now excluded from that latch and get proximity-driven gates instead: `this.captured`
+    // is checked per-base in `_failedOpenBases`, and `_updateGates` sources `demand` from
+    // `_playerNearGate` (the specific gate span's midpoint) rather than garrison routing, so only
+    // the gate a player is actually near opens. Its wall-TURRET spans are reconciled a few lines
+    // below, once `this.wallEdges` exists.
     const outposts = this.registry?.get?.(OUTPOSTS_KEY) ?? [];
     const capturedBaseIds = capturedBaseIdsFor(outposts, this.biomeId);
     this._capturedBaseIds = capturedBaseIds;

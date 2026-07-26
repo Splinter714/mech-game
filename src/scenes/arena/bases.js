@@ -58,6 +58,20 @@ import { scaleComposition, scaleDockWave } from '../../data/playerScaling.js';
 const GATE_DEMAND_SCAN_MS = 250;
 const GATE_DEMAND_UNITS_PER_SCAN = 6;
 
+// #531: how close a player must be to a CAPTURED base's gate before that specific gate opens for
+// them. A captured base (#518 `applyCapturedBases`) has its garrison and objective hex stripped, so
+// it has nothing left to generate the ordinary `_gateDemand` signal AND it reads as "beaten" to
+// #355's fail-open latch (`isBaseObjectiveDestroyed`) the instant it is captured — which was the
+// #531 bug: every gate on every captured base locked open, all at once, everywhere, regardless of
+// where the player actually was. Captured bases are excluded from that latch below
+// (`_failedOpenBases`) and instead drive `demand` from proximity to the SPECIFIC gate span, so only
+// the gate a player is actually near cycles open — the base's other gates, and every other captured
+// base's gates, stay shut. Sized comfortably past the reaction+opening travel time
+// (GATE_REACTION_MS + GATE_OPENING_MS ≈ 1.4s) at a sprinting light chassis's top speed (~400px/s,
+// data/sprint.js SPRINT_SPEED_MULT x data/chassis/light.js maxSpeed), so the doors are done swinging
+// open by the time a player who triggered them at the edge of this radius actually arrives.
+export const CAPTURED_GATE_APPROACH_PX = 420;
+
 // ── The node cap for a DEMAND search, and why it is NOT the movement router's ───────────
 // PLAYTEST 2 ("I don't see the gates actually opening for the tanks when they seem to be wanting
 // it"). This was the bug, and it was invisible from outside: a demand search that hits its node cap
@@ -1287,9 +1301,17 @@ export const BasesMixin = {
   // through `isBaseObjectiveDestroyed` to its cleared-of-enemies fallback, which keeps this
   // consistent with the mission/win checks for that rare case rather than leaving such a base's
   // gates cycling forever.
+  //
+  // #531: a CAPTURED base (#518 `applyCapturedBases` — objective hex nulled, garrison stripped)
+  // trivially satisfies `isBaseObjectiveDestroyed` the instant it's captured, which used to latch
+  // every one of its gates open forever, all at once, for no player-caused reason — the actual bug
+  // report. Captured bases are excluded here and get proximity-driven gates instead
+  // (`CAPTURED_GATE_APPROACH_PX`, `_updateGates` below); this set stays exactly what it always was
+  // for a base the player actually fought to a standstill.
   _failedOpenBases() {
     const set = new Set();
     for (const base of this.bases ?? []) {
+      if (base.captured) continue;
       if (isBaseObjectiveDestroyed(base, this.buildingHp, this.enemies)) set.add(base.id);
     }
     return set;
@@ -1521,12 +1543,20 @@ export const BasesMixin = {
       // unit routing through the shared passage opens the whole door, and a body standing in the
       // mouth holds both leaves open.
       const livePartner = partner && !partner.destroyed ? partner : null;
-      const demand = !!this._gateDemand?.wanted(edge.key, nowMs)
-        || (livePartner ? !!this._gateDemand?.wanted(livePartner.key, nowMs) : false);
+      // #531: a CAPTURED base's gate has no garrison left to want it, and is deliberately excluded
+      // from `_failedOpenBases`'s latch above — so its `demand` comes from player proximity to THIS
+      // gate span instead (`_playerNearGate`), and it is always `awake` (a friendly base needs no
+      // discovery/wake beat; there is no hostile tower left to trip). Every other base keeps the
+      // ordinary garrison-routing signal untouched.
+      const captured = !!this._capturedBaseIds?.has(edge.baseId);
+      const demand = captured
+        ? (this._playerNearGate(edge) || (livePartner ? this._playerNearGate(livePartner) : false))
+        : (!!this._gateDemand?.wanted(edge.key, nowMs)
+          || (livePartner ? !!this._gateDemand?.wanted(livePartner.key, nowMs) : false));
       const next = tickGate(state, {
-        awake: this._wokenBases.has(edge.baseId),
+        awake: captured || this._wokenBases.has(edge.baseId),
         demand,
-        failOpen: failedOpen.has(edge.baseId),
+        failOpen: captured ? false : failedOpen.has(edge.baseId),
         // #369 ELEVATOR DOORS: is anything standing in the mouth? Only asked in the two phases
         // where the answer can change anything — the open gate deciding whether to shut, and the
         // closing gate deciding whether to relent. A shut, opening, or locked-open gate skips the
@@ -1599,6 +1629,16 @@ export const BasesMixin = {
   // `_updateGates` for gates in the open/closing phases and fed to `tickGate` as `occupied`.
   _gateMouthOccupied(edge) {
     return this._gateBodyGroups().some((g) => gateMouthOccupied(g.bodies, edge, g.radiusOf));
+  },
+
+  // #531: is any LIVE player within `CAPTURED_GATE_APPROACH_PX` of this specific gate span's
+  // midpoint? This is the `demand` signal for a captured base's gates (see `_updateGates`) — a
+  // coarser, longer-range cousin of `_gateMouthOccupied`'s "standing exactly in the doorway" test,
+  // because a captured gate has to start swinging well before the player is close enough to touch
+  // it, not only once they're already pressed against it.
+  _playerNearGate(edge) {
+    const mx = (edge.x0 + edge.x1) / 2, my = (edge.y0 + edge.y1) / 2;
+    return livePlayersOf(this).some((p) => Math.hypot(p.x - mx, p.y - my) <= CAPTURED_GATE_APPROACH_PX);
   },
 
   // #369 — the FALLBACK sweep (see the header of data/gateClearance.js). Runs on the tick a gate

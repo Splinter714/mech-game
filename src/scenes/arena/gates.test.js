@@ -67,6 +67,10 @@ function makeScene({
   // #355/#354: which of the six ring spans are gates. Defaults to the single original gate;
   // the fail-open tests pass several, since a ring now carries 2-5.
   gateAt = [3], objectiveAlive = null,
+  // #531: a CAPTURED base — no objective, no garrison, and flagged both on the base record
+  // (`base.captured`, read by `_failedOpenBases`) and in `_capturedBaseIds` (read by
+  // `_updateGates`/`_playerNearGate`), matching what `applyCapturedBases` + world.js actually do.
+  captured = false,
 } = {}) {
   const terrain = new Map();
   for (let q = -6; q <= 6; q++) for (let r = -6; r <= 6; r++) terrain.set(axialKey(q, r), 'grass');
@@ -77,7 +81,8 @@ function makeScene({
   // Only the fail-open tests declare a base at all; every other test leaves `bases` empty, which
   // makes `_failedOpenBases()` empty and the gate logic identical to before #355.
   const buildingHp = new Map();
-  const bases = objectiveAlive == null ? []
+  const bases = captured ? [{ id: 'base0', objectiveHex: null, center: A, captured: true }]
+    : objectiveAlive == null ? []
     : [{ id: 'base0', objectiveHex: OBJECTIVE_HEX, center: A }];
   if (objectiveAlive) buildingHp.set(axialKey(OBJECTIVE_HEX.q, OBJECTIVE_HEX.r), 200);
 
@@ -92,6 +97,7 @@ function makeScene({
     // route to him the moment a door is (hypothetically) open.
     px: hexToPixel(0, 3).x, py: hexToPixel(0, 3).y,
     _wokenBases: new Set(),
+    _capturedBaseIds: captured ? new Set(['base0']) : new Set(),
     time: { now: 0 },
     tweens: { add: (cfg) => { if (cfg.onComplete) cfg.onComplete(); return {}; } },
     add: { circle: () => fakeGameObject(), rectangle: () => fakeGameObject() },
@@ -573,6 +579,104 @@ function openThenIdle(s) {
   s.enemies = [];                       // garrison gone: no demand left, only the min-open floor
   return s;
 }
+
+// ── #531: a CAPTURED base's gates open per-gate, on player proximity — not all at once ──
+// Bug report: "outposts keep opening all gates (probably because enemy objective is dead) instead
+// of only opening the gate the player(s) are near." Root cause: a captured base (#518
+// `applyCapturedBases`) has `objectiveHex: null` and no enemies, which trivially satisfied #355's
+// `_failedOpenBases` latch — so EVERY gate on the base locked open the instant it was captured,
+// with no player involved at all. `makeScene({ captured: true })` reproduces that exact shape:
+// `base.captured = true`, `objectiveHex: null`, no enemies, and `_capturedBaseIds` set (the two
+// facts `_failedOpenBases`/`_updateGates` each check).
+// The shared `makeScene` ring (six spans around one hex) puts every gate within one hex's radius
+// of every other — fine for the #355/#369 tests above, which never care WHICH gate, but useless
+// for proving #531's actual claim ("only the gate near the player"), since
+// `CAPTURED_GATE_APPROACH_PX` (420, sized against a real base's much larger footprint —
+// `BASE_FOOTPRINT_HALF_LENGTH` = 6 hexes, comment in scenes/arena/world.js) would trivially reach
+// every gate on that tiny ring at once. So this section builds its own scene with two gates on the
+// SAME captured base, hexes far enough apart (20 hexes, ~1660px) that "near one" and "near the
+// other" are genuinely different claims, matching how far apart two sally ports on one real base
+// actually sit.
+function makeCapturedGateScene(gateHexPairs) {
+  const terrain = new Map();
+  for (let q = -25; q <= 25; q++) for (let r = -2; r <= 2; r++) terrain.set(axialKey(q, r), 'grass');
+  const bases = [{ id: 'base0', objectiveHex: null, center: A, captured: true }];
+  const scene = Object.assign({}, WorldMixin, BasesMixin, {
+    terrain,
+    wallEdges: makeWallEdgeSet(gateHexPairs.map(([a, b]) => ({ a, b, baseId: 'base0', role: 'gate' }))),
+    buildingHp: new Map(), coverHp: new Map(),
+    enemies: [], bases,
+    px: hexToPixel(0, 0).x, py: hexToPixel(0, 0).y,
+    _wokenBases: new Set(),
+    _capturedBaseIds: new Set(['base0']),
+    time: { now: 0 },
+    tweens: { add: (cfg) => { if (cfg.onComplete) cfg.onComplete(); return {}; } },
+    add: { circle: () => fakeGameObject(), rectangle: () => fakeGameObject() },
+    redraws: 0,
+    _redrawWallEdges() { scene.redraws++; },
+    _invalidateVisibility() { scene.invalidations = (scene.invalidations ?? 0) + 1; },
+    _outpostCollapseFx() {},
+  });
+  scene._initGates();
+  return scene;
+}
+
+describe('#531 a captured base opens only the gate a player is actually near', () => {
+  const NEAR_GATE = [{ q: 0, r: 0 }, { q: 0, r: 1 }];
+  const FAR_GATE = [{ q: 20, r: 0 }, { q: 20, r: 1 }];
+  const allGates = (s) => gateEdges(s.wallEdges);
+  const midOf = (g) => ({ x: (g.x0 + g.x1) / 2, y: (g.y0 + g.y1) / 2 });
+  const byHexes = (s, pair) => allGates(s).find((g) => {
+    const [a, b] = pair;
+    const ax = hexToPixel(a.q, a.r), bx = hexToPixel(b.q, b.r);
+    return (Math.abs(g.x0 - ax.x) < 1 || Math.abs(g.x0 - bx.x) < 1);
+  });
+
+  it('stays shut on every gate when captured and nobody is near any of them', () => {
+    const s = makeCapturedGateScene([NEAR_GATE, FAR_GATE]);
+    expect(allGates(s).length).toBe(2);
+    // No `s.players` set at all; the default player position (origin) is right by NEAR_GATE, so
+    // use a scene with no players at all to prove "nobody around" really means every gate shut.
+    s.players = [];
+    run(s, GATE_OPENING_MS + 500);
+    for (const g of allGates(s)) expect(g.open).toBe(false);
+  });
+
+  it('opens ONLY the gate the player approaches, leaving the far gate on the same base shut', () => {
+    const s = makeCapturedGateScene([NEAR_GATE, FAR_GATE]);
+    const near = byHexes(s, NEAR_GATE);
+    const far = byHexes(s, FAR_GATE);
+    s.players = [standing(midOf(near))];
+    run(s, SURELY_OPEN_MS);
+    expect(near.open).toBe(true);
+    expect(far.open).toBe(false);
+  });
+
+  it('opens the OTHER gate instead when the player is near that one, not the first', () => {
+    const s = makeCapturedGateScene([NEAR_GATE, FAR_GATE]);
+    const near = byHexes(s, NEAR_GATE);
+    const far = byHexes(s, FAR_GATE);
+    s.players = [standing(midOf(far))];
+    run(s, SURELY_OPEN_MS);
+    expect(far.open).toBe(true);
+    expect(near.open).toBe(false);
+  });
+
+  it('closes again once the player drives away from the gate they opened', () => {
+    const s = makeCapturedGateScene([NEAR_GATE, FAR_GATE]);
+    const near = byHexes(s, NEAR_GATE);
+    const player = standing(midOf(near));
+    s.players = [player];
+    run(s, SURELY_OPEN_MS);
+    expect(near.open).toBe(true);
+    player.x += 50000;
+    player.y += 50000;
+    run(s, GATE_MIN_OPEN_MS + GATE_CLOSING_MS + 500);
+    // A #355 fail-open latch never closes again once open; a captured base's proximity gate must —
+    // otherwise this is the same bug with an extra step.
+    expect(near.open).toBe(false);
+  });
+});
 
 describe('#369 — the gate will not close on a body in its mouth', () => {
   // #354: a ring typically carries several gates; the #355 latch tests use this same set.
