@@ -14,9 +14,19 @@ export const MAX_UPGRADE_LEVEL = 2;
 // A freshly claimed outpost. `id` must be caller-supplied and stable (a base cleared in a given
 // biome/run, not a reusable slot) — claiming an id that's already held is a no-op, not a
 // re-claim, so callers don't need to check first.
-export function claimOutpost(outposts, { id, type, coord, biomeId }) {
+//
+// #517/#518/#519: `baseId` (optional) is the WORLDGEN base index this claim is for
+// (`data/worldgen.js` base ids — `"base0"`, `"base1"`, …). Terrain regenerates from a fresh
+// random seed every deploy, so a base's absolute `coord` is never stable across sorties — its
+// INDEX along the corridor is the only thing that survives regeneration, and that's what
+// `data/baseCapture.js`/`data/regionalBases.js` match a claim back against at the next deploy.
+// `coord` is kept as-is (still just the informational snapshot #511/#512 always saved).
+export function claimOutpost(outposts, { id, type, coord, biomeId, baseId = null }) {
   if (outposts.some((o) => o.id === id)) return outposts;
-  return [...outposts, { id, type, coord, biomeId, upgradeLevel: 0, threatState: 'safe' }];
+  return [
+    ...outposts,
+    { id, type, coord, biomeId, baseId, upgradeLevel: 0, threatState: 'safe', deploysHeld: 0 },
+  ];
 }
 
 export function upgradeOutpost(outposts, id, maxLevel = MAX_UPGRADE_LEVEL) {
@@ -68,4 +78,42 @@ export function resolveAllUndefendedLosses(outposts, rng = Math.random) {
   return outposts
     .filter((o) => o.threatState === 'attacked')
     .reduce((acc, o) => resolveUndefendedLoss(acc, o.id, rng), outposts);
+}
+
+// ── #519: REGARRISON — a claimed base/regional base can be retaken by escalating PERCENTAGE
+// CHANCE PER DEPLOYMENT rather than real time. No timestamps, no wall-clock: a base just tracks
+// how many deployments it has survived since it was last captured/reset (`deploysHeld`), and each
+// deployment that touches it rolls `chance = min(cap, base + step * deploysHeld)` — locked
+// constants, owner-confirmed: base 15%, step 15%/deploy, cap 90%.
+export const REGARRISON_BASE_CHANCE = 0.15;
+export const REGARRISON_STEP_CHANCE = 0.15;
+export const REGARRISON_CAP_CHANCE = 0.90;
+
+export function regarrisonChance(deploysHeld = 0) {
+  return Math.min(REGARRISON_CAP_CHANCE, REGARRISON_BASE_CHANCE + REGARRISON_STEP_CHANCE * deploysHeld);
+}
+
+// One base's roll for one deployment that touches it. On success: revert the claim — the same
+// "identity doesn't survive a loss" transition `loseOutpost` already models (drops
+// threatState/upgradeLevel/deploysHeld along with the whole record), so the player has to reclear
+// and re-establish it, exactly like any other lost outpost. On failure: the base holds, and its
+// counter increments — raising the odds for NEXT time. Unknown id is a no-op (mirrors every other
+// single-outpost transition in this file).
+export function rollRegarrison(outposts, id, rng = Math.random) {
+  const target = outposts.find((o) => o.id === id);
+  if (!target) return outposts;
+  const chance = regarrisonChance(target.deploysHeld ?? 0);
+  if (rng() < chance) return loseOutpost(outposts, id);
+  return outposts.map((o) => (o.id === id ? { ...o, deploysHeld: (o.deploysHeld ?? 0) + 1 } : o));
+}
+
+// Roll regarrison for every currently-claimed base in the biome about to be deployed into — "each
+// deployment that touches that base" (#519) is every base whose corridor is about to be rebuilt
+// for this sortie, i.e. every claimed base sharing this `biomeId`. Bases in OTHER biomes are
+// untouched (a deployment into grassland can't threaten a desert claim). Mirrors
+// `resolveAllUndefendedLosses`'s "resolve every affected record in one pass" shape.
+export function rollRegarrisonForBiome(outposts, biomeId, rng = Math.random) {
+  return outposts
+    .filter((o) => o.biomeId === biomeId)
+    .reduce((acc, o) => rollRegarrison(acc, o.id, rng), outposts);
 }

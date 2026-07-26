@@ -236,6 +236,18 @@ export function turretEdges(set, baseId = null) {
   );
 }
 
+// #517: a base's own gate mouth as a SPAWN POINT — "deploy spawns you exiting its gate." The
+// outer hex of one of its standing gate spans (`edge.b` — always real passable ground, per
+// worldgen's `assignGates` eligibility filter), so a spawn placed here reads as having just
+// stepped through the doorway. Picks the first gate span found (stable for a given generated
+// set — order follows the wall's own edge-walk, not gameplay-visible). Returns null for a base
+// with no gate at all (the rare fully-walled-off case assignGates itself documents), so the
+// caller can fall back to the base's centre or the ordinary corridor spawn.
+export function baseGateHex(set, baseId) {
+  const gate = gateEdges(set, baseId)[0];
+  return gate ? { q: gate.b.q, r: gate.b.r } : null;
+}
+
 // #310 (owner, playtest 2026-07-19: "wall turrets should be centered on the wall so they can shoot
 // inside OR outside of the wall"): a wall turret sits ON its span's centreline, not outboard of it.
 //

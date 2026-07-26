@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeWallEdgeSet, wallEdgeAt, wallEdgeCrossing, nearestWallEdge, damageWallEdge, liveWallEdges,
   WALL_EDGE_HP, WALL_THICKNESS_PX, isOutwardOfSpan, wallSpanOutwardSign,
-  blocksSpan, blocksShot, setGateOpen, gateEdges, SPAN_ROLE_GATE,
+  blocksSpan, blocksShot, setGateOpen, gateEdges, SPAN_ROLE_GATE, baseGateHex,
   spanFireSegment, gateOpenFrac, GATE_RETRACT_FACTOR,
 } from './wallEdges.js';
 import { edgeKey, edgeEndpoints, edgeMidpoint, pointSegmentDistance } from './hexEdges.js';
@@ -902,5 +902,31 @@ describe('#426 isOutwardOfSpan / wallSpanOutwardSign', () => {
     expect(isOutwardOfSpan(null, 0, 0)).toBe(false);
     expect(isOutwardOfSpan({}, 0, 0)).toBe(false);
     expect(wallSpanOutwardSign(undefined, 0, 0)).toBe(0);
+  });
+});
+
+describe('#517 baseGateHex — a base\'s gate mouth as a spawn point', () => {
+  it('returns the OUTER hex (edge.b) of one of the base\'s gate spans', () => {
+    const set = makeWallEdgeSet([{ a: A, b: B, baseId: 'base-1', role: SPAN_ROLE_GATE }]);
+    expect(baseGateHex(set, 'base-1')).toEqual({ q: B.q, r: B.r });
+  });
+
+  it('ignores plain (non-gate) spans on the same base', () => {
+    const otherNeighbor = neighbors(A.q, A.r)[1];
+    const set = makeWallEdgeSet([
+      { a: A, b: B, baseId: 'base-1' },                              // plain wall
+      { a: A, b: otherNeighbor, baseId: 'base-1', role: SPAN_ROLE_GATE },
+    ]);
+    expect(baseGateHex(set, 'base-1')).toEqual({ q: otherNeighbor.q, r: otherNeighbor.r });
+  });
+
+  it('returns null for a base with no gate at all', () => {
+    const set = makeWallEdgeSet([{ a: A, b: B, baseId: 'base-1' }]);   // plain wall only
+    expect(baseGateHex(set, 'base-1')).toBeNull();
+  });
+
+  it('returns null for an unknown baseId', () => {
+    const set = makeWallEdgeSet([{ a: A, b: B, baseId: 'base-1', role: SPAN_ROLE_GATE }]);
+    expect(baseGateHex(set, 'base-nope')).toBeNull();
   });
 });

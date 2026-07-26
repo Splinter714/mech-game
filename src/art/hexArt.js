@@ -134,6 +134,11 @@ const PAL = {
   // sealed look comes from the two door sprites slid shut over it, not the tile), so both share
   // `DOCK_BAY` — a dark shaft framed by a metal rim.
   dockClosed: DOCK_BAY,
+  // #518 (captured base): a friendly, neutral blue-green tint — deliberately NOT the shared
+  // BASE_INFRA_COLOR every enemy structure (dock/alertTower/objective) uses, so a captured base's
+  // hexes read as "yours" at a glance rather than as more enemy infrastructure. The DETAIL painter
+  // below (a small beacon icon) is what makes it read as a placeholder for a future building.
+  playerStructure: { fill: 0x2c4a4a, edge: 0x3f6b68 },
 
   // ── Desert / badlands (#67) — warm sandy palette. ──
   sand:      { fill: 0xbf9c5e, edge: 0xa5834a },
@@ -1122,6 +1127,19 @@ const DETAIL = {
     sg.fillStyle(0xd8342a, 0.95); sg.fillCircle(C.cx, C.cy - 13, 4.2);                          // target ring (outer)
     sg.fillStyle(0x25282e, 1);    sg.fillCircle(C.cx, C.cy - 13, 2.8);                          // target ring (punch-through)
     sg.fillStyle(0xff5a3a, 1); sg.fillCircle(C.cx, C.cy - 13, 1.6);                            // beacon core
+  },
+  // #518: `playerStructure` — the placeholder a captured base's dock/objective hexes swap to. A
+  // simple low shed silhouette with a friendly cyan beacon (in contrast to the enemy `objective`'s
+  // aggressive red target-ring) — reads as "built, yours, nothing to shoot" rather than "assault
+  // target." Deliberately plainer than `hex_objective` — this is standing in for a future garage/
+  // scanner build, not a finished structure in its own right.
+  hex_playerStructure: (sg) => {
+    sg.fillStyle(0x000000, 0.25); sg.fillEllipse(C.cx + 1, C.cy + 5, 26, 12);                  // ground shadow
+    sg.fillStyle(0x22302e, 1); sg.fillRect(C.cx - 13, C.cy - 7, 26, 15);                        // shed base
+    sg.fillStyle(0x33463f, 1); sg.fillRect(C.cx - 11, C.cy - 5, 22, 11);                        // panel face
+    sg.fillStyle(0x3f6b68, 0.3); sg.fillCircle(C.cx, C.cy - 9, 6);                               // beacon glow halo
+    sg.fillStyle(0x5fd6c8, 0.95); sg.fillCircle(C.cx, C.cy - 9, 3.2);                            // beacon (cyan, friendly)
+    sg.fillStyle(0xbdf5ec, 1); sg.fillCircle(C.cx, C.cy - 9, 1.3);                               // beacon core
   },
 
   // ── Desert / badlands ──────────────────────────────────────────────────────────────────

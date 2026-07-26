@@ -14,6 +14,8 @@
 import { makeMission, evaluateMission } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
 import { isBaseCleared, baseClearState, baseMarkTargets, enemyMarkLift, CLEAR_DONE } from '../../data/bases.js';
+import { regionalBaseFor } from '../../data/regionalBases.js';
+import { REGIONAL_BASES_KEY } from '../../data/events.js';
 import { DEPTH, UI_HIGHLIGHT_COLOR, drawPip } from './shared.js';
 
 // #269 playtest follow-up ("objectives aren't clearing until I kill all units at the base"): the
@@ -99,10 +101,22 @@ function drawPipLayers(scene, radius) {
 export const MissionMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld() has populated `this.bases`.
   // Targets base 0 (the lowest-index/earliest base — see file header) as the very first
-  // objective. `_targetCurrentBase` (below) does the actual work and is reused by run.js
+  // objective — UNLESS this biome already has a #517 regional base, in which case the player
+  // just spawned at ITS gate (world.js's spawn override), so the mission resumes from the base
+  // AFTER it instead. Without this, a run that established base 2 as its regional base would
+  // spawn the player there but still send them backtracking to refight bases 0-1, which the
+  // strictly-in-order mission sequencing has no other way to skip (bases the player declined to
+  // establish are NOT persisted, so they regenerate fully hostile on every later deploy — see
+  // data/baseCapture.js). Any base the player DID establish is separately auto-cleared the
+  // instant it's targeted (world.js's #518 wiring leaves it with no docks/objective), so this is
+  // purely about not re-sending the player somewhere behind their own front line.
+  // `_targetCurrentBase` (below) does the actual work and is reused by run.js
   // `_pickNextObjective` for every later base-advance too.
   _initMission() {
-    this._objectiveBaseIndex = 0;
+    const regionalBases = this.registry?.get?.(REGIONAL_BASES_KEY) ?? [];
+    const regional = regionalBaseFor(regionalBases, this.biomeId);
+    const regionalIndex = regional ? (this.bases ?? []).findIndex((b) => b.id === regional.baseId) : -1;
+    this._objectiveBaseIndex = regionalIndex >= 0 ? regionalIndex + 1 : 0;
     this._targetCurrentBase();
   },
 

@@ -28,7 +28,13 @@ function fakeScene(overrides = {}) {
       container: (x, y, list) => Object.assign({ x, y, list }, { setDepth() { return this; }, destroy() {}, setVisible() { return this; }, setPosition(x, y) { this.x = x; this.y = y; return this; } }),
     },
     tweens: { add: () => {}, killTweensOf: () => {} },
-    time: { delayedCall: () => ({}) },
+    // #517: `_advanceObjective` now presents a post-clear base-capture choice before it actually
+    // advances (run.js `_presentBaseCaptureChoice`), timing out to "leave it and move on" after a
+    // few seconds in the real game. None of this file's tests are about that choice — they're all
+    // about base-to-base SEQUENCING — so firing the timer callback immediately/synchronously here
+    // collapses it straight back to the old "clear ⇒ instantly moves on" behaviour every `step()`
+    // call in this file already assumes, with no per-test changes needed.
+    time: { delayedCall: (ms, cb) => { cb(); return { remove: () => {} }; } },
     registry: { get: (k) => store.get(k), set: (k, v) => store.set(k, v) },
     bases: [], enemies: [],
     // #347: the run's loss check reads the players collection; one live player keeps it alive.

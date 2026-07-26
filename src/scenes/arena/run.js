@@ -17,12 +17,21 @@
 import {
   makeRun, advanceObjective, winRun, endRunOnDeath, isRunOver,
 } from '../../data/run.js';
-import { RUN_CURRENCY_KEY, OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY } from '../../data/events.js';
-import { saveRunCurrency, saveOutposts, saveDeepMissionsWon } from '../../data/save.js';
+import {
+  RUN_CURRENCY_KEY, OUTPOSTS_KEY, DEEP_MISSIONS_WON_KEY, REGIONAL_BASES_KEY,
+} from '../../data/events.js';
+import {
+  saveRunCurrency, saveOutposts, saveDeepMissionsWon, saveRegionalBases,
+} from '../../data/save.js';
 import { claimOutpost } from '../../data/outposts.js';
+import { establishRegionalBase } from '../../data/regionalBases.js';
 import { allPlayersDeadIn } from './players.js';
 
 const RUN_OVER_DELAY = 3200;           // ms the WIN/DEAD banner holds before returning to garage
+// #517: how long the post-clear "establish this base?" choice stays up before defaulting to
+// "leave it uncaptured and move on" — long enough to notice and act on mid-fight, short enough
+// that a real-time action game never feels like it stalled waiting on a menu.
+const BASE_CAPTURE_CHOICE_MS = 6000;
 
 export const RunMixin = {
   // One-time init from ArenaScene.create(), AFTER _buildWorld()/_initMission() have set up the
@@ -75,34 +84,96 @@ export const RunMixin = {
     if (this.mission && this.mission.status === 'complete') this._advanceObjective();
   },
 
-  // Mission cleared: bank the objective's currency and immediately pick + start a fresh one
-  // within the SAME already-built terrain (#111 — the map is never rebuilt mid-run). No squad
-  // spawn happens here any more — enemies live only inside bases (see scenes/arena/bases.js),
-  // fully decoupled from objective-clearing.
+  // Mission cleared: present the #517 post-clear CHOICE (establish this base, or leave it and
+  // move on) before banking currency and picking + starting the next objective within the SAME
+  // already-built terrain (#111 — the map is never rebuilt mid-run). No squad spawn happens here
+  // any more — enemies live only inside bases (see scenes/arena/bases.js), fully decoupled from
+  // objective-clearing.
   _advanceObjective() {
-    this._claimClearedBaseOutpost();
+    this._presentBaseCaptureChoice();
+  },
+
+  // #517: the post-clear choice — establish this base as an outpost/regional base, or leave it
+  // uncaptured and move on. Same opt-in pattern as #512's repair outposts (not yet built — this
+  // only lays the hook; `_establishBase` below is the entire "establish" side of it, with no
+  // repair-outpost mechanics assumed). Skipped for a base that's ALREADY captured — world.js's
+  // #518 wiring auto-clears an already-owned base the instant it's targeted (no docks, no
+  // objective hex left to destroy), so there's nothing new to decide and re-prompting would be
+  // asking the player to re-confirm a base they established sorties ago.
+  _presentBaseCaptureChoice() {
+    const base = (this.bases ?? [])[this._objectiveBaseIndex];
+    if (!base || base.captured) { this._finishObjectiveAdvance(null); return; }
+    this._pendingCaptureBase = base;
+    this._captureChoiceActive = true;
+    this.registry.set('baseCaptureChoice', { baseId: base.id });
+    this._captureChoiceTimer = this.time.delayedCall(
+      BASE_CAPTURE_CHOICE_MS, () => this._resolveBaseCaptureChoice(false),
+    );
+  },
+
+  // #517: the player's answer. `establish` true means "yes, hold this base"; false covers both
+  // an explicit decline and the choice window timing out unanswered — both read as "leave it and
+  // move on". Guarded on `_captureChoiceActive` (not the registry flag — that's null both before a
+  // choice starts and after it resolves, which can't tell "never started" from "already answered"
+  // apart) against a double-resolve, since the timer callback and `_onInteractPressed` are the two
+  // independent callers that can both fire.
+  _resolveBaseCaptureChoice(establish) {
+    if (!this._captureChoiceActive) return;
+    this._captureChoiceActive = false;
+    this._captureChoiceTimer?.remove(false);
+    this._captureChoiceTimer = null;
+    this.registry.set('baseCaptureChoice', null);
+    const base = this._pendingCaptureBase;
+    this._pendingCaptureBase = null;
+    this._finishObjectiveAdvance(establish ? base : null);
+  },
+
+  // #517: the interact press (ArenaScene keydown-T / pad A — pad A was left explicitly reserved
+  // for "a generic interact we may need", see Controls.js) is the ONLY thing that can turn a
+  // pending choice into "establish". No-op when nothing is pending, so mashing the interact key
+  // outside the choice window does nothing.
+  _onInteractPressed() {
+    if (this._captureChoiceActive) this._resolveBaseCaptureChoice(true);
+  },
+
+  // Bank the objective's currency and move on to the next base, having already decided (or
+  // skipped deciding, for a base with nothing to decide) whether to establish `establishedBase`.
+  // The one funnel every `_advanceObjective` path — choice accepted, choice declined/timed out,
+  // no base to ask about, an already-captured base — ends at.
+  _finishObjectiveAdvance(establishedBase) {
+    if (establishedBase) this._establishBase(establishedBase);
     this.run = advanceObjective(this.run);
     this.registry.set('run', this.run);
     this._pickNextObjective();
   },
 
-  // #511/#512: claiming a base as an outpost the instant its mission completes — the only
-  // concrete "how do you get one" trigger this stage builds (a real resource-hex/repair-outpost
-  // placement flow is future work; this reuses the base-clear moment that already exists).
-  // `type` alternates resource/repair by base index — arbitrary, since neither type has real
-  // mechanics yet (#297: income/range-extension formulas are still open design questions); this
-  // only proves the claim-and-persist pipeline works end to end.
-  _claimClearedBaseOutpost() {
-    const base = (this.bases ?? [])[this._objectiveBaseIndex];
-    if (!base) return;
+  // #517/#511/#512: the "establish" half of the choice — claims the base as an outpost (the same
+  // claim-and-persist pipeline #511/#512 built; `type` still just alternates resource/repair by
+  // base index, since neither type has real mechanics yet — #297's income/range-extension
+  // formulas are still open design questions, unchanged by this issue) AND, if this biome has no
+  // regional base yet, makes THIS the biome's regional base (data/regionalBases.js
+  // `establishRegionalBase` — a no-op if one already exists, so a base established later in the
+  // same biome really is just an ordinary outpost, per the issue's own framing).
+  _establishBase(base) {
     const deployCount = this.registry.get('deployCount') || 0;
     const id = `outpost-${deployCount}-${base.id}`;
     const type = this._objectiveBaseIndex % 2 === 0 ? 'resource' : 'repair';
     const outposts = this.registry.get(OUTPOSTS_KEY) ?? [];
-    const next = claimOutpost(outposts, { id, type, coord: base.center, biomeId: this.biomeId });
-    if (next === outposts) return;   // already held — shouldn't happen mid-run, stays a no-op
-    this.registry.set(OUTPOSTS_KEY, next);
-    saveOutposts(next);
+    const nextOutposts = claimOutpost(outposts, {
+      id, type, coord: base.center, biomeId: this.biomeId, baseId: base.id,
+    });
+    if (nextOutposts !== outposts) {
+      this.registry.set(OUTPOSTS_KEY, nextOutposts);
+      saveOutposts(nextOutposts);
+    }
+    const regionalBases = this.registry.get(REGIONAL_BASES_KEY) ?? [];
+    const nextRegional = establishRegionalBase(regionalBases, {
+      biomeId: this.biomeId, baseId: base.id, coord: base.center,
+    });
+    if (nextRegional !== regionalBases) {
+      this.registry.set(REGIONAL_BASES_KEY, nextRegional);
+      saveRegionalBases(nextRegional);
+    }
   },
 
   // #269 playtest follow-up (objective sequencing): retired the old arbitrary-farthest-outpost

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
 import { TILE_ORDER, tileRow, drawSkillTile, updateSkillTile, diamondLayout, coreTileRect } from '../ui/skillTiles.js';
 import { getItem } from '../data/items.js';
-import { ABILITY_BINDS } from '../input/Controls.js';
+import { ABILITY_BINDS, INTERACT_BIND } from '../input/Controls.js';
 import { InkCache, fitScale } from '../art/inkBounds.js';
 import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
 import { HULL_FRAMES } from '../art/index.js';
@@ -312,6 +312,13 @@ export default class HudScene extends Phaser.Scene {
     // `runOverBanner` (published by the run mixin) so this file stays free of win/lose branching.
     this.runOverBanner = this.add.text(this.W / 2, this.H * 0.46, '', {
       fontFamily: 'monospace', fontSize: '32px', color: C.bad, fontStyle: 'bold',
+    }).setOrigin(0.5).setVisible(false);
+    // #517: the post-clear base-capture choice. Reads `baseCaptureChoice` (run.js
+    // `_presentBaseCaptureChoice`) — same "arena publishes a plain registry snapshot, HUD only
+    // renders it" pattern as the win/lose banner above. Text names the actual bound key
+    // (`Controls.js` INTERACT_BIND) so it can't drift out of sync with what the scene listens for.
+    this.captureChoiceBanner = this.add.text(this.W / 2, this.H * 0.32, '', {
+      fontFamily: 'monospace', fontSize: '22px', color: C.warn, fontStyle: 'bold', align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
     // #296: the control-method indicator (CONTROLLER / MOUSE + KB) and the AI move/fire debug
@@ -1301,6 +1308,13 @@ export default class HudScene extends Phaser.Scene {
     } else {
       this.runOverBanner.setVisible(false);
     }
+
+    // #517: the post-clear "establish this base?" prompt. Only meaningful mid-run, so it defers
+    // to the run-over banner exactly like the mission-complete banner above.
+    const capture = this.registry.get('baseCaptureChoice');
+    this.captureChoiceBanner.setText(
+      `BASE CLEARED\nPRESS [${INTERACT_BIND.key}] TO ESTABLISH BASE`,
+    ).setVisible(!!capture && !over);
 
     this._updateBuffHud(snapshots);
     // #383: the main-game-window objective edge arrow (#80) is now REDUNDANT — the follow-window
