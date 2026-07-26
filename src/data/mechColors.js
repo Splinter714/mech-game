@@ -49,6 +49,16 @@ export const MECH_SWATCHES = [
   0x8a8f96, // ASH        true neutral mid grey
   0x3a3d42, // CHARCOAL   dark neutral grey — kept off pure black so it stays visible against shadow
   0xb08968, // BRONZE     desaturated warm tan/brown
+  // Vivid warm colours (2026-07-26, Jackson's explicit call): these DO sit in/near the 0–45° band
+  // this file otherwise avoids on purpose (alert red, ballistic muzzle gold) — asked for anyway,
+  // accepting the risk of reading as an alert/muzzle flash in the heat of combat, to be judged in
+  // actual play rather than screened out here.
+  0xff8a1f, // ORANGE     (h29)  vivid orange
+  0xf7d000, // YELLOW     (h50)  vivid yellow
+  0xe23a55, // CRIMSON    (h352) vivid red
+  // Two more blues, tone-separated from AZURE/STEEL/INDIGO above rather than duplicating either.
+  0x6cc3f5, // SKY        (h204) light pale blue
+  0x1f3f78, // NAVY       (h226) dark saturated navy
 ];
 
 // Human-readable name per swatch, aligned index-for-index with MECH_SWATCHES. The cycle picker
@@ -58,6 +68,7 @@ export const MECH_SWATCH_NAMES = [
   'AZURE', 'LIME', 'MAGENTA', 'JADE', 'STEEL',
   'INDIGO', 'ROSE', 'CHARTREUSE', 'FOREST', 'TEAL',
   'WHITE', 'ASH', 'CHARCOAL', 'BRONZE',
+  'ORANGE', 'YELLOW', 'CRIMSON', 'SKY', 'NAVY',
 ];
 
 // The display name for a swatch hex, or '' if it isn't one.
