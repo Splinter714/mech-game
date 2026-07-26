@@ -5,6 +5,7 @@ import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { computeImpulse } from '../../data/force.js';
+import { isMobileEnemy } from '../../data/bases.js';
 import { nearestInterceptTarget } from '../../data/interceptor.js';
 import { getCoreItem } from '../../data/coreItems.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
@@ -526,6 +527,11 @@ export const ProjectilesMixin = {
     const dt = tickMs / 1000;
     for (const e of this.enemies) {
       if (e.mech.isDestroyed()) continue;
+      // #491 playtest fix: a stationary/emplaced kind (turret/wallTurret, `data/bases.js`
+      // `isMobileEnemy` — the same maxSpeed-0 signal `_separateGroundUnits`'s massOf and
+      // base-clear's `isMobileEnemy` already use) takes no positional displacement — it can
+      // still be damaged, just never dragged off its fixed mount.
+      if (!isMobileEnemy(e)) continue;
       const { dx, dy } = computeImpulse(p.x, p.y, radius, strength, sign, e.x, e.y, dt);
       e.x += dx; e.y += dy;
     }
@@ -664,6 +670,11 @@ export const ProjectilesMixin = {
         // drift instead of a stutter-step.
         for (const e of this.enemies) {
           if (e.mech.isDestroyed()) continue;
+          // #491 playtest fix (Jackson: "gravity charge or whatever shouldn't pull stationary
+          // units like turrets off of their positions") — same `isMobileEnemy` exclusion as
+          // `_tickTravelForce` above; a turret/wallTurret takes the field's damage/status like
+          // anything else, it just never gets dragged.
+          if (!isMobileEnemy(e)) continue;
           const { dx, dy } = computeImpulse(hz.x, hz.y, hz.radius, hz.force.strength, hz.force.sign, e.x, e.y, dt);
           e.x += dx; e.y += dy;
         }
