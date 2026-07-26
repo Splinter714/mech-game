@@ -916,3 +916,23 @@ export function stepWeakSeek(p, dt, tx, ty) {
 export function withinWeakSeekRadius(p, tx, ty) {
   return Math.hypot(tx - p.x, ty - p.y) <= (p.weakSeekRadius ?? WEAK_SEEK_RADIUS);
 }
+
+// ── Charge-lance telegraph geometry (#493 playtest follow-up, 2026-07-25) ──────────────────
+// Jackson: "the charge visual doesn't start super wide like it should; I feel like it should
+// start at maybe 90 degrees and then slowly become a straight beam." The original telegraph
+// (firing.js `_drawChargeFor`) drew a near-straight line the whole hold with only a tiny
+// (~3.4°) jitter cone that NARROWED as charge built — backwards from what he described. This
+// is the corrected geometry: the FULL cone angle (tip to tip) at the very start of a hold is
+// `CHARGE_CONE_MAX_DEG` (90° — his "maybe 90 degrees"), easing down to 0° (a straight beam) by
+// full charge. Squaring `frac` itself (rather than the remaining fraction) is the "slowly" —
+// the ease-IN means the cone barely narrows through the early-to-mid hold (still ~75% open at
+// the halfway point) and does the bulk of its collapse into a beam in the final stretch, right
+// as the shot is about to be ready — a committed payoff moment rather than a constant linear
+// taper from the first frame. Pure + unit-tested (delivery.test.js); the scene only turns the
+// returned angle into two edge lines/a fill wedge.
+export const CHARGE_CONE_MAX_DEG = 90;
+
+export function chargeConeAngleDeg(frac, maxDeg = CHARGE_CONE_MAX_DEG) {
+  const f = Math.max(0, Math.min(1, frac));
+  return maxDeg * (1 - f * f);
+}

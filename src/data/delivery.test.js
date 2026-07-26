@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, scatterMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC } from './delivery.js';
+import { planEmissions, emissionCount, makeProjectile, stepProjectile, rotateToward, projectileKind, homingTurnRate, leadAngle, segmentPointDistance, resolveSeekPoint, arcMaxDist, scatterMaxDist, arcHomingBlend, ASCENT_END, HOMING_BLEND_SPAN, stepWeakSeek, withinWeakSeekRadius, WEAK_SEEK_TURN_RATE, WEAK_SEEK_RADIUS, arcLoft, arcForeshorten, ARC_PITCH_MIN_SCALE, STEEP_DROP_RISE_END, STEEP_DROP_FALL_START, salvoAimOffset, salvoConvergeFalloff, SALVO_CONVERGE_START_PX, SALVO_CONVERGE_DONE_PX, homingShouldGiveUp, HOMING_GIVEUP_RECEDE_PX, homingGiveUpTurnScale, HOMING_GIVEUP_BLEND_SEC, trackHomingSteering, homingIsOrbiting, homingOutOfSeekTime, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp, HOMING_ORBIT_TURN, HOMING_MAX_SEEK_SEC, chargeConeAngleDeg, CHARGE_CONE_MAX_DEG } from './delivery.js';
 import { WEAPONS } from './weapons.js';
 
 describe('planEmissions', () => {
@@ -1557,5 +1557,54 @@ describe('#377 follow-up — Swarm Rack warbles lazier, without getting wider', 
     expect(swarm.wobbleFrequency / 11).toBeLessThan(0.65);                  // >35% lazier in real time
     expect(now).toBeGreaterThan(before * 0.85);                             // path shape preserved
     expect(now).toBeLessThan(before * 1.4);                                 // slightly stretched by the speed nudge, still not a slack noodle
+  });
+});
+
+describe('chargeConeAngleDeg (#493 playtest follow-up — "start at maybe 90 degrees and then ' +
+  'slowly become a straight beam")', () => {
+  it('starts at the full 90° cone when charge just begins (frac 0)', () => {
+    expect(chargeConeAngleDeg(0)).toBe(CHARGE_CONE_MAX_DEG);
+    expect(CHARGE_CONE_MAX_DEG).toBe(90);
+  });
+
+  it('narrows all the way to a straight beam (0°) by full charge (frac 1)', () => {
+    expect(chargeConeAngleDeg(1)).toBe(0);
+  });
+
+  it('is a smooth, strictly decreasing curve across the whole hold — no snap between states', () => {
+    const samples = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+    const angles = samples.map((f) => chargeConeAngleDeg(f));
+    for (let i = 1; i < angles.length; i++) {
+      expect(angles[i]).toBeLessThan(angles[i - 1]);   // monotonically narrowing, never widens back out
+    }
+    for (let i = 1; i < angles.length; i++) {
+      const step = angles[i - 1] - angles[i];
+      expect(step).toBeLessThan(CHARGE_CONE_MAX_DEG);  // no single 10%-of-hold step is a full-cone jump
+    }
+  });
+
+  it('narrows SLOWLY at first and fastest at the end — most of the width survives the early hold', () => {
+    // The ease-IN curve means the cone is still MOST of the way open at the midpoint of the
+    // hold, and does the bulk of its narrowing in the back half — reading as an unhurried taper
+    // through the early hold that commits to the beam shape only as charge nears full, rather
+    // than a linear ramp collapsing evenly from the first frame.
+    const half = chargeConeAngleDeg(0.5);
+    expect(half).toBeGreaterThan(CHARGE_CONE_MAX_DEG / 2);          // still wider than half-open at the midpoint
+    expect(half).toBeCloseTo(CHARGE_CONE_MAX_DEG * 0.75, 5);        // 90 * (1-0.5^2) = 67.5°
+
+    const earlyDrop = chargeConeAngleDeg(0) - chargeConeAngleDeg(0.25);   // narrowing over the first quarter
+    const lateDrop = chargeConeAngleDeg(0.75) - chargeConeAngleDeg(1);    // narrowing over the last quarter
+    expect(lateDrop).toBeGreaterThan(earlyDrop);
+  });
+
+  it('clamps out-of-range fractions instead of producing a negative or over-wide cone', () => {
+    expect(chargeConeAngleDeg(-1)).toBe(CHARGE_CONE_MAX_DEG);
+    expect(chargeConeAngleDeg(2)).toBe(0);
+  });
+
+  it('respects a custom max-cone override', () => {
+    expect(chargeConeAngleDeg(0, 60)).toBe(60);
+    expect(chargeConeAngleDeg(1, 60)).toBe(0);
+    expect(chargeConeAngleDeg(0.5, 60)).toBeCloseTo(45, 5);   // 60 * (1-0.5^2) = 45°
   });
 });

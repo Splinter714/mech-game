@@ -6,7 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { traceHitscan } from '../../data/beamTrace.js';
 import { canFireWeapon } from '../../data/targetlock.js';
@@ -160,11 +160,15 @@ export const FiringMixin = {
     state.lastAim = null;
   },
 
-  // #493: while any of this player's slots is mid-charge, draw a growing telegraph — a thin arc
-  // at low charge, thickening and lengthening into a near-solid beam as it nears full charge —
-  // from the muzzle out along the current aim. Purely visual; drawn fresh every frame into the
-  // scene's dedicated `chargeFx` layer (cleared once per frame by `_updateChargeVisuals` below,
-  // called once for the whole scene rather than per-player/per-slot).
+  // #493 playtest follow-up (2026-07-25) — Jackson: "the charge visual doesn't start super wide
+  // like it should; I feel like it should start at maybe 90 degrees and then slowly become a
+  // straight beam." The telegraph now draws a filled WEDGE (cone), apex at the muzzle, whose
+  // full angle comes from `chargeConeAngleDeg` (delivery.js) — 90° at the start of a hold,
+  // easing down to 0° by full charge. At 0° the two edges and the wedge fill collapse onto the
+  // same line as the centre beam core below, so the shape reads as a continuous cone-to-beam
+  // narrowing rather than a snap between two different drawings. Purely visual; drawn fresh
+  // every frame into the scene's dedicated `chargeFx` layer (cleared once per frame by
+  // `_updateChargeVisuals` below, called once for the whole scene rather than per-player/slot).
   _drawChargeFor(player) {
     for (const [location, state] of Object.entries(player.chargeState || {})) {
       if (!state.charging) continue;
@@ -177,23 +181,42 @@ export const FiringMixin = {
       const reach = 40 + (w.weapon.range.max || 400) * 0.5 * frac;
       const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
       const g = this.chargeFx;
+      const halfAngle = ((chargeConeAngleDeg(frac) * Math.PI) / 180) / 2;
+      const leftX = m.x + Math.cos(angle - halfAngle) * reach, leftY = m.y + Math.sin(angle - halfAngle) * reach;
+      const rightX = m.x + Math.cos(angle + halfAngle) * reach, rightY = m.y + Math.sin(angle + halfAngle) * reach;
+
+      // Filled wedge — the wide-cone telegraph. Collapses to a zero-area sliver once halfAngle
+      // reaches 0, leaving only the beam core below.
+      g.fillStyle(color, 0.10 + frac * 0.15);
+      g.beginPath();
+      g.moveTo(m.x, m.y);
+      g.lineTo(leftX, leftY);
+      g.lineTo(rightX, rightY);
+      g.closePath();
+      g.fillPath();
+
+      // Cone edges, so the wedge reads as a telegraph outline rather than a flat wash. Fades
+      // out as the cone narrows onto the beam core (their alpha and the edges' own convergence
+      // both drive the beam-y read at high charge).
+      g.lineStyle(1.5, color, (0.5 + frac * 0.2) * (1 - frac * 0.5));
+      g.beginPath();
+      g.moveTo(m.x, m.y);
+      g.lineTo(leftX, leftY);
+      g.strokePath();
+      g.beginPath();
+      g.moveTo(m.x, m.y);
+      g.lineTo(rightX, rightY);
+      g.strokePath();
+
+      // Centre beam core: present from the very start (a thin line down the cone's bisector)
+      // and thickens/brightens toward full charge, so by frac=1 — cone fully collapsed — this
+      // IS the straight beam.
       const width = 1 + frac * 5;
       g.lineStyle(width, color, 0.35 + frac * 0.55);
       g.beginPath();
       g.moveTo(m.x, m.y);
       g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
       g.strokePath();
-      if (frac > 0.15) {
-        const jitter = (1 - frac) * 6;
-        g.lineStyle(1, 0xffffff, 0.5 * frac);
-        for (let i = -1; i <= 1; i += 2) {
-          const a = angle + i * 0.03 * (1 - frac);
-          g.beginPath();
-          g.moveTo(m.x, m.y);
-          g.lineTo(m.x + Math.cos(a) * reach + (Math.random() - 0.5) * jitter, m.y + Math.sin(a) * reach + (Math.random() - 0.5) * jitter);
-          g.strokePath();
-        }
-      }
     }
   },
 
