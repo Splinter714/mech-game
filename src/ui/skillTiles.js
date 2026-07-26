@@ -192,17 +192,13 @@ export function stackedTileLayout(rect) {
 // footprints differing (point 1).
 //
 // #526-followup3 (playtest: "passive widening isn't wide enough — let it take as much space as
-// is available except for a small standardized gap"). The previous approach was a fixed ratio
-// split (1.5/1/1.5, later nudged to 1.35/1.3/1.35) of the weapon-tile width — no ratio nudge ever
-// read as wide enough, because the core/passive tile's share was still capped by the split rather
-// than by how much room was actually free. So this drops the ratio split entirely: X and Y each
-// get `ABILITY_MIN_W` — a small width sized only to fit their own content cleanly (the icon, sized
-// off `abilityH` per `stackedTileLayout`, is the dominant/tallest element; the corner bind badge
-// and the status subtitle underneath both need far less width than that) — and the core/passive
-// tile absorbs EVERY remaining pixel between them. The three tiles are separated by the row's own
-// standard `gap` (the same constant the weapon row below it uses), not a widened one, so the row's
-// total span still matches the weapon row's ARMORED width exactly.
-export const ABILITY_MIN_W_RATIO = 1.25; // × abilityH — tunable if X/Y still feel cramped or bloated in play.
+// is available except for a small standardized gap") tried dropping the ratio split entirely: X
+// and Y each got just a content-fitting minimum, and the core/passive tile absorbed every
+// remaining pixel between them. #526-followup4 (playtest, after trying that: "now the active
+// abilities don't have enough space though... they should have maybe 1/3 of the space each")
+// walked it back — X, core/passive, and Y now split the row's ARMORED width into roughly EQUAL
+// THIRDS, separated by the row's own standard `gap` (the same constant the weapon row below it
+// uses), so the row's total span still matches the weapon row's ARMORED width exactly.
 export function weaponAbilityRows(x, w, {
   bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER, coreLoc = CORE_SLOTS[0],
   // #526-followup2 (point 4, playtest: "add a gap between the ability/passive row and the weapon
@@ -223,12 +219,15 @@ export function weaponAbilityRows(x, w, {
   const rowW = (last.x + last.w - weapons[0].x) + ARMOR_PEEK_PAD * 2;
   const abilityH = Math.round(weapons[0].h / 2);
   const abilityTop = weapons[0].y - rowGap - abilityH;
-  // X/Y get just enough width to fit their content (icon + corner bind badge + status text)
-  // cleanly — see the module doc above. The core/passive tile fills everything left over between
-  // them, separated from each by the row's own standard `gap` (same constant as the weapon row).
-  const minAbilityW = Math.round(abilityH * ABILITY_MIN_W_RATIO);
-  const leftW = minAbilityW;
-  const rightW = minAbilityW;
+  // #526-followup4 (playtest: "now the active abilities don't have enough space though... they
+  // should have maybe 1/3 of the space each"): the previous min-fit-two/fill-remainder split
+  // starved the two ACTIVE (X/Y) tiles down to a content-fitting minimum so the passive/core tile
+  // could take almost all the row. Split into roughly EQUAL THIRDS instead — X, core/passive, and
+  // Y each get about a third of the row's armored width, still summing to the same `rowW` total
+  // (the weapon-row-matching invariant) with the row's own standard `gap` between each pair.
+  const thirdW = Math.round((rowW - gap * 2) / 3);
+  const leftW = thirdW;
+  const rightW = thirdW;
   const midW = Math.max(0, rowW - leftW - rightW - gap * 2);
   const midX = rowX + leftW + gap;
   const rightX = midX + midW + gap;
