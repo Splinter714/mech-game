@@ -16,6 +16,64 @@ export function gen(scene, key, w, h, drawFn) {
   }
   g.generateTexture(key, w, h);
   g.destroy();
+  // #545 (art dissect tool): re-run the SAME draw fn through a recording graphics that turns
+  // every fill into a tagged, serializable op instead of drawing pixels, so the dev-only dissect
+  // overlay (src/dev/dissectOverlay.js) can show each part of a sprite separately. Dev-gated —
+  // Vite folds this whole branch away in a production build (see main.js's identical guard on
+  // the ArtPreviewScene/AudioScene registration for the same reasoning), so there is zero
+  // runtime cost or risk in a shipped build.
+  if (import.meta.env.DEV) captureLayers(key, w, h, drawFn);
+}
+
+// Dev-only art dissection: re-run `drawFn` into a recording graphics (`makeCaptureGraphics`)
+// that captures every fill as a tagged op instead of drawing pixels, keyed by whatever
+// `g.layer('name')` calls the draw code sprinkles through itself (a no-op against a real
+// Phaser Graphics — see `scaledGraphics`'s own `.layer` below). Stored on a global keyed by
+// texture key so the dissect overlay (and ArtPreviewScene, which drives it) can look any of
+// them up by the same key `gen()` just baked. Best-effort — a texture whose draw fn reaches
+// past `scaledGraphics` for something the recorder doesn't implement (e.g. a raw Phaser
+// Graphics-only stroke primitive) must still bake its real pixels via the untouched call
+// above; this second pass is purely additive and never allowed to break that.
+function captureLayers(key, w, h, drawFn) {
+  try {
+    const cap = makeCaptureGraphics();
+    drawFn(cap);
+    (globalThis.__artLayers ||= {})[key] = { w, h, ops: cap.ops };
+    globalThis.dispatchEvent(new CustomEvent('artLayersUpdated', { detail: { key } }));
+  } catch { /* capture is best-effort; ignore */ }
+}
+
+// A graphics-shaped recorder standing in for a real Phaser Graphics. `scaledGraphics` (below)
+// already turns every draw call's DESIGN-grid coordinates into final, already-transformed
+// canvas coordinates (the `s()`/`px()`/`py()` math) before forwarding to whatever `g` it
+// wraps — a real Graphics when baking pixels, this recorder when capturing — so all this needs
+// to do is remember each already-transformed call as a serializable op, tagged with whichever
+// layer name is currently active. Covers every primitive `scaledGraphics` itself forwards
+// (fillStyle/lineStyle/fillRect/fillCircle/fillEllipse/fillTriangle/fillPoints) PLUS the couple
+// of calls mech's art reaches past the wrapper for directly via `.raw` (mechPrims.js's `roundC`
+// hits `sg.raw.fillRoundedRect` for a rounded plate, already scaled by hand the same way
+// `scaledGraphics` would). `lineStyle`/`lineBetween` are no-ops: dissect renders FILLED
+// silhouettes per part, and nothing in mech's art strokes a shape that isn't also filled, so
+// there is nothing meaningful to capture from a bare stroke (mirrors horse game's recorder,
+// which stubs `lineStyle`/`strokePath` the same way).
+export function makeCaptureGraphics() {
+  const ops = [];
+  let cur = 'base', color = 0, alpha = 1;
+  const rec = (o) => ops.push({ ...o, color, alpha, layer: cur });
+  return {
+    __capture: true,
+    ops,
+    layer(name) { cur = name; },
+    fillStyle(c, a = 1) { color = c; alpha = a; },
+    lineStyle() {},
+    lineBetween() {},
+    fillRect(x, y, w, h) { rec({ t: 'rect', x, y, w, h }); },
+    fillRoundedRect(x, y, w, h) { rec({ t: 'rect', x, y, w, h }); },   // rounding is cosmetic for dissect
+    fillCircle(x, y, r) { rec({ t: 'circle', x, y, r }); },
+    fillEllipse(x, y, w, h) { rec({ t: 'ellipse', x, y, w, h }); },
+    fillTriangle(a, b, c, d, e, f) { rec({ t: 'tri', pts: [a, b, c, d, e, f] }); },
+    fillPoints(points) { rec({ t: 'poly', points: points.map((p) => ({ x: p.x, y: p.y })) }); },
+  };
 }
 
 // Super-sampling factor: draw on an R× grid, display the sprite at 1/R the scale.
@@ -52,6 +110,13 @@ export function scaledGraphics(g, r = ART_SCALE) {
     glowSkip: false,   // when true, glow-primitive output is suppressed (gun hardware still draws)
     _glow: false,      // set by glowDot/glowBar while emitting their layers
     _blocked() { return (this.glowOnly && !this._glow) || (this.glowSkip && this._glow); },
+    // #545: tag the following draws as a named part for the dev-only dissect tool. No-op
+    // against a real Phaser Graphics (which has no `.layer`); only forwards when `g` is the
+    // capture recorder from `makeCaptureGraphics` above (tagged `__capture`), which is the
+    // only thing that ever reads the tag. The glow/translate gates above are irrelevant here —
+    // they decide WHETHER a draw call reaches `g` at all, not how it's tagged once it does, so
+    // this needs no awareness of them.
+    layer: (name) => { if (g.__capture) g.layer(name); },
     fillStyle: (c, a) => g.fillStyle(c, a),
     lineStyle: (w, c, a) => g.lineStyle(w * r, c, a),
     fillRect: (x, y, w, h) => { if (!wrap._blocked()) g.fillRect(px(x), py(y), s(w), s(h)); },

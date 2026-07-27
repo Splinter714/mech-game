@@ -43,9 +43,13 @@ import { MECH_DEPLOYED } from '../data/events.js';
 // animated spritesheet". Our art is heterogeneous (single hex tiles, two-sprite vehicles,
 // six-sprite posed mechs, live-fire projectile sims), so cells are per-view builders instead.
 //
-// Reached from the DEV-only ART tab (ui/tabBar.js). Deliberately NOT ported: dissectOverlay
-// (needs a layer recorder + g.layer() tags across ~30 art files) and the wall edge geometry
-// (drawWallEdges paints vector edges into a live Graphics — there is no wall TEXTURE to show).
+// Reached from the DEV-only ART tab (ui/tabBar.js). #545 ported the horse game's dissectOverlay
+// (src/dev/dissectOverlay.js + the capture machinery in art/_frames.js) — click any gallery cell
+// to open the part breakdown for its `dissectKey` texture (see each cell builder below). Only
+// mechArt.js is layer-tagged so far (see its header); every other cell still opens the dissector,
+// it just shows one "base" panel until its own art file gets `.layer()` tags. Still NOT ported:
+// the wall edge geometry (drawWallEdges paints vector edges into a live Graphics — there is no
+// wall TEXTURE to show).
 const UI = {
   bg: '#0d1014', text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', sel: 0xefc14a,
   panel: 0x161b22, panelEdge: 0x2a333f, btn: 0x1a212b, btnHover: 0x232c38, cellEdge: 0x232c38,
@@ -134,12 +138,28 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this._wireScroll();
     this._rebuild();
 
+    // #545: the dissect overlay docks as a fixed RIGHT sidebar (dev, outside Phaser entirely —
+    // see src/dev/dissectOverlay.js). It fires `dissectDockChanged` with its width on open and 0
+    // on close; reserve matching gallery width so the last column of cells never ends up hidden
+    // under the dock. (Bare event name — a dev-only DOM event, decoupled from the overlay file
+    // itself — mirrors the horse game's identical mechanism.)
+    this._reservedRight = 0;
+    this._onDissectDock = (e) => {
+      const w = e.detail?.width || 0;
+      if (w === this._reservedRight) return;
+      this._reservedRight = w;
+      this._paintMask();
+      this._rebuild();
+    };
+    window.addEventListener('dissectDockChanged', this._onDissectDock);
+
     // #523: ESC used to return straight to the garage — it now always opens the shared pause
     // menu instead, per the issue's confirmed design.
     wirePauseMenu(this);
     this.scale.on('resize', this._onResize, this);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this._onResize, this);
+      window.removeEventListener('dissectDockChanged', this._onDissectDock);
       this.list?.destroy();
       this.list = null;
       this.content.removeAll(true);
@@ -170,9 +190,14 @@ export default class ArtPreviewScene extends Phaser.Scene {
   get contentH() { return Math.max(80, this.H - this.contentTop); }
   get cellSize() { return CELL_BASE * ZOOMS[this.zoomIndex]; }
 
+  // #545: `galleryW` is `this.W` minus whatever the dissect dock has reserved on the right — the
+  // mask (so scrolled content can't paint under the dock) and the cell grid's row-wrap width
+  // (so the last column doesn't land under it either) both use this instead of the raw `this.W`.
+  get galleryW() { return this.W - (this._reservedRight || 0); }
+
   _paintMask() {
     this.maskG.clear().fillStyle(0xffffff)
-      .fillRect(0, this.contentTop, this.W, this.contentH);
+      .fillRect(0, this.contentTop, this.galleryW, this.contentH);
   }
 
   // ── Chrome ────────────────────────────────────────────────────────────────────────────
@@ -353,7 +378,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this._cursorY += GROUP_HEAD_H;
 
     const size = this.cellSize;
-    const perRow = Math.max(1, Math.floor((this.W - PAD * 2 + CELL_GAP) / (size + CELL_GAP)));
+    const perRow = Math.max(1, Math.floor((this.galleryW - PAD * 2 + CELL_GAP) / (size + CELL_GAP)));
     cells.forEach((cell, i) => {
       const col = i % perRow, row = Math.floor(i / perRow);
       const x = PAD + col * (size + CELL_GAP);
@@ -372,6 +397,25 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const bg = this.add.rectangle(x, y, size, artH + 16, this._bgColor()).setOrigin(0, 0)
       .setStrokeStyle(1, UI.cellEdge);
     this.content.add(bg);
+
+    // #545: dev-only click-to-dissect. Every cell-builder below (`_stackCell`/`_vehicleCell`/
+    // `_mechCell`/the weapon stills in `_buildWeapons`) names ONE representative texture key on
+    // its returned cell object — `dissectKey` — chosen at cell-construction time, before
+    // `build()` even runs. Wired on the swatch rect rather than the art itself, so it's one
+    // clean hit-target regardless of what `build()` layers on top and needs no interactive
+    // state added to those functions' sprites. Guarded by the SAME press-here + didn't-scroll
+    // check `_wireScroll` already tracks (`this._moved`) — without it, dragging the gallery to
+    // scroll would dissect whatever cell the drag happened to release over.
+    if (import.meta.env.DEV && cell.dissectKey) {
+      bg.setInteractive({ useHandCursor: true });
+      bg.on('pointerdown', () => { this._pressedCell = bg; });
+      bg.on('pointerup', () => {
+        const pressedHere = this._pressedCell === bg;
+        this._pressedCell = null;
+        if (!pressedHere || this._moved) return;
+        globalThis.__dissect?.show(cell.dissectKey);
+      });
+    }
 
     const holder = this.add.container(x + size / 2, y + 8 + artH / 2);
     this.content.add(holder);
@@ -399,6 +443,10 @@ export default class ArtPreviewScene extends Phaser.Scene {
   _stackCell(label, keys, { offsets = [] } = {}) {
     return {
       label,
+      // #545: the base/first texture in the stack — for a plain hex tile that's the whole
+      // thing; for a hex+canopy composite it's the ground tile (the canopy overlay is its own
+      // separate bake, not layer-tagged today anyway — see the report on which files got tags).
+      dissectKey: keys[0],
       build: (holder, box) => {
         const live = keys.filter((k) => this.textures.exists(k));
         if (!live.length) return 'missing';
@@ -655,6 +703,8 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const [hullKey, turretKey] = this._vehicleTexKeys(key, def);
     return {
       label,
+      dissectKey: hullKey,   // #545 — vehicle art (art/vehicles/) isn't layer-tagged yet either
+
       build: (holder, box) => {
         const live = [hullKey, turretKey].filter((k) => this.textures.exists(k));
         if (!live.length) return 'missing';
@@ -698,6 +748,14 @@ export default class ArtPreviewScene extends Phaser.Scene {
   _mechCell(label, key, mech, { frame = 0, animate = false, ink = null, factor = null } = {}) {
     return {
       label,
+      // #545: a mech bakes SIX separate textures under this one `key` prefix (hull per walk
+      // frame, turret, both side torsos, both arms — see mechArt.js's buildMechTextures), so
+      // one cell can't dissect all of them at once. `_turret` is the pick: it's the texture
+      // carrying the most of what mechArt.js got tagged for this issue (centre torso, head,
+      // decor, centre/head weapon mounts) — see the report for the full tag list and the
+      // follow-up this implies (a per-part sub-picker) if the single-key limit turns out to
+      // matter in practice.
+      dissectKey: `${key}_turret`,
       build: (holder, box) => {
         const u = ink ?? this._inkUnion(this._mechKeys(key));
         if (!u) return 'missing';
@@ -720,6 +778,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const item = getItem(id);
       stills.push({
         label: `${item?.name ?? id}\nmount + fx`,
+        dissectKey: mountIconKey(id),   // #545 — mount-icon art isn't layer-tagged yet either
         build: (holder, box) => {
           // Two halves: the on-mech mount hardware (#457's muzzle lives on it) beside the
           // projectile/beam still (#458). Each fitted to its own inked bounds, so a stubby

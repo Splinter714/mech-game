@@ -175,6 +175,11 @@ export function mechLayout(mech) {
 // by category. Shared by the turret (torso/head mounts) and the arm textures (arm mounts).
 function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   if (mech.isPartDestroyed(loc)) return;
+  // #545 (art dissect tool): every call site below (drawArm, drawSideTorso, drawTurret's dead
+  // centre/head loop) is baking a texture that carries NOTHING else tagged 'weapons', so this one
+  // tag is enough to isolate "just the guns" within whichever part is currently being drawn —
+  // no per-weapon sub-tag needed to answer the question the dissector exists for.
+  sg.layer('weapons');
   const p = lay[loc];
   const weaponIds = mech.mounts[loc].filter(isWeapon);
   const n = weaponIds.length;
@@ -221,6 +226,10 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece. The
   // hull/attachment logic is unaffected (this part texture is simply blank when the location is gone).
   if (mech.isPartDestroyed(loc)) return;
+  // #545: tags mirror this function's own two visual halves — the plate itself (armor state
+  // included) vs. whatever's mounted on it — which is exactly the boundary drawArm's own
+  // comments above already draw.
+  sg.layer('plate');
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
@@ -244,9 +253,15 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const p = lay[loc];
   // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece.
   if (mech.isPartDestroyed(loc)) return;
+  // #545: tags follow this function's own section comments — plate/vent as one visual unit
+  // (the torso shell itself, armor state included), the pauldron as its own decor piece (it
+  // rides on this texture specifically so it cants with the torso, per the header comment
+  // above), and the mounted weapons last.
+  sg.layer('plate');
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  sg.layer('pauldron');
   drawPauldronFor(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
@@ -293,6 +308,9 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // #128: no longer damage-tracked (no armor/structure of its own — it's still the
   // ability mount, just untied from destructibility) — always draws intact, never a
   // stump.
+  // #545: this function's own section comments (centre torso / head / decor / weapons) are
+  // exactly the boundaries the dissect tool needs, so they're what get tagged, in order.
+  sg.layer('centerTorso');
   const ct = lay.centerTorso;
   plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
@@ -320,6 +338,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
 
   // Head + cockpit optic. #128: neither is damage-tracked any more — always
   // draws intact, never a stump/charred cockpit.
+  sg.layer('head');
   const hd = lay.head;
   plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
   // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
@@ -331,6 +350,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
   // are drawn on the side-torso textures instead (so they cant with the side torso), so skip
   // them here.
+  sg.layer('decor');
   drawDecor(sg, mech, lay, T, { skip: ['pauldron'] });
 
   // Weapon hardware for the centre/head mounts only — the ARM and SIDE-TORSO mounts are drawn
@@ -360,9 +380,13 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
 
   // Pelvis block ties the legs together (sits under the torso, tucked up so it's mostly
   // occluded from the top-down view).
+  // #545: tags follow this function's own section comments (pelvis / each leg / the hip
+  // skirts below) — the natural read of "the various small bits" a walk-cycle hull is made of.
+  sg.layer('pelvis');
   plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
+    sg.layer(loc);   // 'leftLeg' / 'rightLeg' — thruster wash+core, plate, toe cap, ankle, grime
     const p = lay[loc];   // legs are animation-only now — never destroyed
     const fy = p.y + dir * shift;
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
@@ -391,6 +415,7 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   const skirtOuterTop = Math.max(SKIRT_INNER + 0.06, legOuter - SKIRT_INSET);
   const skirtOuterBot = Math.max(SKIRT_INNER + 0.03, skirtOuterTop - SKIRT_TUCK);
   for (const dx of [-1, 1]) {
+    sg.layer(dx < 0 ? 'leftSkirt' : 'rightSkirt');
     // #446: the enemy's hip used to be a stack of four ellipses (a shoulder-of-ham blob over each
     // leg). Both factions now use the angular tucked skirt below — the silhouette that actually
     // reads as plating.

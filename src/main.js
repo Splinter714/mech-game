@@ -104,6 +104,14 @@ if (window.ResizeObserver && gameEl) new ResizeObserver(applySize).observe(gameE
 
 if (import.meta.env.DEV) window.__game = game;
 
+// #545: the dev-only art dissect overlay (globalThis.__dissect, driven from ArtPreviewScene
+// gallery clicks) — a dynamic import for the same reason the ART/AUDIO tabs below are dynamic:
+// keeps the module (and its DOM/event plumbing) out of the production bundle entirely rather
+// than merely unused at runtime. Mirrors the horse game's identical main.js hook exactly.
+if (import.meta.env.DEV) {
+  import('./dev/dissectOverlay.js').then((m) => m.setupDissectOverlay());
+}
+
 // #461: the ART PREVIEW gallery is a DEV-only authoring tool (reachable only from the DEV-gated
 // ART tab in ui/tabBar.js). It's registered via a DEV-guarded DYNAMIC import rather than a static
 // one at the top of this file, because a static import keeps the module in the production bundle
