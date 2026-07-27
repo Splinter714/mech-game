@@ -47,7 +47,13 @@ export const RepairOutpostsMixin = {
         if (!this._repairOutpostMarkers.has(base.id)) this._drawRepairOutpostMarker(base.id, center);
         for (const p of live) {
           if (Math.hypot(p.x - center.x, p.y - center.y) <= REPAIR_RADIUS_PX) {
+            // Same reskin-on-restore reasoning as the Armor Patch pickup (powerups.js): the
+            // damage reskin gate only fires when armor BREAKS, so a location repaired back up
+            // from bare internals needs its own explicit re-raster or the torn-panel look sticks
+            // even once armor is actually restored.
+            const wasExposed = p.mech.exposedArmorLocations();
             p.mech.repairTick(dt, REPAIR_RATE_PER_SEC);
+            if (wasExposed.some((loc) => p.mech.hasArmor(loc))) this._reskinPlayerMech?.(p);
           }
         }
         continue;
