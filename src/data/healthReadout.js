@@ -351,11 +351,15 @@ export const SHIELD_ARC = {
   // EQUAL margin on every side (left/right/top) against the notch, instead of a taller vertical
   // gap that didn't match the horizontal one.
   rise: 16,       // how far above the row's own top edge the bracket's top rail sits
-  // #495 2nd round: a SMALL rounding where a vertical side meets the top rail — enough to read as
-  // this game's plated-console aesthetic (tile corners round at 9px, the console shell's own
-  // corner at 14px) without reading as circular/elliptical at a glance. `bracketGeometry` clamps
-  // this per-row so a very short or narrow tile row can never make the corner overlap itself.
-  corner: 14,
+  // #544 (Jackson: "remove dog-ear styling from shield meter and overall panel" — his own words
+  // for the nipped/cut-corner look): this used to be a 14px round where a vertical side meets the
+  // top rail, deliberately kept EQUAL to `TILE_UI.nipRadius` (ui/skillTiles.js) so the ability
+  // tiles' own tapered corner and this bracket's corner read as one continuous notch (#526). Both
+  // the tile taper and that shared-radius purpose are gone now, so this is a plain SQUARE corner
+  // (0) — a clean right-angle bracket, no rounding, no taper. `bracketGeometry` clamps this
+  // per-row so a very short or narrow tile row can never make the corner (when non-zero) overlap
+  // itself; harmless at 0.
+  corner: 0,
   steps: 10,      // polyline resolution per half-path (mirrors `perimeterRun`'s plain-polyline idiom)
 };
 

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { LOCATION_INFO, ABILITY_SLOTS, CORE_SLOTS, slotKind } from '../data/anatomy.js';
-import { TILE_ORDER, HUD_ABILITY_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile, TILE_UI } from '../ui/skillTiles.js';
+import { TILE_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { getItem } from '../data/items.js';
 import { getCoreItem } from '../data/coreItems.js';
 import { ABILITY_BINDS, INTERACT_BIND } from '../input/Controls.js';
@@ -725,20 +725,12 @@ export default class HudScene extends Phaser.Scene {
       if (b.w > 0) drawBay(g, { x: b.x - pad, y: b.headerY - 2, w: b.w + pad * 2, h: bottom - (b.headerY - 2) });
       const t = panel.tileBox;
       if (!t) continue;
-      // #526 (point 1, playtest: "the panel should fill the same nipped-corner trapezoidal shape
-      // as the shield meter above it, so the two read as one continuous console"): the FUSED tile
-      // bay is no longer a plain rounded rect — it fills the exact same fixed bracket OUTLINE the
-      // shield meter itself is drawn from (`bracketOutline`, `pad: 0` — the innermost/base layer of
-      // `_paintFusedReadout`'s own gradient), grown to the same screen floor (`_fusedShieldRect`,
-      // point 3). Every other mode (bars/paperdoll/none) keeps the old plain rounded rect — this
-      // console notch shape is specific to the fused readout Jackson's screenshot showed.
-      if (panel.mode === 'fused') {
-        const outline = bracketOutline(this._fusedShieldRect(t));
-        g.fillStyle(CONSOLE_COL.bay, 1);
-        g.fillPoints(outline, true);
-      } else {
-        drawBay(g, { x: t.x - pad, y: t.y - pad, w: t.w + pad * 2, h: bottom - (t.y - pad) }, { framed: false });
-      }
+      // #544 (Jackson: "remove dog-ear styling from ... overall panel"): the FUSED tile bay used
+      // to fill the same nipped-corner trapezoidal bracket OUTLINE the shield meter itself is
+      // drawn from (#526, `bracketOutline`) so the two read as one continuous console shape. That
+      // notch shape is gone now — every mode (fused included) fills the same plain rounded-rect
+      // bay `drawBay` already draws for bars/paperdoll/none, just grown to the FUSED tile box.
+      drawBay(g, { x: t.x - pad, y: t.y - pad, w: t.w + pad * 2, h: bottom - (t.y - pad) }, { framed: false });
     }
     this._placeDevReadouts();
   }
@@ -913,23 +905,20 @@ export default class HudScene extends Phaser.Scene {
       if (slotKind(r.loc) === 'core') {
         const id = snapshot?.mech?.coreMounts?.[r.loc] ?? null;
         // The passive slot has no activation button (nothing to bind) and keeps its real item
-        // icon (see skillTiles.js's `stackedTileLayout` doc) — no `nipCorners` either: it sits in
-        // the MIDDLE of the row, never on the trapezoid's own outer edge.
+        // icon (see skillTiles.js's `stackedTileLayout` doc).
         panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
           loc: r.loc, itemId: id, mode, bindGlyph: '', emptyLabel: 'core',
         });
         continue;
       }
       const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
+      // #544: the ability tile no longer nips its own outer-top corner into the console notch —
+      // that whole "nipped-corner" treatment (#526) is removed project-wide, see
+      // `paintTilePlate`/`TILE_UI` (ui/skillTiles.js) and `SHIELD_ARC` (data/healthReadout.js).
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
         loc: r.loc, itemId: id, mode, bindOverStatus: true,
         bindGlyph: mode === 'pad' ? ABILITY_BINDS[r.loc].pad : ABILITY_BINDS[r.loc].key,
         emptyLabel: 'ability',
-        // #526 (point 2, still true of the redesigned row): the ability tile nips its own
-        // OUTER-top corner — the one nearest the console notch's own rounded corner — so it
-        // tapers into that trapezoidal shape instead of sitting inside it as a plain rectangle.
-        // X is left (nip top-left), Y is right (nip top-right) — see `HUD_ABILITY_ORDER`.
-        nipCorners: r.loc === HUD_ABILITY_ORDER[0] ? { tl: true } : { tr: true },
       });
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
@@ -1076,12 +1065,10 @@ export default class HudScene extends Phaser.Scene {
     // where scenes/arena/abilities.js ticks it every frame) rather than ammo.
     for (const slot of ABILITY_SLOTS) {
       const id = mech.abilityMounts[slot] ?? null;
+      // #544: no more `nipCorners` here — see the matching removal note in `_makePanel`.
       const opts = {
         loc: slot, itemId: id, mode, emptyLabel: 'ability', bindOverStatus: true,
         bindGlyph: mode === 'pad' ? ABILITY_BINDS[slot].pad : ABILITY_BINDS[slot].key,
-        // #526 (point 2): re-applied every frame too, since `updateSkillTile` repaints the plate
-        // each time — see the matching note in `_makePanel`.
-        nipCorners: slot === HUD_ABILITY_ORDER[0] ? { tl: true } : { tr: true },
       };
       const state = snapshot.abilityStates?.[slot];
       if (id && state) {

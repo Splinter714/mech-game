@@ -12,7 +12,6 @@ import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
 import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT, CORE_SLOTS } from '../data/anatomy.js';
 import { CONSOLE_TILES, ARMOR_PEEK_PAD } from '../data/hudLayout.js';
-import { SHIELD_ARC } from '../data/healthReadout.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
 // centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
@@ -27,6 +26,17 @@ export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 // core slot is still deliberately NOT in this list — see HudScene.js's `_makePanel`.
 export const HUD_ABILITY_ORDER = ['abilityX', 'abilityY'];
 
+// #544 (Jackson: "LB and X/L3 button contents swap ... RB and Y/R3 button contents swap"): the
+// two RENDER-POSITION swaps `weaponAbilityRows` applies at the end of its own layout — leftTorso's
+// weapon-row rect trades screen geometry with abilityX's ability-row rect, and rightTorso's with
+// abilityY's. Pure position swap: `mounts`/`abilityMounts`, TILE_ORDER, HUD_ABILITY_ORDER,
+// SKILL_BINDS, ABILITY_BINDS and GarageScene's `_navSlot` are all untouched — see that function's
+// own comment for the full reasoning.
+const RENDER_SWAP_PAIRS = [
+  ['leftTorso', 'abilityX'],
+  ['rightTorso', 'abilityY'],
+];
+
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
   card: 0x131820, cardSel: 0x1b2430, edge: 0x2a333f, sel: 0xefc14a, slotEdge: 0x323c49, track: 0x0e1218,
@@ -38,15 +48,11 @@ export const TILE_UI = {
   // rounded corners and a soft halo just outside the edge so it pops off the console plate
   // behind it. Deliberately a small move: this is still the same tile, better lit.
   radius: 9,          // corner rounding
-  // #526: the wide ABILITY tiles get a bigger round on their own OUTER-top corner (the one
-  // nearest the console's own nipped-corner notch, `SHIELD_ARC.corner` in healthReadout.js) so
-  // they visibly taper INTO that notch shape instead of sitting inside it as plain rectangles that
-  // need extra clearance. Only the outer corner nips; the inner one and both bottom corners keep
-  // the normal `radius`. #526-followup (point 1: "follow that same clean trapezoidal edge shape"):
-  // now EXACTLY `SHIELD_ARC.corner` rather than "close but not matching" — the ability tiles'
-  // nipped corner and the console notch's own corner are now the SAME radius by construction, so
-  // they can never drift apart again.
-  nipRadius: SHIELD_ARC.corner,
+  // #544 (Jackson: "remove dog-ear styling from shield meter and overall panel" — his own words
+  // for the nipped/cut-corner look): `nipRadius` and the whole per-corner "nip into the console's
+  // own notch" treatment (#526) are gone — every tile now rounds all four corners at the same
+  // plain `radius` above, ability tiles included. See `paintTilePlate` and `SHIELD_ARC.corner`
+  // (healthReadout.js) for the matching removal on the shield-meter frame/panel side.
   edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
   halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
 };
@@ -55,41 +61,30 @@ export const TILE_UI = {
 // rather than a Rectangle purely because Phaser's Rectangle cannot round its corners; the tile's
 // hit area is still the plain rect (see `drawSkillTile`).
 //
-// #526: `nipCorners` (optional, e.g. `{ tl: true }` or `{ tr: true }`) nips ONE outer-top corner
-// to `TILE_UI.nipRadius` instead of the normal `radius` — used by the double-wide ability tiles so
-// they taper into the console's own nipped-corner notch (see `TILE_UI.nipRadius`'s own comment).
-// Every other tile (every weapon tile, and an ability tile with no flag set) is unaffected — the
-// per-corner object collapses right back to the old single-radius rounding when every flag is
-// false/absent.
-export function paintTilePlate(g, rect, { selected = false, nipCorners = null } = {}) {
+// #544: this used to take an optional `nipCorners` flag that gave the double-wide ability tiles a
+// bigger, asymmetric round on their own outer-top corner so they'd taper into the console's own
+// nipped-corner notch (#526). Removed along with that notch shape — every tile, weapon or
+// ability, now rounds all four corners at the same plain `TILE_UI.radius`.
+export function paintTilePlate(g, rect, { selected = false } = {}) {
   const { x, y, w, h } = rect;
   const r = Math.min(TILE_UI.radius, w / 4);
-  const corners = nipCorners
-    ? {
-      tl: nipCorners.tl ? TILE_UI.nipRadius : r, tr: nipCorners.tr ? TILE_UI.nipRadius : r,
-      bl: r, br: r,
-    }
-    : r;
-  const grow = (pad) => (typeof corners === 'number'
-    ? corners + pad
-    : { tl: corners.tl + pad, tr: corners.tr + pad, bl: corners.bl + pad, br: corners.br + pad });
   g.clear();
   // Outside-the-edge halo: two fading passes, since plain Graphics has no blur (the same stacked-
   // silhouette stand-in the HUD's chevron glow and shield bar use).
   const haloCol = selected ? TILE_UI.sel : TILE_UI.halo;
   for (const [pad, a] of [[3.5, selected ? 0.20 : 0.07], [1.5, selected ? 0.40 : 0.16]]) {
     g.lineStyle(2, haloCol, a);
-    g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, grow(pad));
+    g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r + pad);
   }
   // The plate itself.
   g.fillStyle(selected ? TILE_UI.cardSel : TILE_UI.card, 1);
-  g.fillRoundedRect(x, y, w, h, corners);
+  g.fillRoundedRect(x, y, w, h, r);
   // Crisp outer edge. (#505 playtest: a separate "lit top bevel" highlight used to be stroked
   // just inside this same top edge — with the two lines only ~1.5px apart it read as a stray
   // double border along the top of every tile, so it's gone; the crisp edge alone is the border,
   // same as every other side of the tile.)
   g.lineStyle(selected ? 2 : 1.25, selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
-  g.strokeRoundedRect(x, y, w, h, corners);
+  g.strokeRoundedRect(x, y, w, h, r);
 }
 
 // A centred row of N square tiles within [x, x+w]. Position by `y` (top) OR `bottom`. `order`
@@ -236,6 +231,32 @@ export function weaponAbilityRows(x, w, {
     { loc: coreLoc, x: midX, y: abilityTop, w: midW, h: abilityH },
     { loc: abilityOrder[1], x: rightX, y: abilityTop, w: rightW, h: abilityH },
   ];
+  // #544 (Jackson: "LB and X/L3 button contents swap, sizes stay the same" — same for RB/Y —
+  // "and armor display moves to the new position"): a pure GEOMETRY swap between two paired
+  // rects, applied as the very last step so every position computed above (rowX/rowW/abilityTop,
+  // the weapon row itself) is derived from the UN-swapped layout first. Each pair trades its
+  // `{x,y,w,h}` only — the `loc` label on each rect stays put, so every consumer (HudScene,
+  // GarageScene/columnLayout) still looks up content by the SAME unchanged key
+  // (`mech.mounts.leftTorso`, `mech.abilityMounts.abilityX`, TILE_ORDER, HUD_ABILITY_ORDER,
+  // SKILL_BINDS, ABILITY_BINDS, GarageScene's `_navSlot` pad cursor — none of it touched) and
+  // hands the looked-up content to `drawSkillTile`, which simply draws into whichever box this
+  // function attached to that loc. The weapon content now lands in the ability row's own
+  // half-height slot and the ability content lands in the weapon row's own square slot, each at
+  // its SLOT's existing size — not a resize, not an input rebind. `isWideTile`'s aspect check
+  // (run against the rect, not the loc) is what then makes the relocated weapon content
+  // auto-render "wide" (icon-left/text-right, like the core tile already does) and the relocated
+  // ability content auto-render "square" (icon-centered, like every other weapon tile) — no
+  // separate style branch needed for either. The armor-backing plate (HudScene's
+  // `_paintFusedReadout`) reads its box straight off `panel.skillRefs[loc].rect` for `loc` in
+  // TILE_ORDER, so it follows the weapon content to its new position for free.
+  for (const [weaponLoc, abilityLoc] of RENDER_SWAP_PAIRS) {
+    const wTile = weapons.find((t) => t.loc === weaponLoc);
+    const aTile = abilities.find((t) => t.loc === abilityLoc);
+    if (!wTile || !aTile) continue;
+    const g = { x: wTile.x, y: wTile.y, w: wTile.w, h: wTile.h };
+    wTile.x = aTile.x; wTile.y = aTile.y; wTile.w = aTile.w; wTile.h = aTile.h;
+    aTile.x = g.x; aTile.y = g.y; aTile.w = g.w; aTile.h = g.h;
+  }
   return { weapons, abilities, top: abilityTop };
 }
 
@@ -351,14 +372,15 @@ export function drawSkillTile(scene, parent, rect, opts) {
 export function updateSkillTile(refs, opts) {
   const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide, stacked = false } = refs;
   const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
-    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0, nipCorners = null,
+    iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0,
     // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
     // location — an ability/core `loc` (not in SKILL_BINDS) degrades to an empty glyph instead
     // of throwing, so a caller that forgets to pass `bindGlyph` explicitly fails safe, not loud.
     bindGlyph = SKILL_BINDS[loc] ? (mode === 'pad' ? SKILL_BINDS[loc].pad : SKILL_BINDS[loc].key) : '',
     emptyLabel = 'weapon' } = opts;
 
-  paintTilePlate(plate, rect, { selected, nipCorners });
+  // #544: `nipCorners` (#526) is gone — see `paintTilePlate`'s own comment.
+  paintTilePlate(plate, rect, { selected });
   bind.setText(bindGlyph).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
   // #506 THIRD rework: a wide tile sizes its icon off the tile's own HEIGHT (via
