@@ -563,14 +563,21 @@ export class Mech {
     return restored;
   }
 
-  // #512: passive repair-outpost regen — restores a FRACTION of each location's MISSING armor
-  // AND hp per SECOND (`dt`), for as long as the caller keeps ticking it (scenes/arena/
+  // #512: passive repair-outpost regen — restores a FRACTION of each location's MAX (total)
+  // armor AND hp per SECOND (`dt`), for as long as the caller keeps ticking it (scenes/arena/
   // repairOutposts.js calls this every frame a player sits inside a built outpost's radius).
   // Unlike `repairArmor` (instant, armor-only, the Armor Patch pickup), this is continuous and
   // covers structure too — a proper repair bay, not a field patch — so it can, given enough
   // time, bring a location back from 0 hp (a "destroyed"/stump part) rather than only topping up
   // armor on a location that's still standing. Returns the total (armor+hp) restored, for
   // feedback. `dt` is in seconds, same convention as `regenAmmo`.
+  //
+  // Fixed (playtest report): this used to scale the added amount off each tick's REMAINING
+  // missing armor/hp (`missingArmor * frac`) rather than the location's fixed total — an
+  // exponential-decay curve that visibly slowed to a crawl approaching full, since the amount
+  // being multiplied kept shrinking. Now it adds a flat `maxArmor * frac`/`maxHp * frac` every
+  // tick (clamped to what's actually missing), so the healing rate stays constant right up to
+  // full instead of asymptotically trailing off.
   repairTick(dt, ratePerSec) {
     let restored = 0;
     const frac = Math.min(1, Math.max(0, ratePerSec * dt));
@@ -579,13 +586,13 @@ export class Mech {
       const p = this.parts[loc];
       const missingArmor = p.maxArmor - p.armor;
       if (missingArmor > 0) {
-        const add = missingArmor * frac;
+        const add = Math.min(missingArmor, p.maxArmor * frac);
         p.armor = Math.min(p.maxArmor, p.armor + add);
         restored += add;
       }
       const missingHp = p.maxHp - p.hp;
       if (missingHp > 0) {
-        const add = missingHp * frac;
+        const add = Math.min(missingHp, p.maxHp * frac);
         p.hp = Math.min(p.maxHp, p.hp + add);
         restored += add;
       }
