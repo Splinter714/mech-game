@@ -41,6 +41,12 @@ const SPARKS_ENABLED = true;
 export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1) {
   const halfAngle = (coneDeg * Math.PI) / 180 / 2;
   if (halfAngle <= 0.002 || reach <= 0 || alpha <= 0.002) return;
+  // #546 (art dissect tool): one tag for the whole telegraph — it's a single cohesive shape
+  // (the filled bands + the cone-side/rounded-edge strokes are all the same cone, just built
+  // in stages), unlike a projectile's body which actually has distinct parts. No-op against a
+  // real Phaser Graphics; only the dev-only capture recorder implements `.layer` (see
+  // `makeCaptureGraphics` in art/_frames.js).
+  g.layer?.('wedge');
   const BANDS = 6, SEGMENTS = 12;
 
   // Filled bands: each an annular wedge slice (rounded inner + outer edges), progressively
@@ -109,6 +115,10 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   // so a pale energy/support beam (cyan/green) holds an edge against light ground (snow, sand)
   // instead of the low-alpha glow washing into it. Slightly narrower than the core so it reads
   // as a dark seam under the bright beam, never a visible dark outline on dark terrain.
+  // #546: the under-line, outer glow, and core below are all left untagged (default 'base')
+  // — every one of them is `lineStyle`+`lineBetween` (a bare stroke, no fill), which the
+  // capture recorder deliberately can't record (see its header), so a dedicated group for any
+  // of them would always render empty. Only 'sparks' below has real filled content to show.
   g.lineStyle(coreW * 0.7, 0x14161a, 0.35).lineBetween(x0, y0, x1, y1);
   // Outer glow: tapered warbling segments matching the core wobble.
   for (let i = 0; i < SEGS; i++) {
@@ -144,6 +154,11 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
 
   if (!SPARKS_ENABLED) return;
 
+  // #546: the splatter + inner spark flecks below are the only part of a beam with real fill
+  // ops (the hot-centre `fillCircle` dots) — the streak itself is another bare `lineBetween`
+  // stroke, uncaptured. One tag for both spark passes; they're the same visual idea (crackling
+  // energy) at two different scales, not two things worth separating in the dissector.
+  g.layer?.('sparks');
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
   const sparkCount = heavy ? 10 : 12;
   const maxDrift = (heavy ? 18 : 13) * s;
@@ -190,6 +205,12 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
 
 // A melee swing: a bright crescent that sweeps through `facing` as `t` goes 0→1, fading
 // as it completes. Shared so the garage icon and the arena swing read identically.
+// #546: no `.layer()` tags here — the crescent (a stroked arc) and its leading edge (a
+// `lineBetween`) are BOTH bare strokes with no fill, and the capture recorder only records
+// fills (see its header). A melee weapon's fx-still dissect will legitimately show nothing
+// beyond the empty overlay/colour panels; that's a real gap in what the recorder can capture,
+// not a missing tag — fixing it would mean teaching the recorder to approximate stroke
+// geometry as a filled ribbon, which is out of scope here.
 export function drawSlash(g, x, y, facing, t, color, s = 1, reach = 30) {
   const span = Math.PI * 0.95;
   const a0 = facing - span / 2;

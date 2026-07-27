@@ -6,10 +6,15 @@
 // touching the bright pass on dark ground.
 export function draw(g, x, y, ca, sa, color, s, phase) {
   const tx = x - ca * 19 * s, ty = y - sa * 19 * s;
+  // #546: the tracer is stroke-only — nothing for the dissect capture recorder to record (see
+  // art/_frames.js's header), so it's left untagged rather than an always-empty 'trail' group.
   g.lineStyle(3.8 * s, 0x14161a, 0.3); g.lineBetween(tx, ty, x, y);   // dark under-tracer
   g.lineStyle(2.9 * s, color, 0.35); g.lineBetween(tx, ty, x, y);
+  g.layer?.('shell');
   g.fillStyle(0x2a2d33, 1);                       // dark shell body
   g.fillCircle(x - ca * 2.5 * s, y - sa * 2.5 * s, 3.8 * s); g.fillCircle(x, y, 4 * s);
+  g.layer?.('core');
   g.fillStyle(color, 0.95); g.fillCircle(x, y, 2.5 * s);
+  g.layer?.('tip');
   g.fillStyle(0xffffff, 0.95); g.fillCircle(x + ca * 0.8 * s, y + sa * 0.8 * s, 1.3 * s);
 }

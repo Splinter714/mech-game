@@ -1,7 +1,11 @@
 // Dev-only live dissect overlay: interactive part breakdown in-browser (#545, ported from the
 // horse game's src/dev/dissectOverlay.js — see that file for the original, which also has an
 // animation/pose picker this port drops; see the note above `show()` below for why).
-// - globalThis.__dissect.show(key) opens the overlay for any texture key
+// - globalThis.__dissect.show(key) opens the overlay for one texture key
+// - globalThis.__dissect.show({ label: key, ... }) opens it with a target-picker row (#546) —
+//   for a gallery cell whose art is baked as more than one texture (a mech's six parts; a
+//   weapon's mount icon + projectile fx), so every one of them is reachable without leaving
+//   the overlay.
 // - Click a panel to drill into its sub-parts (▸ suffix = drillable)
 // - Click the key/part segments in the header to navigate back up
 // - Docked as a fixed RIGHT sidebar; panels stack vertically and scroll; × to close
@@ -30,8 +34,15 @@ const bbox = (o) => o.t === 'rect'    ? [o.x, o.y, o.x+o.w, o.y+o.h]
 // State: key = texture base key, crumb = stack of parent parts (null = top level). Unlike the
 // horse game's version, there is no pose/animation state here — #545 deliberately dropped the
 // pose picker (see `show()`'s note below), so a "frame" is just whichever texture key was shown.
-const state = { key: null, crumb: [] };
-let wrap, breadcrumbEl, panelsEl;
+//
+// #546: `targets`/`activeLabel` are the multi-texture follow-up. A gallery cell whose art is
+// baked as more than one texture (a mech's six parts; a weapon's mount icon + projectile fx)
+// now passes a `{ label: textureKey }` map to `show()` instead of one bare key — `targets`
+// holds that map, `activeLabel` which of its entries is currently open, and `key` (unchanged)
+// is always just `targets[activeLabel]` in that case. A single-key `show(key)` call still
+// works exactly as before: `targets` stays null and the picker row renders nothing.
+const state = { key: null, crumb: [], targets: null, activeLabel: null };
+let wrap, breadcrumbEl, targetsEl, panelsEl;
 let SCALE = 3;        // working scale, recomputed per render to fit the dock width
 let MAX_SCALE = 3;    // upper bound (overridable with ?scale=)
 
@@ -63,10 +74,25 @@ export function setupDissectOverlay() {
   const closeBtn = document.createElement('span');
   closeBtn.textContent = '×';
   Object.assign(closeBtn.style, { cursor: 'pointer', opacity: '0.6', padding: '0 7px', fontSize: '16px', flexShrink: '0' });
-  closeBtn.addEventListener('click', () => { state.key = null; state.crumb = []; idle(); });
+  closeBtn.addEventListener('click', () => {
+    state.key = null; state.crumb = []; state.targets = null; state.activeLabel = null; idle();
+  });
   headerRow.appendChild(closeBtn);
 
   wrap.append(headerRow);
+
+  // ── target picker row (which of a multi-texture cell's baked textures is open) ────────────
+  // #546: reuses the UI real estate #545 dropped the horse game's pose/animation picker from
+  // (see the note on `show()` below) — a mech or weapon cell now has several candidate
+  // textures instead of one animation to choose between, but it's the same "which one am I
+  // looking at" slot. Empty/hidden whenever `state.targets` has 0 or 1 entries (nothing to
+  // pick between), so a plain single-texture `show(key)` call looks exactly as before.
+  targetsEl = document.createElement('div');
+  Object.assign(targetsEl.style, {
+    display: 'none', flexWrap: 'wrap', gap: '4px', padding: '0 8px 7px',
+    flexShrink: '0', background: '#1e2026',
+  });
+  wrap.append(targetsEl);
 
   // ── panels column (stack vertically, scroll vertically) ───────────────────
   panelsEl = document.createElement('div');
@@ -93,13 +119,24 @@ export function setupDissectOverlay() {
     // #545: the horse game's `show()` also took a discovered `poses` list and drove a little
     // live-preview canvas + play/pause via `setPoses()`, so an owner could pick which
     // idle/walk/etc. frame set to dissect. That's species pose discovery (ArtPreviewScene's
-    // `_posesFor`) with no equivalent concept in mech's art — a mech's gallery cell already
-    // names one concrete texture key per click (see ArtPreviewScene's `dissectKey` on each
-    // cell), so there is nothing to pick between. Dropped rather than adapted: Jackson's ask
-    // was to see "the various small bits of art pieces", which the panel breakdown alone
-    // delivers without it. `show(key, part)` is the sole surface left on `__dissect`.
-    show(key, part = null) {
-      state.key = key;
+    // `_posesFor`) with no equivalent concept in mech's art, so it was dropped rather than
+    // adapted. #546 gave that same UI slot a real, still-non-animation job instead (see
+    // `targetsEl` above): `keyOrMap` may now be either a bare string (unchanged — single
+    // texture, no picker) or a `{ label: textureKey }` map (a picker row opens, defaulting to
+    // its first entry, or whichever label was last active if this map has that label too — so
+    // re-clicking a different mech cell with the SAME part open, e.g. 'turret', stays on
+    // 'turret' rather than resetting to the map's first key every time).
+    show(keyOrMap, part = null) {
+      if (keyOrMap && typeof keyOrMap === 'object') {
+        state.targets = keyOrMap;
+        const labels = Object.keys(keyOrMap);
+        if (!labels.includes(state.activeLabel)) state.activeLabel = labels[0];
+        state.key = keyOrMap[state.activeLabel];
+      } else {
+        state.targets = null;
+        state.activeLabel = null;
+        state.key = keyOrMap;
+      }
       state.crumb = part == null ? [] : [part];
       render();
     },
@@ -114,8 +151,22 @@ export function setupDissectOverlay() {
 function idle() {
   wrap.style.display = 'none';
   breadcrumbEl.innerHTML = '<span style="opacity:0.4">click a gallery cell to dissect</span>';
+  targetsEl.style.display = 'none';
+  targetsEl.innerHTML = '';
   panelsEl.innerHTML = '';
   fireDock(0); // tell the gallery to reclaim the reserved space
+}
+
+// Switch which of `state.targets`' textures is open, without leaving the overlay. Resets the
+// drill-down crumb — a part name from one texture (e.g. turret's 'head') has no meaning against
+// another (e.g. the left arm), so carrying it over would either silently show nothing or, worse,
+// coincidentally match an unrelated same-named part on the new texture.
+function selectTarget(label) {
+  if (!state.targets || !(label in state.targets) || label === state.activeLabel) return;
+  state.activeLabel = label;
+  state.key = state.targets[label];
+  state.crumb = [];
+  render();
 }
 
 // ── Main render ─────────────────────────────────────────────────────────────
@@ -124,6 +175,23 @@ function render() {
   fireDock(DOCK_W); // gallery reserves matching left space so the dock doesn't cover cards
   const rawKey = state.key;
   const part   = state.crumb.length ? state.crumb[state.crumb.length - 1] : null;
+
+  // ── target picker (only when this cell offered more than one texture) ─────────────────────
+  targetsEl.innerHTML = '';
+  const labels = state.targets ? Object.keys(state.targets) : [];
+  targetsEl.style.display = labels.length > 1 ? 'flex' : 'none';
+  for (const label of labels) {
+    const active = label === state.activeLabel;
+    const btn = Object.assign(document.createElement('span'), { textContent: label });
+    Object.assign(btn.style, {
+      cursor: 'pointer', padding: '2px 7px', borderRadius: '3px', fontSize: '11px',
+      background: active ? '#2c3542' : 'transparent',
+      color: active ? '#efc14a' : '#7c8794',
+      border: `1px solid ${active ? '#efc14a' : '#3a3d45'}`,
+    });
+    btn.addEventListener('click', () => selectTarget(label));
+    targetsEl.appendChild(btn);
+  }
 
   const reg = globalThis.__artLayers || {};
   const key = reg[rawKey] ? rawKey : null;

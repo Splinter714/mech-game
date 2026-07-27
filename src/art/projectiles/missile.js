@@ -8,6 +8,9 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   const flameWid = 2 * s;
   const flameTipX = tailX - ca * flameLen, flameTipY = tailY - sa * flameLen;
 
+  // #546 (art dissect tool): three parts — the exhaust flame, the warhead body (shaft + nose
+  // cone), and the tail fins — mirroring this function's own section comments.
+  g.layer?.('flame');
   // Exhaust flame streaming back from the tail — pink accent, flickering, pushed bright.
   g.fillStyle(color, 0.9 * flicker);
   g.beginPath();
@@ -36,6 +39,7 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   const noseBaseX = x - ca * 1 * s, noseBaseY = y - sa * 1 * s;
   const shaftBackX = x - ca * 6 * s, shaftBackY = y - sa * 6 * s;
   const halfW = 1 * s;
+  g.layer?.('body');
   // Thin rectangular shaft body, from the base of the nose cone back near the fins/flame.
   g.fillStyle(0x454c56, 1);
   g.beginPath();
@@ -57,6 +61,7 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   // Small tail fins, one each side, where the body meets the exhaust.
   const finX = x - ca * 5 * s, finY = y - sa * 5 * s;
   const finSpan = 1.8 * s, finBack = 2.2 * s;
+  g.layer?.('fins');
   g.fillStyle(0x454c56, 1);
   g.beginPath();
   g.moveTo(finX + sa * 0.4 * s, finY - ca * 0.4 * s);

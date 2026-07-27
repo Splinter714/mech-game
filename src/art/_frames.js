@@ -56,9 +56,21 @@ function captureLayers(key, w, h, drawFn) {
 // silhouettes per part, and nothing in mech's art strokes a shape that isn't also filled, so
 // there is nothing meaningful to capture from a bare stroke (mirrors horse game's recorder,
 // which stubs `lineStyle`/`strokePath` the same way).
+// #546 follow-up: `beginPath`/`moveTo`/`lineTo`/`closePath`/`fillPath` round out the primitives
+// the recorder understands. projectileArt.js's missile/flame tongues (and drawChargeWedge's
+// telegraph bands) build their shapes with this canvas-style path API instead of
+// fillTriangle/fillPoints — without support here, `drawFn` throws on the first `beginPath()`
+// call (undefined method) and captureLayers' outer try/catch silently drops the WHOLE
+// texture's capture, not just the offending part. A path traced via moveTo/lineTo and closed
+// with fillPath is geometrically the same "filled polygon" fillPoints already records, so it's
+// captured as the same `poly` op type — no new rendering support needed in dissectOverlay.js.
+// `strokePath`/`arc` stay no-ops, same reasoning as `lineStyle`/`lineBetween` above: dissect
+// renders FILLED silhouettes per part, and a bare stroke (the slash crescent's arc, e.g.) has
+// no fill to capture.
 export function makeCaptureGraphics() {
   const ops = [];
   let cur = 'base', color = 0, alpha = 1;
+  let path = [];
   const rec = (o) => ops.push({ ...o, color, alpha, layer: cur });
   return {
     __capture: true,
@@ -67,6 +79,14 @@ export function makeCaptureGraphics() {
     fillStyle(c, a = 1) { color = c; alpha = a; },
     lineStyle() {},
     lineBetween() {},
+    strokePath() {},
+    strokeCircle() {},   // e.g. fire.js's drum rim — a stroke ring, no fill to capture
+    arc() {},
+    beginPath() { path = []; },
+    moveTo(x, y) { path = [{ x, y }]; },
+    lineTo(x, y) { path.push({ x, y }); },
+    closePath() {},   // fillPath below always treats the traced path as closed
+    fillPath() { if (path.length >= 3) rec({ t: 'poly', points: path.slice() }); },
     fillRect(x, y, w, h) { rec({ t: 'rect', x, y, w, h }); },
     fillRoundedRect(x, y, w, h) { rec({ t: 'rect', x, y, w, h }); },   // rounding is cosmetic for dissect
     fillCircle(x, y, r) { rec({ t: 'circle', x, y, r }); },

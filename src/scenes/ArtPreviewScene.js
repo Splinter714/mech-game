@@ -13,7 +13,7 @@ import { mulberry32 } from '../data/rng.js';
 import { Mech } from '../data/Mech.js';
 import {
   buildMechTextures, buildVehicleTextures, ART_SCALE, mountIconKey, itemFxKey,
-  HULL_FRAMES,
+  HULL_FRAMES, PIVOT_LOCATIONS,
 } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
@@ -406,14 +406,20 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // state added to those functions' sprites. Guarded by the SAME press-here + didn't-scroll
     // check `_wireScroll` already tracks (`this._moved`) — without it, dragging the gallery to
     // scroll would dissect whatever cell the drag happened to release over.
-    if (import.meta.env.DEV && cell.dissectKey) {
+    // #546: a cell can name either a single texture (`dissectKey`, a plain string) or several
+    // candidate textures (`dissectKeys`, a `{ label: textureKey }` map) when its art is baked
+    // as more than one texture — a mech (hull/turret/leftArm/rightArm/leftTorso/rightTorso) or
+    // a weapon (its mount icon AND its projectile/fx art). Either shape reaches
+    // `__dissect.show()` unchanged; the overlay itself decides whether that's a single view or
+    // a target-picker (dissectOverlay.js's `state.targets`).
+    if (import.meta.env.DEV && (cell.dissectKey || cell.dissectKeys)) {
       bg.setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => { this._pressedCell = bg; });
       bg.on('pointerup', () => {
         const pressedHere = this._pressedCell === bg;
         this._pressedCell = null;
         if (!pressedHere || this._moved) return;
-        globalThis.__dissect?.show(cell.dissectKey);
+        globalThis.__dissect?.show(cell.dissectKeys ?? cell.dissectKey);
       });
     }
 
@@ -746,16 +752,22 @@ export default class ArtPreviewScene extends Phaser.Scene {
   // that, a damage progression re-zooms at each step and the mech never looks like it's losing
   // parts, and enemy mechs can't be compared to each other by size.
   _mechCell(label, key, mech, { frame = 0, animate = false, ink = null, factor = null } = {}) {
+    // #546: a mech bakes SIX separate textures under this one `key` prefix (hull per walk
+    // frame, turret, both side torsos, both arms — see mechArt.js's buildMechTextures), each
+    // carrying its own `.layer()` tags. #545 could only ever open the turret; now every baked
+    // texture is offered as its own named target (`dissectKeys`), and dissectOverlay.js grows
+    // a picker row so a click can reach any of them, not just whichever one this cell defaults
+    // to opening. `frame`'s own hull texture stands in for the hull entry — every walk frame
+    // carries identical `.layer()` tags (only the leg geometry animates), so any one frame's
+    // tags are representative of the whole walk cycle.
+    const dissectKeys = {};
+    const offer = (name, texKey) => { if (this.textures.exists(texKey)) dissectKeys[name] = texKey; };
+    offer('turret', `${key}_turret`);
+    offer('hull', `${key}_hull_${frame}`);
+    for (const loc of PIVOT_LOCATIONS) offer(loc, `${key}_${loc}`);
     return {
       label,
-      // #545: a mech bakes SIX separate textures under this one `key` prefix (hull per walk
-      // frame, turret, both side torsos, both arms — see mechArt.js's buildMechTextures), so
-      // one cell can't dissect all of them at once. `_turret` is the pick: it's the texture
-      // carrying the most of what mechArt.js got tagged for this issue (centre torso, head,
-      // decor, centre/head weapon mounts) — see the report for the full tag list and the
-      // follow-up this implies (a per-part sub-picker) if the single-key limit turns out to
-      // matter in practice.
-      dissectKey: `${key}_turret`,
+      dissectKeys,
       build: (holder, box) => {
         const u = ink ?? this._inkUnion(this._mechKeys(key));
         if (!u) return 'missing';
@@ -778,7 +790,13 @@ export default class ArtPreviewScene extends Phaser.Scene {
       const item = getItem(id);
       stills.push({
         label: `${item?.name ?? id}\nmount + fx`,
-        dissectKey: mountIconKey(id),   // #545 — mount-icon art isn't layer-tagged yet either
+        // #546: offer BOTH textures this cell actually draws as separate dissect targets — the
+        // on-mech mount hardware icon (mountIconKey, still untagged — see art/mounts/icons.js)
+        // and the projectile/beam/slash fx still (itemFxKey), which is now tagged at the round's
+        // own part boundaries (art/projectileArt.js + art/projectiles/*.js). #545 only ever
+        // pointed at the icon; the fx art — what Jackson actually asked to see the parts of — was
+        // unreachable from here entirely.
+        dissectKeys: { mount: mountIconKey(id), fx: itemFxKey(id) },
         build: (holder, box) => {
           // Two halves: the on-mech mount hardware (#457's muzzle lives on it) beside the
           // projectile/beam still (#458). Each fitted to its own inked bounds, so a stubby

@@ -8,6 +8,9 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   const wid = (2.6 + 1.4 * flicker) * s;
   const tx = x - ca * len, ty = y - sa * len;
 
+  // #546 (art dissect tool): three parts, matching this function's own comments — the cooling
+  // outer tongue, the denser mid body, and the hot core.
+  g.layer?.('outer');
   // Outer tongue: cools from orange toward red/transparent at the tail.
   const outer = cool > 0.5 ? 0xb33a12 : 0xff7a18;
   g.fillStyle(outer, 0.45 * flicker * (1 - 0.3 * cool));
@@ -18,6 +21,7 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   g.closePath();
   g.fillPath();
 
+  g.layer?.('mid');
   // Mid body: orange-gold, denser near the nozzle.
   const midLen = len * 0.6, midWid = wid * 0.6;
   g.fillStyle(0xffae3d, 0.75 * flicker);
@@ -28,6 +32,7 @@ export function draw(g, x, y, ca, sa, color, s, phase) {
   g.closePath();
   g.fillPath();
 
+  g.layer?.('core');
   // Hot core: whiter at the hottest phase, shrinking and fading as it cools.
   const coreColor = cool < 0.35 ? 0xfff6e0 : 0xffd56b;
   g.fillStyle(coreColor, 0.95 * (1 - 0.4 * cool));

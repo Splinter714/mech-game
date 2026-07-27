@@ -4,11 +4,14 @@
 export function draw(g, x, y, ca, sa, color, s, phase) {
   const fl = 0.7 + 0.3 * Math.sin(phase * 0.5);
   const r = 3.8 * s;
+  // #546 (art dissect tool): two parts — the drum itself (body + rim) and the glowing fuel cap.
+  g.layer?.('drum');
   // Dark steel drum, read against dark ground by a subtle rim highlight rather than a
   // bright body.
   g.fillStyle(0x24282e, 1); g.fillCircle(x, y, r);
   g.fillStyle(0x16181c, 1); g.fillCircle(x, y, r * 0.82);
-  g.lineStyle(0.8 * s, 0x4c545d, 0.85); g.strokeCircle(x, y, r * 0.9);
+  g.lineStyle(0.8 * s, 0x4c545d, 0.85); g.strokeCircle(x, y, r * 0.9);   // stroke-only, uncaptured
+  g.layer?.('cap');
   // Small but BRIGHT fuel cap — the only orange, kept punchy.
   g.fillStyle(0xff8a1f, 0.95 * fl); g.fillCircle(x, y, 1.1 * s);
   g.fillStyle(0xffe39a, 1); g.fillCircle(x, y, 0.5 * s);
