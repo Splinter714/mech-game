@@ -94,7 +94,8 @@ export const ABILITY_BINDS = {
   abilityY: { key: '1', pad: 'Y' },
   abilityX: { key: '4', pad: 'X' },
 };
-const ABILITY_PAD_INDEX = { abilityY: PAD.Y, abilityX: PAD.X };
+// L3/R3 are alternate bindings for X/Y respectively (quick add, no other function on either).
+const ABILITY_PAD_INDEX = { abilityY: [PAD.Y, PAD.R3], abilityX: [PAD.X, PAD.L3] };
 const ABILITY_KEY_NAME = { abilityY: 'ONE', abilityX: 'FOUR' };
 
 // #524: the #122 fix below (both here and in Controls' constructor) only un-sticks pads that
@@ -408,7 +409,7 @@ export class Controls {
     // independent tracker per slot per device.
     const ability = {};
     for (const slot of ABILITY_SLOTS) {
-      const padDown = !!(pad && pad.buttons[ABILITY_PAD_INDEX[slot]] && pad.buttons[ABILITY_PAD_INDEX[slot]].pressed);
+      const padDown = !!(pad && ABILITY_PAD_INDEX[slot].some((i) => pad.buttons[i]?.pressed));
       const padPressed = padDown && !this._padAbilityDown[slot];
       this._padAbilityDown[slot] = padDown;
       const kbDown = k[ABILITY_KEY_NAME[slot]].isDown;
