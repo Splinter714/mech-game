@@ -8,9 +8,10 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { DirRepeater, dominantDir } from '../ui/padNav.js';
 import { launchMission } from './base/launchMission.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
-import { buildHexTextures, HEX_TEX_W, HEX_TEX_H } from '../art/hexArt.js';
+import { buildHexTextures, HEX_TEX_W, HEX_TEX_H, canopyTexKey, isCoverCanopyId } from '../art/hexArt.js';
 import { ART_SCALE } from '../art/index.js';
 import { HEX_SIZE } from '../data/hexgrid.js';
+import { getTerrain } from '../data/terrain.js';
 
 // #510: reached by walking onto the base's scanner hex. Presents a small set of candidate runs
 // (data/missions.js `offerMissions`) — pick a card (click, or d-pad/stick + A on a controller),
@@ -236,9 +237,18 @@ export default class MissionSelectScene extends Phaser.Scene {
       { id: biome.groundB, dx: -colStep / 2, dy: rowStep / 2 },
       { id: biome.channel, dx: colStep / 2, dy: rowStep / 2 },
     ];
+    // #289/#464 (mirrors world.js's own terrain rendering): a terrain id's ground image is
+    // ALWAYS `getTerrain(id).tex`, never a hand-built `hex_${id}` — most ids' tex happens to
+    // equal `hex_${id}`, but cover ids don't get their own ground tile at all (a standing
+    // forest shares its cleared twin's texture, `hex_forestCleared`), so hand-building the key
+    // silently missed a real texture and rendered nothing. Cover ids additionally get the
+    // tree/foliage canopy overlay layered on top, same as the real hex grid.
     for (const { id, dx, dy } of spots) {
       if (!id) continue;
-      this.add.image(cx + dx, cy + dy, `hex_${id}`).setScale(scale);
+      this.add.image(cx + dx, cy + dy, getTerrain(id).tex).setScale(scale);
+      if (isCoverCanopyId(id)) {
+        this.add.image(cx + dx, cy + dy, canopyTexKey(id)).setScale(scale);
+      }
     }
   }
 
