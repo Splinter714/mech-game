@@ -233,8 +233,8 @@ export default class MissionSelectScene extends Phaser.Scene {
     const spots = [
       { id: biome.groundA, dx: -colStep, dy: -rowStep / 2 },
       { id: biome.cover, dx: 0, dy: -rowStep / 2 },
-      { id: biome.hazard, dx: colStep, dy: -rowStep / 2 },
-      { id: biome.groundB, dx: -colStep / 2, dy: rowStep / 2 },
+      { id: biome.groundB, dx: colStep, dy: -rowStep / 2 },
+      { id: biome.hazard, dx: -colStep / 2, dy: rowStep / 2 },
       { id: biome.channel, dx: colStep / 2, dy: rowStep / 2 },
     ];
     // #289/#464 (mirrors world.js's own terrain rendering): a terrain id's ground image is
