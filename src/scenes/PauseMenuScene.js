@@ -85,8 +85,6 @@ export default class PauseMenuScene extends Phaser.Scene {
   }
 
   create() {
-    // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
-    if (import.meta.env.DEV) console.log(`[PauseMenu] create() at t=${this.time.now.toFixed(0)}, returnKey=${this._returnKey}`);
     const dpr = this.registry.get('dpr') || 1;
     this.W = Math.round(this.scale.width / dpr);
     this.H = Math.round(this.scale.height / dpr);
@@ -116,7 +114,7 @@ export default class PauseMenuScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '12px', color: UI.dim,
     }).setOrigin(0.5);
 
-    this.input.keyboard.on('keydown-ESC', () => this._close('esc'));
+    this.input.keyboard.on('keydown-ESC', () => this._close());
     this._padEdges = new PadEdges(this, 0);
     this._stickRepeat = new DirRepeater();   // left-stick cursor/volume nav, mirrors D-pad below
     Slider.attachDrag(this);   // #558: the VOLUME row's slider drag needs this wired once
@@ -239,13 +237,11 @@ export default class PauseMenuScene extends Phaser.Scene {
   // are actually clickable. Simplest correct sequence: close exactly like ESC/SELECT would, then
   // fire the callback.
   _openStatsAndClose() {
-    this._close('stats-nav');
+    this._close();
     this._openStats?.();
   }
 
-  _close(reason = 'unknown') {
-    // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
-    if (import.meta.env.DEV) console.log(`[PauseMenu] _close(${reason}) at t=${this.time.now.toFixed(0)}`);
+  _close() {
     Audio.ui('menuNav');
     if (this._returnKey) this.scene.resume(this._returnKey);
     for (const key of this._pauseAlso) this.scene.resume(key);
@@ -263,9 +259,7 @@ export default class PauseMenuScene extends Phaser.Scene {
   }
 
   update(time) {
-    const startEdge = this._padEdges.pressed(PAD.START);
-    const bEdge = this._padEdges.pressed(PAD.B);
-    if (startEdge || bEdge) { this._close(startEdge ? 'pad-start' : 'pad-b'); return; }
+    if (this._padEdges.pressed(PAD.START) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
     if (this._padEdges.pressed(PAD.DPAD_DOWN)) this._moveCursor(1);
     if (this._padEdges.pressed(PAD.DPAD_UP)) this._moveCursor(-1);
     if (this._padEdges.pressed(PAD.DPAD_LEFT)) this._adjustVolume(-VOLUME_STEP);
@@ -294,10 +288,6 @@ export default class PauseMenuScene extends Phaser.Scene {
 // ready-up trigger (see GarageScene.js's per-pad update loop) instead of colliding with it.
 export function wirePauseMenu(scene, opts = {}) {
   const open = () => {
-    // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
-    if (import.meta.env.DEV) {
-      console.log(`[PauseMenu] open() called from ${scene.scene.key} at t=${scene.time?.now?.toFixed(0)} alreadyActive=${scene.scene.isActive('PauseMenuScene')}`);
-    }
     if (scene.scene.isActive('PauseMenuScene')) return;   // already open — ignore a repeat edge
     Audio.ui('menuNav');
     const pauseAlso = opts.pauseAlso ?? [];
