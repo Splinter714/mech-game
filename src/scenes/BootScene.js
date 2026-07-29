@@ -8,6 +8,7 @@ import {
 } from '../data/events.js';
 import {
   loadShowVersion, loadShowPerf, loadShowControlMethod, loadShowAiDebug,
+  loadDevUnlockAll, loadMasterVolume,
 } from '../data/pauseSettings.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
@@ -41,10 +42,14 @@ export default class BootScene extends Phaser.Scene {
     this.registry.set('showPerf', loadShowPerf());
     this.registry.set('showControlMethod', loadShowControlMethod());
     this.registry.set('showAiDebug', loadShowAiDebug());
+    // #555: the pause menu's "UNLOCK ALL WEAPONS" dev toggle — off by default (real progression).
+    this.registry.set('devUnlockAll', loadDevUnlockAll());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).
     Audio.init(this.sound.context);
+    // #558: restore the player's saved master volume onto the bus Audio.init() just built.
+    Audio.setParam('master', loadMasterVolume());
     // #150: preload+decode any real-file SFX overrides stored in IndexedDB (Weapon Lab sound
     // panel) before gameplay can trigger a sound. Async and fire-and-forget on purpose — a
     // sound triggered before this resolves just finds no cached override yet and plays

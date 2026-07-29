@@ -5,7 +5,8 @@
 
 import { ROSTERS } from './rosters.js';
 import { RUN_CURRENCY_KEY } from './events.js';
-import { STARTING_UNLOCKED, SHOPPABLE_IDS, UNLOCK_ALL } from './shop.js';
+import { STARTING_UNLOCKED, SHOPPABLE_IDS } from './shop.js';
+import { loadDevUnlockAll } from './pauseSettings.js';
 
 export function makeRoster({ storageKey, Model, defaultRoster, migrate }) {
   function readSaved() {
@@ -97,12 +98,12 @@ export function saveRunCurrency(amount) {
 // fresh deploy un-buildable.
 const UNLOCKED_STORAGE_KEY = 'mech-game-unlocked-v1';
 
-// #453 TEMPORARY: fold the WHOLE catalog into whatever was loaded when shop.js's UNLOCK_ALL flag
-// is on. Purely additive — an existing save's own ids are kept and nothing is written back, so
-// turning the flag off restores the real progression untouched. Delete this and its two call
-// sites below to revert.
-function withTemporaryFullUnlock(set) {
-  if (UNLOCK_ALL) for (const id of SHOPPABLE_IDS) set.add(id);
+// #555: fold the WHOLE catalog into whatever was loaded when the pause menu's "UNLOCK ALL
+// WEAPONS" dev toggle (data/pauseSettings.js) is on. Purely additive — an existing save's own
+// ids are kept and nothing is written back, so flipping the toggle off restores the real
+// progression untouched. Replaces the old always-on shop.js UNLOCK_ALL flag.
+function withDevUnlockAll(set) {
+  if (loadDevUnlockAll()) for (const id of SHOPPABLE_IDS) set.add(id);
   return set;
 }
 
@@ -112,9 +113,9 @@ export function loadUnlocked() {
     const arr = raw != null ? JSON.parse(raw) : null;
     const set = new Set(Array.isArray(arr) ? arr : STARTING_UNLOCKED);
     for (const id of STARTING_UNLOCKED) set.add(id);
-    return withTemporaryFullUnlock(set);
+    return withDevUnlockAll(set);
   } catch {
-    return withTemporaryFullUnlock(new Set(STARTING_UNLOCKED));
+    return withDevUnlockAll(new Set(STARTING_UNLOCKED));
   }
 }
 

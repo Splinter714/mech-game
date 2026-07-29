@@ -27,6 +27,7 @@ import Phaser from 'phaser';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 import { applyMovementToggle } from './arena/shared.js';
+import { Slider } from '../ui/slider.js';
 import {
   DEV_NAV_ROWS, pauseRowIds, toggleRowLabel, navRowLabel, movementRowLabel, movementRowEnabled,
 } from '../data/pauseMenu.js';
@@ -35,6 +36,7 @@ const NAV_ROW_ID_SET = new Set(DEV_NAV_ROWS);
 import {
   loadShowVersion, saveShowVersion, loadShowPerf, saveShowPerf,
   loadShowControlMethod, saveShowControlMethod, loadShowAiDebug, saveShowAiDebug,
+  loadDevUnlockAll, saveDevUnlockAll, loadMasterVolume, saveMasterVolume,
 } from '../data/pauseSettings.js';
 
 const UI = {
@@ -54,7 +56,13 @@ const TOGGLE_ROWS = {
   perf: { channel: 'showPerf', load: loadShowPerf, save: saveShowPerf },
   controlMethod: { channel: 'showControlMethod', load: loadShowControlMethod, save: saveShowControlMethod },
   aiDebug: { channel: 'showAiDebug', load: loadShowAiDebug, save: saveShowAiDebug },
+  // #555: replaces the old hardcoded shop.js UNLOCK_ALL flag with a dev-menu toggle.
+  unlockAll: { channel: 'devUnlockAll', load: loadDevUnlockAll, save: saveDevUnlockAll },
 };
+
+// #558: step size for the VOLUME row's D-pad LEFT/RIGHT adjustment (mouse/touch drag on the
+// slider itself is continuous, snapped to the Slider's own `step`).
+const VOLUME_STEP = 0.05;
 
 export default class PauseMenuScene extends Phaser.Scene {
   constructor() {
@@ -107,6 +115,7 @@ export default class PauseMenuScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-ESC', () => this._close());
     this._padEdges = new PadEdges(this, 0);
+    Slider.attachDrag(this);   // #558: the VOLUME row's slider drag needs this wired once
 
     this._refreshRows();
     this._highlight();
@@ -114,16 +123,34 @@ export default class PauseMenuScene extends Phaser.Scene {
 
   // One clickable row: a background rect + label text, both swapped out per-frame by
   // `_refreshRows` (label text) and mouse hover / `_highlight` (rect fill/stroke).
+  // #558: VOLUME is the one row that isn't a plain label — it embeds an actual Slider widget
+  // (ui/slider.js, the same component the dev AUDIO tab's tuner uses) instead of ON/OFF text.
   _buildRow(id, x, y) {
     const rect = this.add.rectangle(x, y, ROW_W, ROW_H, UI.row).setOrigin(0, 0)
       .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-    const label = this.add.text(x + 16, y + ROW_H / 2, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: UI.text,
-    }).setOrigin(0, 0.5);
-    const row = { id, rect, label };
     rect.on('pointerover', () => { this._cursor = this._rowIds.indexOf(id); this._highlight(); });
-    rect.on('pointerdown', () => this._activate(id));
+    const row = { id, rect, enabled: true };
+    if (id === 'volume') {
+      row.slider = new Slider(this, {
+        x: x + 12, y: y + 10, w: ROW_W - 24, labelW: 60, valueW: 34,
+        label: 'VOLUME', min: 0, max: 1, step: 0.05,
+        value: loadMasterVolume(),
+        onChange: (v) => this._setVolume(v),
+      });
+    } else {
+      row.label = this.add.text(x + 16, y + ROW_H / 2, '', {
+        fontFamily: 'monospace', fontSize: '14px', color: UI.text,
+      }).setOrigin(0, 0.5);
+      rect.on('pointerdown', () => this._activate(id));
+    }
     return row;
+  }
+
+  // #558: apply + persist a new master volume — shared by the slider's own drag (onChange) and
+  // the D-pad LEFT/RIGHT step adjustment in update().
+  _setVolume(v) {
+    saveMasterVolume(v);
+    Audio.setParam('master', v);
   }
 
   // Pull each row's current label off the live registry/player state. Called on create() and
@@ -135,6 +162,9 @@ export default class PauseMenuScene extends Phaser.Scene {
         const enabled = movementRowEnabled(players);
         row.label.setText(movementRowLabel(players[0]?.legacyMovement)).setColor(enabled ? UI.text : UI.off);
         row.enabled = enabled;
+      } else if (row.id === 'volume') {
+        // The Slider repaints itself on drag/D-pad — nothing to sync here.
+        row.enabled = true;
       } else if (NAV_ROW_ID_SET.has(row.id)) {
         // #529: AUDIO/ART/STATS — static labels, no ON/OFF state; always enabled (their mere
         // presence in this._rowIds already means they're relevant, see pauseRowIds).
@@ -173,6 +203,10 @@ export default class PauseMenuScene extends Phaser.Scene {
     if (!row?.enabled) return;
     if (id === 'audio' || id === 'art') { this._navigateTo(id === 'audio' ? 'AudioScene' : 'ArtPreviewScene'); return; }
     if (id === 'stats') { this._openStatsAndClose(); return; }
+    // #558: VOLUME has no click-to-activate action — the Slider's own hit area handles drag,
+    // and D-pad LEFT/RIGHT (update(), below) handles the pad. Clicking the row background
+    // (outside the slider track) is a no-op.
+    if (id === 'volume') return;
     Audio.ui('menuNav');
     if (id === 'movement') {
       for (const p of this._getPlayers?.() ?? []) applyMovementToggle(p, { movementTogglePressed: true });
@@ -212,10 +246,22 @@ export default class PauseMenuScene extends Phaser.Scene {
     this.scene.stop();
   }
 
+  // #558: while the cursor is on the VOLUME row, D-pad LEFT/RIGHT nudges it by VOLUME_STEP —
+  // the pad-only equivalent of dragging the slider (which needs a pointer).
+  _adjustVolume(delta) {
+    const row = this._rows[this._cursor];
+    if (!row || row.id !== 'volume') return;
+    const v = Phaser.Math.Clamp(Math.round((row.slider.value + delta) * 100) / 100, 0, 1);
+    row.slider.setValue(v);
+    this._setVolume(v);
+  }
+
   update() {
     if (this._padEdges.pressed(PAD.START) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
     if (this._padEdges.pressed(PAD.DPAD_DOWN)) this._moveCursor(1);
     if (this._padEdges.pressed(PAD.DPAD_UP)) this._moveCursor(-1);
+    if (this._padEdges.pressed(PAD.DPAD_LEFT)) this._adjustVolume(-VOLUME_STEP);
+    if (this._padEdges.pressed(PAD.DPAD_RIGHT)) this._adjustVolume(VOLUME_STEP);
     if (this._padEdges.pressed(PAD.A)) this._activate(this._rowIds[this._cursor]);
   }
 }

@@ -16,6 +16,12 @@ const KEYS = {
   perf: 'mech-game-show-perf-v1',
   controlMethod: 'mech-game-show-control-method-v1',
   aiDebug: 'mech-game-show-ai-debug-v1',
+  // #555: the dev-menu toggle that replaces the old hardcoded shop.js UNLOCK_ALL flag — off by
+  // default (real scrap-based progression), flippable per-device from the pause menu.
+  unlockAll: 'mech-game-dev-unlock-all-v1',
+  // #558: the player-facing master volume slider. Numeric (0..1), not a flag, so it gets its
+  // own load/save pair below rather than going through loadFlag/saveFlag.
+  volume: 'mech-game-volume-v1',
 };
 
 function loadFlag(key) {
@@ -45,3 +51,28 @@ export function saveShowControlMethod(enabled) { saveFlag(KEYS.controlMethod, en
 
 export function loadShowAiDebug() { return loadFlag(KEYS.aiDebug); }
 export function saveShowAiDebug(enabled) { saveFlag(KEYS.aiDebug, enabled); }
+
+// #555: default OFF — real scrap-based unlock progression. Flipping this ON in the pause menu
+// mirrors the old always-on shop.js UNLOCK_ALL flag, purely for dev/testing convenience.
+export function loadDevUnlockAll() { return loadFlag(KEYS.unlockAll); }
+export function saveDevUnlockAll(enabled) { saveFlag(KEYS.unlockAll, enabled); }
+
+// #558: master volume, 0..1, defaults to 1 (unchanged from today's implicit full volume) so an
+// existing player's experience doesn't change until they touch the new slider.
+export function loadMasterVolume() {
+  try {
+    const raw = localStorage.getItem(KEYS.volume);
+    const n = raw != null ? Number(raw) : 1;
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function saveMasterVolume(v) {
+  try {
+    localStorage.setItem(KEYS.volume, String(v));
+  } catch {
+    // localStorage blocked/unavailable — the slider still works this session.
+  }
+}

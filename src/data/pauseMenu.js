@@ -1,11 +1,16 @@
 // #523: pure pause-menu logic, kept separate from the Phaser-heavy scenes/PauseMenuScene.js —
 // same split as data/hudLayout.js vs scenes/HudScene.js — so it's directly unit-testable.
 
-// The five base rows, in display/cursor order. Four are persisted show/hide toggles (their own
+// The base rows, in display/cursor order. Most are persisted show/hide toggles (their own
 // localStorage flag, data/pauseSettings.js); MOVEMENT is a live action button that flips the
 // current player(s)' `legacyMovement` state (arena/shared.js `applyMovementToggle`) rather than
-// a persisted preference — mirrors the existing D-pad-down toggle, doesn't replace it.
-export const PAUSE_ROWS = ['version', 'movement', 'perf', 'controlMethod', 'aiDebug'];
+// a persisted preference — mirrors the existing D-pad-down toggle, doesn't replace it. VOLUME
+// (#558) is a slider, not an ON/OFF toggle — it renders its own widget in PauseMenuScene rather
+// than the shared toggle-row label. UNLOCK_ALL (#555) is a normal persisted toggle, alongside
+// the other dev-diagnostic rows, that replaces the old hardcoded shop.js UNLOCK_ALL flag.
+export const PAUSE_ROWS = [
+  'version', 'volume', 'movement', 'perf', 'controlMethod', 'aiDebug', 'unlockAll',
+];
 
 // #529: dev-only NAVIGATION rows, appended after the base five when the pause menu is opened
 // from a dev build — this is where AUDIO/ART (the two dev-only lab scenes) and STATS (the
@@ -16,10 +21,12 @@ export const DEV_NAV_ROWS = ['audio', 'art', 'stats'];
 
 export const PAUSE_ROW_TITLES = {
   version: 'VERSION NUMBER',
+  volume: 'VOLUME',
   movement: 'MOVEMENT FEEL',
   perf: 'PERF READOUT',
   controlMethod: 'CONTROL METHOD',
   aiDebug: 'AI DEBUG READOUT',
+  unlockAll: 'UNLOCK ALL WEAPONS (DEV)',
   audio: 'AUDIO TAB (DEV)',
   art: 'ART TAB (DEV)',
   stats: 'RUN STATS',

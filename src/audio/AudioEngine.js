@@ -30,6 +30,66 @@ import { setAudioContext as setBakedAudioContext } from './bakedSfx.js';
 // AudioContext — under sustained node-creation overload).
 const MAX_ACTIVE_VOICES = 128;
 
+// #569 — pool sizes for the recurring music-voice groups below. Each is a count of
+// simultaneously-ringing NOTES the pool can hold for that instrument role (not a count of
+// oscillators — one guitar "voice group" bundles up to 9 oscillators, one bass group 4, one
+// lead group 5). Chugs/notes on a given instrument mostly don't overlap much in this genre,
+// but doom/sustained tracks let a note ring into the next pick, so these leave headroom above
+// 1; if every pooled group is still ringing, the caller falls back to fresh nodes for that one
+// note rather than cutting anything off (see PooledVoiceGroup below).
+const GTR_POOL_SIZE = 4;
+const BASS_POOL_SIZE = 3;
+const LEAD_POOL_SIZE = 3;   // per lead instrument (lead and lead2 each get their own pool)
+
+// #569 — a small bundle of long-lived oscillators sharing one envelope GainNode, reused across
+// notes instead of creating fresh Web Audio nodes on every note. OscillatorNode.start()/.stop()
+// can each only ever be called ONCE on a given node (Web Audio does not allow restarting a
+// stopped oscillator), so pooling works by starting each oscillator exactly once (for the life
+// of the AudioContext) and RETUNING it per note (frequency + optional live waveform-type
+// change) rather than recreating it. Retriggering just re-runs the gain envelope automation and
+// resets each voice's frequency/type/level; there is no new node allocation on the hot path.
+class PooledVoiceGroup {
+  constructor(ctx, bus, voiceCount) {
+    this.g = ctx.createGain();
+    this.g.gain.value = 0;              // silent until the first trigger's own envelope runs
+    this.g.connect(bus);
+    this.voices = [];
+    for (let i = 0; i < voiceCount; i++) {
+      const osc = ctx.createOscillator();
+      const levelGain = ctx.createGain();
+      levelGain.gain.value = 0;          // silent until a trigger sets a real level
+      osc.connect(levelGain).connect(this.g);
+      osc.start();                       // started ONCE — never stopped, only retuned
+      this.voices.push({ osc, levelGain });
+    }
+    this.busyUntil = 0;                  // ctx time this group's envelope is still ringing until
+  }
+
+  // Retrigger this group as a new note. `specs` is one {freq, level, type} (or falsy/level<=0
+  // to silence that voice, matching the original "skip the voice" behavior) per pooled
+  // oscillator, in the same order the group was created with. `holdFrac` mirrors each caller's
+  // own envelope shape (fraction of `dur` held at full gain before the release ramp).
+  trigger(at, dur, gain, holdFrac, specs) {
+    const g = this.g;
+    g.gain.cancelScheduledValues(at);
+    g.gain.setValueAtTime(gain, at);                          // 0 ms attack — full volume instantly
+    g.gain.setValueAtTime(gain, at + dur * holdFrac);         // hold the body
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);    // release
+    for (let i = 0; i < this.voices.length; i++) {
+      const { osc, levelGain } = this.voices[i];
+      const spec = specs[i];
+      if (!spec || spec.level <= 0) {
+        levelGain.gain.setValueAtTime(0, at);                 // level 0 — silent voice, same as skipping it
+        continue;
+      }
+      if (osc.type !== spec.type) osc.type = spec.type;       // live waveform switching (setParam) still works
+      osc.frequency.setValueAtTime(spec.freq, at);
+      levelGain.gain.setValueAtTime(spec.level, at);
+    }
+    this.busyUntil = at + dur + 0.02;
+  }
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -258,50 +318,96 @@ export class AudioEngine {
     this._sfxSaveTimer = setTimeout(() => saveSfxParams(this.sfxParams), 400);
   }
 
+  // #569 — find a pooled voice group whose envelope has already finished ringing by time `at`
+  // (free to reuse); lazily grow the pool up to `poolSize` if none is free; return null (caller
+  // must fall back to fresh nodes) if the pool is already at capacity and every group is still
+  // ringing from a legitimately overlapping note.
+  _acquireVoiceGroup(pool, bus, voiceCount, at, poolSize) {
+    for (let i = 0; i < pool.length; i++) {
+      if (pool[i].busyUntil <= at) return pool[i];
+    }
+    if (pool.length < poolSize) {
+      const grp = new PooledVoiceGroup(this.ctx, bus, voiceCount);
+      pool.push(grp);
+      return grp;
+    }
+    return null;
+  }
+
   // The riff's tonal low foundation: root + sub-octave + tunable FIFTH / octave overtones,
   // lightly driven + low-passed. The fifth/octave mixes let the bass carry overtones too.
+  // #569: pulls from a small pooled voice-group per note where possible (see
+  // PooledVoiceGroup); falls back to fresh nodes (_bassFresh, the original unpooled recipe)
+  // only when every pooled group is already ringing from an overlapping note.
   _bass(freq, at, dur, gain = 0.6) {
     if (gain <= 0) return;                          // silent — skip
-    const ctx = this.ctx, P = this.params;
+    const P = this.params;
+    const specs = [
+      { freq: freq, level: 1, type: P.bassWave },                   // root
+      { freq: freq * 0.5, level: P.bassSub, type: 'square' },       // sub octave (always square for weight)
+      { freq: freq * 1.5, level: P.bassFifth, type: P.bassWave },   // the FIFTH overtone
+      { freq: freq * 2, level: P.bassOctave, type: P.bassWave },    // octave overtone
+    ];
+    const grp = this._acquireVoiceGroup(this._bassPool ??= [], this.bass, specs.length, at, BASS_POOL_SIZE);
+    if (grp) { grp.trigger(at, dur, gain, 0.7, specs); return; }
+    this._bassFresh(at, dur, gain, specs);
+  }
+
+  // Fallback used only when every pooled bass voice-group is still ringing — identical
+  // node-per-voice recipe the original unpooled _bass used.
+  _bassFresh(at, dur, gain, specs) {
+    const ctx = this.ctx;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(gain, at);                 // 0 ms attack — full volume instantly
+    g.gain.setValueAtTime(gain, at);
     g.gain.setValueAtTime(gain, at + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(this.bass);
-    const v = (f, level, type = P.bassWave) => {
-      if (level <= 0) return;
-      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
-      if (level === 1) o.connect(g);
-      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+    for (const spec of specs) {
+      if (!spec || spec.level <= 0) continue;
+      const o = ctx.createOscillator(); o.type = spec.type; o.frequency.value = spec.freq;
+      if (spec.level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = spec.level; o.connect(vg).connect(g); }
       o.start(at); o.stop(at + dur + 0.02);
-    };
-    v(freq, 1);                       // root
-    v(freq * 0.5, P.bassSub, 'square'); // sub octave for body (always square for weight)
-    v(freq * 1.5, P.bassFifth);       // the FIFTH overtone
-    v(freq * 2, P.bassOctave);        // octave overtone
+    }
   }
 
   // A lead melody note into lead `prefix`'s bus: a detuned root pair plus tunable 5th/octave
   // overtone voices (like the bass). `type` picks the waveform so the leads differ in timbre.
+  // #569: pooled per-prefix (lead and lead2 each keep their own small pool, since they route
+  // to different buses) — see _bass's comment above for the pooling/fallback shape.
   _leadNote(prefix, freq, at, dur, type = 'sawtooth', gain = 0.5) {
     if (gain <= 0) return;
-    const ctx = this.ctx, P = this.params, bus = this[prefix + 'Bus'];
+    const P = this.params, bus = this[prefix + 'Bus'];
+    const specs = [
+      { freq: freq * 0.997, level: 1, type },              // detuned root pair
+      { freq: freq * 1.003, level: 1, type },
+      { freq: freq * 0.5, level: P[prefix + 'Sub'], type },     // sub octave for body
+      { freq: freq * 1.5, level: P[prefix + 'Fifth'], type },   // 5th overtone
+      { freq: freq * 2, level: P[prefix + 'Oct'], type },       // octave overtone
+    ];
+    const pools = (this._leadPools ??= {});
+    const pool = (pools[prefix] ??= []);
+    const grp = this._acquireVoiceGroup(pool, bus, specs.length, at, LEAD_POOL_SIZE);
+    if (grp) { grp.trigger(at, dur, gain, 0.6, specs); return; }
+    this._leadFresh(bus, at, dur, gain, specs);
+  }
+
+  // Fallback used only when every pooled lead voice-group (for this prefix) is still ringing —
+  // identical node-per-voice recipe the original unpooled _leadNote used.
+  _leadFresh(bus, at, dur, gain, specs) {
+    const ctx = this.ctx;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(gain, at);                 // 0 ms attack — full volume instantly
+    g.gain.setValueAtTime(gain, at);
     g.gain.setValueAtTime(gain, at + dur * 0.6);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
     g.connect(bus);
-    const v = (f, level) => {
-      if (level <= 0) return;
-      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
-      if (level === 1) o.connect(g);
-      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+    for (const spec of specs) {
+      if (!spec || spec.level <= 0) continue;
+      const o = ctx.createOscillator(); o.type = spec.type; o.frequency.value = spec.freq;
+      if (spec.level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = spec.level; o.connect(vg).connect(g); }
       o.start(at); o.stop(at + dur + 0.02);
-    };
-    v(freq * 0.997, 1); v(freq * 1.003, 1);     // detuned root pair
-    v(freq * 0.5, P[prefix + 'Sub']);            // sub octave for body
-    v(freq * 1.5, P[prefix + 'Fifth']);          // 5th overtone
-    v(freq * 2, P[prefix + 'Oct']);              // octave overtone
+    }
   }
 
   setMuted(m) {
@@ -716,28 +822,45 @@ export class AudioEngine {
   // for extra grit) into the guitar/waveshaper chain. The envelope is a fast pick attack +
   // a short sustained body + quick release, so it reads as a palm-muted CHUG, not a blip.
   // `chord:false` plays a single note (lead/tremolo).
+  // #569: pulls a 9-oscillator voice group from a small pool where possible (see
+  // PooledVoiceGroup above); falls back to fresh nodes (_gtrFresh, the original unpooled
+  // recipe) only when every pooled group is still ringing from an overlapping note.
   _gtr(freq, at, dur, gain = 0.5, chord = true) {
     if (gain <= 0) return;                          // silent (level slider at 0) — skip
-    const ctx = this.ctx, P = this.params;
+    const P = this.params;
+    const specs = [
+      { freq: freq * 0.992, level: 1, type: P.guitarWave },   // detuned root pair (thickness)
+      { freq: freq * 1.008, level: 1, type: P.guitarWave },
+      // beating fifth pair (weird overtone), octave, 8ve+5th/high screaming 5th, square root+fifth
+      // grit — all zero-level (silent, matching the old skip-voice behavior) when chord is false.
+      { freq: freq * (1.5 - P.guitarFifthDetune), level: chord ? P.guitarFifth : 0, type: P.guitarWave },
+      { freq: freq * (1.5 + P.guitarFifthDetune), level: chord ? P.guitarFifth : 0, type: P.guitarWave },
+      { freq: freq * 2, level: chord ? P.guitarOctave : 0, type: P.guitarWave },
+      { freq: freq * 3, level: chord ? P.guitarHigh : 0, type: P.guitarWave },
+      { freq: freq * 4.5, level: chord ? P.guitarHigh : 0, type: P.guitarWave },
+      { freq: freq, level: chord ? P.guitarSquare : 0, type: 'square' },
+      { freq: freq * 1.5, level: chord ? P.guitarSquare : 0, type: 'square' },
+    ];
+    const grp = this._acquireVoiceGroup(this._gtrPool ??= [], this.guitar, specs.length, at, GTR_POOL_SIZE);
+    if (grp) { grp.trigger(at, dur, gain, 0.7, specs); return; }
+    this._gtrFresh(at, dur, gain, specs);
+  }
+
+  // Fallback used only when every pooled guitar voice-group is still ringing — identical
+  // node-per-voice recipe the original unpooled _gtr used.
+  _gtrFresh(at, dur, gain, specs) {
+    const ctx = this.ctx;
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, at);                          // 0 ms attack — full volume instantly
     g.gain.setValueAtTime(gain, at + dur * 0.7);              // hold the chug body
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);    // fast release (damped palm mute)
     g.connect(this.guitar);
-    const voice = (f, level, type = P.guitarWave) => {
-      if (level <= 0) return;
-      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f;
-      if (level === 1) o.connect(g);
-      else { const vg = ctx.createGain(); vg.gain.value = level; o.connect(vg).connect(g); }
+    for (const spec of specs) {
+      if (!spec || spec.level <= 0) continue;
+      const o = ctx.createOscillator(); o.type = spec.type; o.frequency.value = spec.freq;
+      if (spec.level === 1) o.connect(g);
+      else { const vg = ctx.createGain(); vg.gain.value = spec.level; o.connect(vg).connect(g); }
       o.start(at); o.stop(at + dur + 0.02);
-    };
-    voice(freq * 0.992, 1); voice(freq * 1.008, 1);  // detuned root pair (thickness)
-    if (chord) {
-      const d = P.guitarFifthDetune;
-      voice(freq * (1.5 - d), P.guitarFifth); voice(freq * (1.5 + d), P.guitarFifth); // beating fifth pair (weird overtone)
-      voice(freq * 2, P.guitarOctave);
-      voice(freq * 3, P.guitarHigh); voice(freq * 4.5, P.guitarHigh);  // 8ve+5th, high screaming 5th
-      voice(freq, P.guitarSquare, 'square'); voice(freq * 1.5, P.guitarSquare, 'square'); // square root + fifth grit
     }
   }
 
