@@ -155,6 +155,16 @@ export class PadEdges {
     // read as all-zero until its next genuinely new native state-change timestamp.
     for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
     _unstickLateConnectingPads(scene);   // #524: also catch a pad that connects mid-scene
+    // Grace window: even with the resync above, a BRAND NEW scene's own per-scene gamepad
+    // wrapper can still read stale/cold for its first frame or two before catching up to the
+    // real held-button state — worst right when a scene launches as an overlay on top of one
+    // that's pausing in the same beat (PauseMenuScene on Arena/Base/Garage), because the
+    // opener's own edge-detector JUST saw the real press-edge that opened it, and this new
+    // instance's first read can then see that same physical hold as ANOTHER fresh edge a
+    // frame or two later once the wrapper syncs — closing the menu instantly after opening
+    // it. `prev` still tracks every poll during the window (so once it ends, a still-held
+    // button is already correctly baselined); only the returned edge is held back.
+    this._graceUntil = (scene.time?.now ?? 0) + 120;
   }
   pad() {
     const gp = this.scene.input.gamepad;
@@ -171,6 +181,7 @@ export class PadEdges {
     const firstPoll = !(i in this.prev);
     const was = firstPoll ? down : this.prev[i];
     this.prev[i] = down;
+    if ((this.scene.time?.now ?? 0) < this._graceUntil) return false;
     return down && !was;
   }
 }
