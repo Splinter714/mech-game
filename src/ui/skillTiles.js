@@ -12,6 +12,7 @@ import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
 import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT, CORE_SLOTS } from '../data/anatomy.js';
 import { CONSOLE_TILES, ARMOR_PEEK_PAD } from '../data/hudLayout.js';
+import { structureColor } from '../data/healthReadout.js';
 
 // Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
 // centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
@@ -117,23 +118,14 @@ const WIDE_ASPECT = 1.6;
 export function isWideTile(rect) { return rect.w > rect.h * WIDE_ASPECT; }
 
 // #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo, make it visible
-// sooner"): the bar's FILL already tracks `ammoFrac` exactly (full mag = full bar) — what made it
-// easy to miss was that it stayed the same flat GOOD colour across the entire 33%-100% range, on
-// a thin track, so a magazine burning down from full read as "no change" until it suddenly
-// snapped to warn/bad near the end. Two fixes: the WARN colour now kicks in at `AMMO_WARN_FRAC`
-// (60%) instead of the old 33% — noticeably earlier — while `AMMO_LOW_FRAC` (25%) still gates the
-// final BAD/red state; and (live-chat ask, this pass) the gauge itself is a real vertical column
-// inset inside the tile now, not a hairline at the bottom edge — see `drawSkillTile`.
-// Pulled out as a pure function so the thresholds are unit-testable without booting Phaser.
+// sooner") originally fixed this with two snapped-band thresholds. Live-chat ask (this pass):
+// go further and make it a continuous gradient, always visibly shifting rather than sitting flat
+// until it crosses a cutoff — the SAME blue → purple → red HSL sweep the shield/structure
+// readouts already use (`structureColor`, data/healthReadout.js) so the whole HUD reads one
+// consistent "health-like gauge" color language instead of ammo having its own separate one.
 export const AMMO_BAR_W = 7;      // the vertical column's width
 export const AMMO_BAR_PAD = 6;    // top/bottom inset from the tile's own edges
-export const AMMO_WARN_FRAC = 0.6;
-export const AMMO_LOW_FRAC = 0.25;
-export function ammoBarColor(frac) {
-  if (frac <= 0 || frac <= AMMO_LOW_FRAC) return TILE_UI.bad;
-  if (frac <= AMMO_WARN_FRAC) return 0xefc14a;
-  return TILE_UI.good;
-}
+export const ammoBarColor = structureColor;
 
 // Pure geometry for a wide tile's content: a square icon, sized off the tile's own HEIGHT (the
 // limiting dimension, so it actually fills the short tile instead of overflowing it), followed by
