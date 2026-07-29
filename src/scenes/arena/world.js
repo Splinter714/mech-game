@@ -19,6 +19,7 @@ import { terrainFillColor, isBoundaryTerrainId, isCoverCanopyId, canopyTexKey } 
 import {
   generateTerrain, generateSpine, corridorHexSet, boundaryRingKeys, mulberry32,
   safeZoneKeys, MAX_WORLD_RADIUS, spineSpawnHex,
+  CORRIDOR_CURVINESS, CORRIDOR_WAVELENGTH_PX,
 } from '../../data/worldgen.js';
 import { capturedBaseIdsFor, applyCapturedBases, filterCapturedAlertTowers } from '../../data/baseCapture.js';
 import { regionalBaseFor } from '../../data/regionalBases.js';
@@ -142,7 +143,20 @@ export const WorldMixin = {
     // safe zone is force-included so the boundary ring (#110) can never encroach it, and the
     // boundary BFS is seeded directly from the corridor set — no bounding-disc scan.
     const startAngle = shapeRng() * Math.PI * 2;
-    const spine = generateSpine(shapeRng, { startAngle });
+    // #570: vary the corridor's BEND SHAPE per run, not just its orientation — previously every
+    // run used the exact same CORRIDOR_CURVINESS/CORRIDOR_WAVELENGTH_PX, so two runs only ever
+    // differed by a rotation + phase shift of the same S-curve texture. Draw both off the same
+    // per-seed shapeRng (stays deterministic for a given seed) within a band around the tuned
+    // defaults from worldgen.js: wide enough that runs read as genuinely different (a tighter,
+    // more frequent wobble vs. a broad, lazy sweep), narrow enough that `generateSpine`'s
+    // non-self-intersection guarantee holds (curviness alone can never break it — see that
+    // function's comment) and the downstream corridor-width/base-placement/gate/wall-turret
+    // tuning, which assumes roughly this scale of bend, still holds. Length/width/rear-pad are
+    // deliberately left untouched — those drive base-count-derived placement math elsewhere in
+    // this file and in worldgen.js, so varying them is out of scope here.
+    const curviness = CORRIDOR_CURVINESS * (0.6 + shapeRng() * 0.8);      // 0.6x - 1.4x
+    const wavelength = CORRIDOR_WAVELENGTH_PX * (0.75 + shapeRng() * 0.5); // 0.75x - 1.25x
+    const spine = generateSpine(shapeRng, { startAngle, curviness, wavelength });
     this._spine = spine;   // exposed for objective-along-spine placement (mission.js/run.js)
     // #116: publish the spine centreline (plain {x,y} world points) for the HUD corner minimap,
     // which draws the whole corridor's silhouette by unioning discs along it. Set once here (the
