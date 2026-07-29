@@ -91,16 +91,18 @@ export const CLEAR_STRUCTURES = 'structures';
 export const CLEAR_ENEMIES = 'enemies';
 export const CLEAR_DONE = 'clear';
 
-export function baseClearState(base, { objectiveDestroyed = false, isDockStanding = () => false, enemies = [], isMobile = isMobileEnemy } = {}) {
+export function baseClearState(base, { objectiveDestroyed = false, isDockStanding = () => false, enemies = [] } = {}) {
   // No base at all reads as cleared — nothing left to wait on, same convention as
   // `isBaseCleared`/`isBaseObjectiveDestroyed` (guards the run's "index ran past the last base"
   // and pre-`_buildWorld` cases).
   if (!base) return { step: CLEAR_DONE, objectiveStanding: false, docksLeft: 0, structuresLeft: 0, enemiesLeft: 0, cleared: true };
   const objectiveStanding = !objectiveDestroyed;
   const docksLeft = (base.docks ?? []).filter((d) => isDockStanding(d)).length;
-  // #391: only MOBILE defenders are a required kill. A rooted turret left standing after the
-  // objective and docks are down can't chase the player, so it doesn't hold the base open.
-  const enemiesLeft = (enemies ?? []).filter((e) => e.baseId === base.id && isMobile(e)).length;
+  // #391 originally exempted rooted turrets from this count ("can't chase the player, so it
+  // doesn't hold the base open"). Reversed (live playtest, 2026-07-29): now that a cleared base
+  // can be CAPTURED and held as the player's own, leaving a live enemy turret standing in a base
+  // you now own doesn't make sense — every enemy tagged to this base counts again, mobile or not.
+  const enemiesLeft = (enemies ?? []).filter((e) => e.baseId === base.id).length;
   // Phase 1's remaining tally: the objective (0 or 1) plus every standing dock, in ANY order.
   const structuresLeft = (objectiveStanding ? 1 : 0) + docksLeft;
   const step = structuresLeft > 0 ? CLEAR_STRUCTURES
@@ -165,7 +167,7 @@ export function baseClearLabel(state) {
 export const MARK_STRUCTURES = 'structures';
 export const MARK_SMALL = 'small';
 
-export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [], isMobile = isMobileEnemy } = {}) {
+export function baseMarkTargets(state, base, { isDockStanding = () => false, enemies = [] } = {}) {
   switch (state?.step) {
     case CLEAR_STRUCTURES:
       // Objective beacon shown iff the objective itself still stands; building markers on every
@@ -181,9 +183,10 @@ export function baseMarkTargets(state, base, { isDockStanding = () => false, ene
         size: MARK_SMALL,
         showObjective: false,
         docks: [],
-        // #391: mark only the MOBILE stragglers — a rooted turret isn't a required kill, so it
-        // gets no clear marker (matching `baseClearState`'s enemy count above).
-        enemies: (enemies ?? []).filter((e) => e.baseId === base?.id && isMobile(e)),
+        // Reversed #391 (see `baseClearState`'s matching comment): every remaining enemy tagged
+        // to this base gets a marker now, turrets included, so the player can actually see what's
+        // still holding a "why won't this clear" base open.
+        enemies: (enemies ?? []).filter((e) => e.baseId === base?.id),
       };
     default:
       // Cleared (or no base): nothing is required, so nothing is marked. The scene keeps its own

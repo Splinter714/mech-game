@@ -1290,7 +1290,7 @@ export const BasesMixin = {
   // #355's gates latch on, per base).
   _allBasesFullyCleared() {
     if (!this.bases || !this.bases.length) return false;
-    return this.bases.every((base) => isBaseFullyCleared(base, this.buildingHp, this.enemies));
+    return this.bases.every((base) => isBaseFullyCleared(base, this.buildingHp, this.enemies, this.terrain));
   },
 
   // #355: the set of base ids whose objective hex is destroyed — "this base is beaten", which is

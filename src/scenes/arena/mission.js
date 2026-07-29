@@ -46,16 +46,30 @@ export function isBaseObjectiveDestroyed(base, buildingHp, enemies) {
 // See data/bases.js `baseClearState` for why the requirement is ordered this way. This is the
 // scene-side adapter that supplies the two `buildingHp` facts the pure model can't know: whether
 // the objective hex is gone (`isBaseObjectiveDestroyed`, unchanged) and whether each dock hex is
-// still standing. Both are the same one-way "still in `buildingHp`" convention, so nothing here
-// needs its own destroyed-flag bookkeeping.
+// still standing.
+//
+// Playtest bug fix: a dock's "still standing" check used to be bare `buildingHp` membership —
+// but `_openDock` (bases.js) deliberately DROPS an open dock out of `buildingHp` ("an open dock
+// carries no HP of its own", so it can't be shot while its doors are parted), which made an open
+// dock read as ALREADY DESTROYED for clear/capture purposes. That let a base register as fully
+// cleared (and be offered for capture) while a dock was merely open and about to cycle closed
+// again — the instant it re-sealed (`_closeDock` re-seeds `buildingHp` with fresh HP), it popped
+// back up as a brand-new required kill on a base the player thought was already done. A dock is
+// "still standing" now whenever it's EITHER in `buildingHp` (closed, damageable) OR currently the
+// open `dock` terrain (cycling, not yet destroyed) — the only way off this list is collapsing to
+// actual rubble, which leaves it as neither.
 //
 // Deliberately a standalone function rather than a mixin method: mission.js, bases.js and run.js
 // all need it, and the arena's hand-built test doubles never compose every mixin.
-export function baseClearStateOf(base, buildingHp, enemies) {
+export function baseClearStateOf(base, buildingHp, enemies, terrain) {
   const hp = buildingHp ?? new Map();
+  const ter = terrain ?? new Map();
   return baseClearState(base, {
     objectiveDestroyed: isBaseObjectiveDestroyed(base, hp, enemies),
-    isDockStanding: (d) => hp.has(axialKey(d.q, d.r)),
+    isDockStanding: (d) => {
+      const k = axialKey(d.q, d.r);
+      return hp.has(k) || ter.get(k) === 'dock';
+    },
     enemies,
   });
 }
@@ -65,8 +79,8 @@ export function baseClearStateOf(base, buildingHp, enemies) {
 // the OBJECTIVE alone (owner's explicit call), which is now strictly a help rather than a
 // contradiction — the base opens up at step 1 and stays open for the dock/garrison sweep that
 // steps 2 and 3 ask for, instead of the player having to re-breach a sealed ring to finish it.
-export function isBaseFullyCleared(base, buildingHp, enemies) {
-  return baseClearStateOf(base, buildingHp, enemies).step === CLEAR_DONE;
+export function isBaseFullyCleared(base, buildingHp, enemies, terrain) {
+  return baseClearStateOf(base, buildingHp, enemies, terrain).step === CLEAR_DONE;
 }
 
 // #410 pip sizes. The old markers were full hex-sized RINGS (30px dock, 6px enemy) drawn around
@@ -195,7 +209,7 @@ export const MissionMixin = {
     // (objective → every dock → every remaining enemy of this base). `objectiveDestroyed` keeps
     // its name because it is still what `evaluateMission` calls the completion signal; what
     // changed is how much has to be true for it to be set.
-    const clear = baseClearStateOf(this._objectiveBase, this.buildingHp, this.enemies);
+    const clear = baseClearStateOf(this._objectiveBase, this.buildingHp, this.enemies, this.terrain);
     const objectiveDestroyed = clear.step === CLEAR_DONE;
     // Publish the live step so HudScene can show the player exactly ONE requirement at a time —
     // crucially, no enemy count until the last dock is down (see data/bases.js for why).
@@ -230,8 +244,14 @@ export const MissionMixin = {
   _syncClearMarkers(clear) {
     const base = this._objectiveBase;
     const hp = this.buildingHp ?? new Map();
+    const ter = this.terrain ?? new Map();
+    // Same open-dock exception as `baseClearStateOf` above — a dock cycling open shouldn't drop
+    // its marker just because it's briefly out of `buildingHp`.
     const marks = baseMarkTargets(clear, base, {
-      isDockStanding: (d) => hp.has(axialKey(d.q, d.r)),
+      isDockStanding: (d) => {
+        const k = axialKey(d.q, d.r);
+        return hp.has(k) || ter.get(k) === 'dock';
+      },
       enemies: this.enemies ?? [],
     });
     // The original single marker steps aside while the spread markers are up, and comes back for
