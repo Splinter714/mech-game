@@ -16,7 +16,6 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
-import { SHIELD_MECH_PART_KEYS } from './shieldOutline.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -32,11 +31,10 @@ const DEBRIS_CAP = 60;
 // #564: incoming-damage feedback tuning. Deliberately gentler than `_aoeBlastFx`'s punch (this
 // fires on every landed enemy hit, not once per ability activation) but clearly present over the
 // continuous per-footstep tremble (`_footShake`, locomotion.js) — a discrete jolt, not a rumble.
-const PLAYER_HIT_SHAKE_PX = 3;
-const PLAYER_HIT_SHAKE_MS = 140;
-// How long the mech's tint flash holds before clearing, in ms.
-const PLAYER_HIT_FLASH_MS = 90;
-const PLAYER_HIT_FLASH_COLOR = 0xff4a3c;
+// Playtest (2026-07-29): the original 3px/140ms read as excessive and the accompanying full-mech
+// tint flash (removed) as actively bad — cut the shake to about half.
+const PLAYER_HIT_SHAKE_PX = 1.5;
+const PLAYER_HIT_SHAKE_MS = 100;
 
 export const CombatMixin = {
   // ── #374 REWORK (in-flight): soft cover eats shots as they PHYSICALLY CROSS it ────────────
@@ -189,13 +187,13 @@ export const CombatMixin = {
     // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
     if (res.shieldAbsorbed) this._shieldHitFlash(player);
     if (res.shielded) return;
-    // #564: a brief tint flash on the player's own mech + a light camera shake — nothing on the
-    // player's own sprite reacted to taking a hit before this (a particle burst + sound play at
-    // the impact point, but the mech itself just silently absorbed it), which made it easy to
-    // under-register real damage in a busy fight. Gated past the shield-absorbed early return
-    // above: a fully-shielded hit already gets its own dedicated feedback (`_shieldHitFlash`'s
-    // bubble pulse), so this is reserved for a hit that actually reached the mech.
-    this._playerHitFlash(player);
+    // #564: a light camera shake — nothing on the player's own sprite reacted to taking a hit
+    // before this (a particle burst + sound play at the impact point, but the mech itself just
+    // silently absorbed it), which made it easy to under-register real damage in a busy fight.
+    // Gated past the shield-absorbed early return above: a fully-shielded hit already gets its
+    // own dedicated feedback (`_shieldHitFlash`'s bubble pulse), so this is reserved for a hit
+    // that actually reached the mech. Playtest (2026-07-29): the original also tinted the mech
+    // red on every hit — cut entirely, it read as bad rather than as damage feedback.
     this._shakeCamera(PLAYER_HIT_SHAKE_PX, PLAYER_HIT_SHAKE_MS);
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons) or which segments have lost their ARMOR plating (#246's armor-shell overlay —
@@ -264,20 +262,6 @@ export const CombatMixin = {
     // exactly as the accent was preserved before — a custom pick must not revert on a broken part.
     reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
       playerMechArt(player.id ?? 0, { statusSpot, accent: player.color }));
-  },
-
-  // #564: a quick full-mech tint flash — every pivoting part sprite on the player's own view
-  // (same six-sprite set the shield outline hugs, `SHIELD_MECH_PART_KEYS`) gets tinted red for a
-  // beat, then clears. Re-triggering (a second hit lands before the last flash cleared) just
-  // restamps the same timer rather than stacking — always reads as one flash, not a strobe.
-  _playerHitFlash(player) {
-    const v = player.view;
-    if (!v) return;
-    for (const key of SHIELD_MECH_PART_KEYS) v[key]?.setTint?.(PLAYER_HIT_FLASH_COLOR);
-    if (player._hitFlashTimer) player._hitFlashTimer.remove(false);
-    player._hitFlashTimer = this.time?.delayedCall?.(PLAYER_HIT_FLASH_MS, () => {
-      for (const key of SHIELD_MECH_PART_KEYS) v[key]?.clearTint?.();
-    });
   },
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific

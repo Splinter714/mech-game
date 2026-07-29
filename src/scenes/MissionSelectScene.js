@@ -9,6 +9,8 @@ import { DirRepeater, dominantDir } from '../ui/padNav.js';
 import { launchMission } from './base/launchMission.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
 import { buildHexTextures, HEX_TEX_W, HEX_TEX_H } from '../art/hexArt.js';
+import { ART_SCALE } from '../art/index.js';
+import { HEX_SIZE } from '../data/hexgrid.js';
 
 // #510: reached by walking onto the base's scanner hex. Presents a small set of candidate runs
 // (data/missions.js `offerMissions`) — pick a card (click, or d-pad/stick + A on a controller),
@@ -207,18 +209,26 @@ export default class MissionSelectScene extends Phaser.Scene {
 
   // A quick-glance "what biome is this" cue (live-chat ask, not a filed issue): all 5 of the
   // biome's representative terrain roles — groundA, groundB, cover, hazard, channel — as a
-  // real interlocking pointy-top hex cluster (3 tiles top row, 2 nested in the gaps below),
-  // not just a loose scatter of icons. Never touches `deep` (boundary-only, no baked texture —
-  // see hexArt.js `isBoundaryTerrainId`).
+  // real interlocking pointy-top hex cluster (3 tiles top row, 2 nested in the gaps below).
+  // Never touches `deep` (boundary-only, no baked texture — see hexArt.js `isBoundaryTerrainId`).
   //
-  // Spacing mirrors hexgrid.js's own pointy-top axial math (hexToPixel: same-row neighbours are
-  // one full hex-width apart, adjacent rows are 3/4 of a hex-height apart and offset by half a
-  // hex-width) — just expressed in the baked TEXTURE's own width/height (tw/th) rather than
-  // HEX_SIZE, since these are scaled-down copies of the exact same tile art, not a live grid.
+  // First pass here scaled the images by an arbitrary factor and derived spacing from the baked
+  // TEXTURE's own padded canvas size (HEX_TEX_W/H, which include #465's bleed + a flat border),
+  // so tiles never actually seamed — they only look right at the game's own convention: every
+  // real hex tile is displayed via `.setScale(1/ART_SCALE)` (world.js), with neighbour spacing
+  // computed from `HEX_SIZE` via hexgrid.hexToPixel's formula (same-row neighbours HEX_SIZE·√3
+  // apart, rows HEX_SIZE·1.5 apart). Reproduce that exactly, then shrink the whole cluster
+  // uniformly (spacing AND image scale together) to fit inside the card.
   _buildBiomePreview(biome, cx, cy) {
-    const scale = 0.42;
-    const tw = HEX_TEX_W * scale, th = HEX_TEX_H * scale;
-    const colStep = tw, rowStep = th * 0.75;
+    const SQRT3 = Math.sqrt(3);
+    const baseScale = 1 / ART_SCALE;              // the scale every real hex tile renders at
+    const colStepBase = HEX_SIZE * SQRT3;         // true same-row neighbour spacing
+    const rowStepBase = HEX_SIZE * 1.5;           // true row-to-row spacing
+    const naturalW = 2 * colStepBase + HEX_TEX_W * baseScale;   // 3-wide row, edge to edge
+    const targetW = CARD_W - 40;                  // comfortable margin inside the card
+    const shrink = Math.min(1, targetW / naturalW);
+    const scale = baseScale * shrink;
+    const colStep = colStepBase * shrink, rowStep = rowStepBase * shrink;
     const spots = [
       { id: biome.groundA, dx: -colStep, dy: -rowStep / 2 },
       { id: biome.cover, dx: 0, dy: -rowStep / 2 },
