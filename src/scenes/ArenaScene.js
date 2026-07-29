@@ -43,10 +43,11 @@ import { wirePauseMenu } from './PauseMenuScene.js';
 // gets unconditionally — it's now the CORE_SLOTS equip choice (data/coreItems.js), resolved per
 // mech from its own build below, so a build that skips it fights with no shield at all.
 
-// The battlefield. Top-down hex world with one drivable mech. Locomotion is tank-style
-// (forward/back + rotate) with weight-driven inertia; the turret slews toward the aim
-// within a limited arc and PUSHES the chassis to turn when you aim past it; the gait is
-// a stompy stepped walk. A list of mobile enemies (start: one Raider) drives the combat
+// The battlefield. Top-down hex world with one drivable mech. Locomotion is free-strafe
+// twin-stick: the mech accelerates toward the move input, strafes freely, and slides
+// along blocked axes, with the legs turning to face travel; the turret aims freely at
+// full 360° (no torso-twist arc), slewing toward the aim at the chassis's own rate; the
+// gait is a stompy stepped walk. A list of mobile enemies (start: one Raider) drives the combat
 // loop — they move, aim, shoot back, and take per-part damage; debug controls spawn/reset
 // them. The scene is a thin orchestrator; behaviour lives in the arena/ mixins composed
 // onto the prototype below.

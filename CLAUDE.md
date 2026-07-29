@@ -2,16 +2,17 @@
 
 A top-down, real-time mech action game with deep customization. Build a mech from
 parts (each with its own armor + structure), mount weapons into slots, then drive it
-in a hex arena with tank-style controls. Built to mirror the sibling "horse game"
-project's architecture: plain JS + Phaser 3 + Vite, **all art generated procedurally in
-code** (zero asset files), data-driven entities, and a strong test discipline because
-the owner verifies by playing/tests, not by reading code.
+in a hex arena with free-strafe twin-stick controls. Built to mirror the sibling "horse
+game" project's architecture: plain JS + Phaser 3 + Vite, **all art generated
+procedurally in code** (zero asset files — with one narrow exception, see `src/audio/`
+below), data-driven entities, and no automated test suite — the owner verifies
+everything by playing the game live (Claude preview or his own playtest), not by
+reading code or diffs.
 
 ## Run it
 
 ```
 npm run dev      # dev server (http://localhost:5173) — used by the Claude preview
-npm test         # Vitest unit tests for the pure data layer (fast, no browser)
 npm run smoke    # Playwright headless test of the real running game
 npm run build    # production bundle
 ```
@@ -25,7 +26,8 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
 - **`src/main.js`** — Phaser config + HiDPI/DPR sizing. Scenes: Boot → Garage ↔ Arena
   (+ Hud overlay during Arena, + the dev-only AudioScene — the AUDIO tab: music tuner +
   the whole SFX-authoring surface, #470).
-- **`src/data/`** — pure logic, no Phaser, fully unit-tested:
+- **`src/data/`** — pure logic, no Phaser (kept pure so it's easy to reason about and
+  exercise by hand, even without an automated test suite):
   - `Mech.js` — the generic model: per-location armor/structure, `applyDamage`, the
     kill rule, mounting, per-weapon ammo (self-regenerating magazines), weapon queries.
     Configured entirely by data. No heat (removed); ammo is the only firing constraint.
@@ -108,24 +110,34 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   physical pad and `keyboard` says whether that player also owns the keyboard+mouse (player 1
   only; every later player is gamepad-only). **#346 added touch as a THIRD source into that same intent**:
   floating on-screen sticks (left half drives, right half aims with the pad's hold-last-angle
-  semantics). The stick math is pure and unit-tested in `touchSticks.js` (tuning dials live in
+  semantics). The stick math lives as pure functions in `touchSticks.js` (tuning dials live in
   its `TOUCH_STICK` object, including a `floating` flag); `TouchStickHud.js` only draws them.
   Touch reports no fire and no dash — weapon triggers are deliberately out of #346's scope.
 - **`src/scenes/`** — `GarageScene` (mech lab: a four-slot paper-doll; click a catalog
   item then a body section to mount it, each slot shows its fire bind, live mech preview,
-  deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret aims
-  freely at full 360° (no torso-twist arc), slewing toward the aim at the chassis's own
-  rate; stompy stepped gait;
+  deploy) and `ArenaScene` (hex world; free-strafe twin-stick locomotion — the mech
+  accelerates toward the move input, strafes freely, and slides along blocked axes, with
+  the legs turning to face travel; turret aims freely at full 360° (no torso-twist arc),
+  slewing toward the aim at the chassis's own rate; stompy stepped gait;
   **per-slot firing** — each weapon fires on its own button, gated by ammo; per-part
   damage on a target dummy). `HudScene` is the arena overlay (weapons/ammo + health).
+- **`src/audio/`** — SFX and music are synthesized in code, same zero-asset philosophy as
+  the art. The one exception: a small set of baked/recorded `.m4a` files live in
+  `src/assets/sfx/` (`bakedSfx.js`, #173) for cases synthesis couldn't match, layered
+  under the synthesized SFX — the "zero asset files" rule is otherwise absolute.
 
 ## Conventions
 
 - Plain JS, ESM. No TypeScript. Match the surrounding style.
 - Adding content is **data, not code**: a chassis, a weapon, an equipment item, or a
   saved-build slot should each be a single new entry in its registry/table.
-- Tests are the safety net. Put pure logic in `src/data/*` and unit-test it; reserve the
-  smoke test for "does the real game boot, render, drive, and apply damage."
+- No automated test suite (the old Vitest suite was deleted 2026-07-26 at Jackson's
+  explicit, durable direction — don't add it back). Verification means playing the real
+  game: the Claude preview during a session, and Jackson's own playtest before an issue
+  is closed. `npm run build` is a compile sanity check only, not a substitute for
+  playing. `npm run smoke` (Playwright, headless) still exists as an opportunistic
+  "does the real game boot, render, drive, and apply damage" check — it is not a merge
+  gate.
 
 ## Status (Milestone 1)
 

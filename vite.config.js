@@ -1,5 +1,4 @@
 import { defineConfig } from 'vite';
-import { configDefaults } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -99,24 +98,6 @@ export default defineConfig(({ command }) => {
     build: {
       outDir: 'dist',
       assetsInlineLimit: 0,
-    },
-    test: {
-      // Agent worktrees are the default workflow here, and each is a full repo copy
-      // containing its own `*.test.js` files. Without this, running tests from the main
-      // checkout globs those copies too and inflates the reported counts. Keep vitest's
-      // built-in excludes and add the worktree/.git trees.
-      exclude: [...configDefaults.exclude, '**/.claude/worktrees/**', '**/.git/**'],
-      // #325: the worldgen invariant sweeps (#288 wall sealing, #308 base spacing) each
-      // generate dozens of full worlds and flood-fill them, running 1-3s on an idle machine.
-      // Vitest's 5s default left almost no headroom, so whenever the box was busy — several
-      // agent worktrees running tests at once, plus a live playtest — those tests blew the
-      // wall clock and reported as failures. The assertions themselves are fully seeded and
-      // deterministic (verified: identical output across repeated passes over the same seed
-      // families), so the red was pure timing noise, and it poisoned every agent's merge
-      // gate. Give the suite real headroom instead of trimming the sweeps or weakening the
-      // invariants — a slow honest test beats a fast lenient one.
-      testTimeout: 30000,
-      hookTimeout: 30000,
     },
   };
 });
