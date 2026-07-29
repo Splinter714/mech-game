@@ -87,7 +87,6 @@ export function makeChassis(cfg) {
       turnRate: m.turnRate,         // rad/s the legs/chassis can rotate
       // Turret feel.
       turretSlew: m.turretSlew, // rad/s the weapon mount tracks toward the aim
-      turretArc: m.turretArcDeg * Math.PI / 180, // max deviation (half-arc) from chassis facing
       // Stompy gait + footfall.
       stepInterval: m.stepInterval, // ms between footfalls at full speed
       stepBob: m.stepBob,           // px of body lurch per step

@@ -492,7 +492,7 @@ export const FiringMixin = {
         if (tt > 0 && tt < reach && perp < 44 && (!target || tt < t)) { target = e; t = tt; }
       }
     }
-    const color = CATEGORIES[w.weapon.category]?.color ?? 0xcfd6e0;
+    const color = CATEGORIES[w.weapon.category]?.color ?? CATEGORIES.energy.color;
     if (target) {
       const dmg = Math.max(1, Math.round(w.weapon.damage * this._rangeFactor(w.weapon.range, t)));
       if (owner === 'enemy' || isPlayerRef(this, target)) {

@@ -31,7 +31,7 @@ export const LIGHT_CONFIG = {
     // frame-pacing as the cause (steady 60fps, <1ms dt jitter; see scripts/profile-aim-idle.mjs),
     // so the slew rate itself was simply too slow to track a fast aim change. Restored to 4.2 —
     // still the snappiest of the three, just no longer sluggish enough to read as a bug.
-    turretSlew: 4.2, turretArcDeg: 130,
+    turretSlew: 4.2,
     // stepInterval ms between footfalls at full speed; stepBob px of body lurch per step;
     // footShake px of step-synced camera kick (0 = none). Light = quick, shallow, gentle.
     stepInterval: 250, stepBob: 1.6, footShake: 0.9,

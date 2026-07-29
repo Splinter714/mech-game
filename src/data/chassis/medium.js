@@ -21,7 +21,7 @@ export const MEDIUM_CONFIG = {
     // #86: restored from 2.0 back to 2.9 (the #3 feel-follow-up value) — playtest read the
     // 2.0 slew as "choppy" aiming; profiling showed steady 60fps (see profile-aim-idle.mjs),
     // so it was the slew rate lagging a fast aim change, not a frame-rate/update-frequency bug.
-    turretSlew: 2.9, turretArcDeg: 110,
+    turretSlew: 2.9,
     stepInterval: 340, stepBob: 2.7, footShake: 2.0,
   },
 };

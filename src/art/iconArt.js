@@ -18,8 +18,6 @@ const GLYPHS = {
   },
   // A beam.
   energy: (sg, c) => { sg.fillStyle(c, 1); sg.fillRect(7, 1, 2, 14); sg.fillRect(4, 6, 8, 2); },
-  // A blade.
-  melee: (sg, c) => { sg.fillStyle(c, 1); sg.fillTriangle(8, 1, 5, 11, 11, 11); sg.fillRect(6, 11, 4, 3); },
   // A small dish for support.
   support: (sg, c) => { sg.fillStyle(c, 1); sg.fillCircle(8, 8, 5); sg.fillStyle(0x0d1014, 1); sg.fillCircle(8, 8, 2.5); },
 };

@@ -33,7 +33,7 @@ export const HEAVY_CONFIG = {
     // jitter (profile-aim-idle.mjs), so the lag was the slew rate itself, not frame rate.
     // Still the weightiest of the three — you lean on turning the whole body to track a
     // flanker — just no longer so slow it reads as broken.
-    turretSlew: 1.9, turretArcDeg: 95,
+    turretSlew: 1.9,
     stepInterval: 460, stepBob: 3.8, footShake: 4.0,
   },
 };

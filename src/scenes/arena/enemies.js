@@ -201,7 +201,7 @@ const ENEMY_FOOTFALL_POWER_FRAC = 1.0; // scales the shared footfall impact FX o
 // enemy mech's turret tracking to a slow fixed rad/s — well below every chassis turretSlew
 // (heavy 1.9 → light 4.2) so it always bites — producing that visible aim lag. Scoped to enemy
 // MECHS only (the floaty ones); turrets/tanks/other kinds keep their own per-kind slew. The
-// PLAYER is untouched — it still tracks at its chassis turretSlew within its turretArc. Owner:
+// PLAYER is untouched — it still tracks at its chassis turretSlew (full 360°, no arc clamp). Owner:
 // tunable — raise toward the chassis values for snappier enemy aim, lower for heavier lag.
 export const ENEMY_MECH_TURRET_SLEW = 0.55; // rad/s — capped aim-tracking rate for enemy mechs (was 0.9, #398)
 // Aim slop (#398 third pass): the slew cap alone still tracks TOWARD the player's exact bearing,

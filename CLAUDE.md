@@ -113,8 +113,9 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   Touch reports no fire and no dash — weapon triggers are deliberately out of #346's scope.
 - **`src/scenes/`** — `GarageScene` (mech lab: a four-slot paper-doll; click a catalog
   item then a body section to mount it, each slot shows its fire bind, live mech preview,
-  deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret slews
-  within `turretArc` and pushes the chassis when you aim past it; stompy stepped gait;
+  deploy) and `ArenaScene` (hex world; tank locomotion with weight inertia; turret aims
+  freely at full 360° (no torso-twist arc), slewing toward the aim at the chassis's own
+  rate; stompy stepped gait;
   **per-slot firing** — each weapon fires on its own button, gated by ammo; per-part
   damage on a target dummy). `HudScene` is the arena overlay (weapons/ammo + health).
 

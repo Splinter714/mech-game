@@ -17,7 +17,7 @@
 // Both share the glow language, which is theme-independent:
 //   purple — the mech's OWN power: reactor spine, cockpit optic, leg thrusters.
 //   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
-//            missile pink, melee white, support green), so loadout reads at a glance.
+//            missile pink, support green), so loadout reads at a glance.
 
 import { gen, scaledGraphics, drawDilated, ART_SCALE } from './_frames.js';
 import { MOUNT_LOCATIONS } from '../data/anatomy.js';

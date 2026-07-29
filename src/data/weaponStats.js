@@ -16,8 +16,15 @@
 //
 // SIMPLIFICATIONS (documented on purpose, matching the weapons.js DPS-comment convention):
 //   • "Theoretical" assumes every emitted projectile connects (the stat-sheet ideal).
-//   • Splash / groundFire DOT (napalm's burn, plasma splash) is NOT counted — these figures are
-//     direct-hit DPS only, exactly as the per-weapon DPS comments in weapons.js are written.
+//   • #559: direct-hit damage now folds in the three delivery mechanisms whose damage the bare
+//     `damage × count` formula used to miss entirely — see `effectiveDamagePerPull` below (DoT
+//     ticks, a travelling AoE cloud's linger damage, and a chargeable weapon's realistic average
+//     charge multiplier). Napalm's `groundFire` ground-patch DOT is NOT one of these (still
+//     direct-hit only) — it wasn't in scope for #559 and stays a documented undercount, same as
+//     plasma splash's impact radius (already direct-hit, just wide).
+//   • Gravity Well's near-zero `damage` is intentional (a hazard/pull weapon, not a damage
+//     weapon) and stays near-zero here too — there's no damage-shaped equivalent for "pulls
+//     enemies into a kill zone," so its low DPS figure is expected, not a bug.
 //   • Buff/powerup cadence mults (cycleMult, barrage count-doubling) are NOT applied — these are
 //     the un-modified base stat-sheet numbers.
 
@@ -30,6 +37,51 @@ export const RELOAD_MS = RELOAD_SECONDS * 1000;
 export function damagePerPull(weapon) {
   const count = weapon?.delivery?.count ?? 1;
   return (weapon?.damage ?? 0) * count;
+}
+
+// #559 — a chargeable weapon's REALISTIC average damage multiplier. The un-modified `damage`
+// field prices every shot at a theoretical 1.0x, but a chargeable weapon (Charge Lance) never
+// actually fires at 1.0x — every real shot lands somewhere on its `minDamageMult`..`maxDamageMult`
+// curve (0.5x tapped, 2.5x held to full). Averaging the two endpoints is the same "assume the
+// realistic middle of the range" approach the rest of this file already takes for burst/sustained
+// (a mid-mag average), not the un-fired theoretical floor.
+function chargeDamageMult(weapon) {
+  const c = weapon?.delivery?.chargeable;
+  if (!c) return 1;
+  return ((c.minDamageMult ?? 1) + (c.maxDamageMult ?? 1)) / 2;
+}
+
+// #559 — extra per-pull damage from a DoT effect (Plasma Coater's burn) that a direct-hit-only
+// formula misses entirely. `dot.tickDamage` fires every `tickInterval`s for `dot.duration`s once a
+// hit lands, so one landed hit's FULL DoT payout is `tickDamage × (duration / tickInterval)`. A
+// repeat hit only refreshes (no stacking, see plasmaCoater's comment in weapons.js), so this counts
+// one full payout per landed hit — exactly matching "each pull that connects lands one DoT".
+function dotDamagePerHit(weapon) {
+  const dot = weapon?.delivery?.dot;
+  if (!dot) return 0;
+  const ticks = (dot.duration ?? 0) / (dot.tickInterval || 1);
+  return (dot.tickDamage ?? 0) * ticks;
+}
+
+// #559 — expected extra damage from a travelling AoE cloud (Caustic Lobber's corrosive tendrils):
+// its own `dps` ticked over an ASSUMED linger time near a target, not the round's full flight —
+// most of a travelAoe round's flight isn't spent hovering over an enemy. This is a stat-sheet
+// estimate, tunable in one place, matching the "assume the realistic middle" approach above.
+const EXPECTED_TRAVEL_AOE_LINGER_S = 2;
+function travelAoeDamagePerPull(weapon) {
+  const aoe = weapon?.delivery?.travelAoe;
+  if (!aoe) return 0;
+  return (aoe.dps ?? 0) * EXPECTED_TRAVEL_AOE_LINGER_S;
+}
+
+// #559 — the "effective DPS" figure: `damagePerPull`, but priced at a chargeable weapon's
+// realistic average multiplier and with DoT/travelAoe payouts folded in as extra damage per landed
+// pull. This is what `burstDps`/`sustainedDps` actually use — `damagePerPull` itself stays the
+// plain direct-hit number (still meaningful on its own, e.g. "how hard does one hit land").
+export function effectiveDamagePerPull(weapon) {
+  const count = weapon?.delivery?.count ?? 1;
+  const directHit = (weapon?.damage ?? 0) * chargeDamageMult(weapon) * count;
+  return directHit + dotDamagePerHit(weapon) + travelAoeDamagePerPull(weapon);
 }
 
 // ms between trigger pulls — the canonical cadence, mirroring firing.js `_fireInterval`
@@ -49,10 +101,11 @@ export function roundsPerPull(weapon) {
 }
 
 // Burst DPS — output while dumping a magazine, reload ignored.
+// #559: priced off `effectiveDamagePerPull`, not the bare direct-hit `damagePerPull` — see header.
 export function burstDps(weapon) {
   const iv = pullIntervalMs(weapon);
   if (!iv) return 0;
-  return damagePerPull(weapon) / (iv / 1000);
+  return effectiveDamagePerPull(weapon) / (iv / 1000);
 }
 
 // Sustained DPS — averaged over the full mag → empty → reload → full cycle.
@@ -66,7 +119,7 @@ export function sustainedDps(weapon) {
   const pulls = mag / roundsPerPull(weapon);
   const cycleMs = pulls * iv + RELOAD_MS;
   if (!cycleMs) return 0;
-  return (pulls * damagePerPull(weapon)) / (cycleMs / 1000);
+  return (pulls * effectiveDamagePerPull(weapon)) / (cycleMs / 1000);
 }
 
 // Full theoretical stat block for one weapon (id or resolved entry).

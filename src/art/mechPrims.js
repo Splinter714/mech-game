@@ -102,10 +102,9 @@ export const NEON = {
   energy:    { halo: 0x1390c8, core: 0x38d9ff, hot: 0xe6fbff, edge: 0x7fe6ff },
   ballistic: { halo: 0xc8801a, core: 0xffb24a, hot: 0xffe6b0, edge: 0xffcf85 },
   missile:   { halo: 0xc81f72, core: 0xff4fa3, hot: 0xffd0e6, edge: 0xff8cc2 },
-  melee:     { halo: 0x9aa0ad, core: 0xcfd6e0, hot: 0xffffff, edge: 0xf2f4f7 },
   support:   { halo: 0x1f9c54, core: 0x6dff9e, hot: 0xd6ffe6, edge: 0xa6ffc6 },
 };
-export const neonFor = (catId) => NEON[catId] ?? NEON.melee;
+export const neonFor = (catId) => NEON[catId] ?? NEON.energy;
 
 // #433: run `fn` as EMISSIVE output — flag its draw ops as glow (`_glow`) so the two muzzle-bake
 // gates treat them like glowDot/glowBar do. That's what lets the base-part bake OMIT them entirely
