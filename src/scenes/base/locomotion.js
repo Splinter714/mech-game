@@ -5,8 +5,9 @@
 // twin-stick mapping (left stick/WASD drives, right stick/mouse aims the turret independently
 // of travel), same terrain speed scaling, same swept wall/edge collision, and the full footfall
 // gait (frame stepping, footstep FX + camera shake, body bob) — reusing
-// `_makeMechView`/`_syncTilts`/`_syncPivots`/`_footImpactFx`/`_footShake` from LocomotionMixin
-// directly (see BaseScene.js), since none of those five have any combat coupling of their own.
+// `_makeMechView`/`_syncTilts`/`_syncPivots`/`_footImpactFx`/`_footShake`/`_shakeCamera` from
+// LocomotionMixin directly (see BaseScene.js), since none of those six have any combat coupling
+// of their own.
 // No sprint/dash yet (#509 Stage 1 scope — those are player abilities, not core locomotion).
 //
 // #522 fix: this used to read `p.mech.movement` raw — the chassis' base numbers, which are the

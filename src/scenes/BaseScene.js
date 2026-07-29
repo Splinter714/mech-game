@@ -24,9 +24,12 @@ import { wirePauseMenu } from './PauseMenuScene.js';
 // Movement reuses the arena's `_blockedAlongSegment`-swept collision approach via
 // base/world.js and a TRIMMED copy of its drive/gait (base/locomotion.js) — but the mech
 // VIEW itself (`_makeMechView`) and the shared gait helpers (`_syncTilts`/`_syncPivots`/
-// `_footImpactFx`/`_footShake`) are reused directly from LocomotionMixin: none of those five
-// have any combat/weapon coupling, so there is nothing to trim.
-const { _makeMechView, _syncTilts, _syncPivots, _footImpactFx, _footShake } = LocomotionMixin;
+// `_footImpactFx`/`_footShake`/`_shakeCamera`) are reused directly from LocomotionMixin: none
+// of those six have any combat/weapon coupling, so there is nothing to trim. `_shakeCamera` is
+// `_footShake`'s own camera-jolt helper (#564) — omitting it here threw "this._shakeCamera is
+// not a function" on BaseScene's first footstep, the same failure class as the #522 fix noted
+// below for `_movementFor`.
+const { _makeMechView, _syncTilts, _syncPivots, _footImpactFx, _footShake, _shakeCamera } = LocomotionMixin;
 
 export default class BaseScene extends Phaser.Scene {
   constructor() {
@@ -106,5 +109,5 @@ export default class BaseScene extends Phaser.Scene {
 }
 
 Object.assign(BaseScene.prototype, BaseWorldMixin, BaseLocomotionMixin, {
-  _makeMechView, _syncTilts, _syncPivots, _footImpactFx, _footShake,
+  _makeMechView, _syncTilts, _syncPivots, _footImpactFx, _footShake, _shakeCamera,
 });
