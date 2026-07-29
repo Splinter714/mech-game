@@ -8,11 +8,10 @@ import { Mech } from '../data/Mech.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
-import { CORE_ITEMS } from '../data/coreItems.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
 import {
-  WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, CORE_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
+  WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD } from '../input/Controls.js';
@@ -77,8 +76,8 @@ function hexColor(n) {
   return '#' + n.toString(16).padStart(6, '0');
 }
 
-// Pad up/down cycle order through a column's seven slots (four weapon + two ability + core).
-const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS, ...CORE_SLOTS];
+// Pad up/down cycle order through a column's six slots (four weapon + two ability).
+const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS];
 
 // #529: the per-column tab strip (chassis+color/weapon/ability/passive) that replaced the old
 // scene-level "MECH LAB" tab-bar button.
@@ -216,9 +215,9 @@ export default class GarageScene extends Phaser.Scene {
   // That button's own visual now reflects READY state (see ui/tabBar.js's `deployReady`), not
   // just its label text — it doubles as the per-column ready checkmark icon this rework removed.
   // #532 (change 2): the button also greys out/disables (`canDeploy: false`) whenever column 0's
-  // build isn't FULLY equipped yet (all 4 weapons + both abilities + the passive/core slot,
-  // Mech.isFullyEquipped) and isn't already ready — so it's not just silently impossible to ready
-  // up with a gap (see _toggleReady's own hard gate below), it visibly can't be clicked either.
+  // build isn't FULLY equipped yet (all 4 weapons + both abilities, Mech.isFullyEquipped) and
+  // isn't already ready — so it's not just silently impossible to ready up with a gap (see
+  // _toggleReady's own hard gate below), it visibly can't be clicked either.
   // Once already READY the button stays clickable (to un-ready), regardless of what changes after.
   _refreshHeader() {
     this.tabBar?.layer.destroy();
@@ -329,10 +328,7 @@ export default class GarageScene extends Phaser.Scene {
 
     // The loadout tiles — weapon row + ability row, drawn with the SAME shared tile-drawing code
     // (drawSkillTile) the arena HUD uses, just with no HP/shield/armor panel chrome around them
-    // (HudScene.js draws those separately, alongside its own call into the same tile rects). The
-    // passive/core slot rides IN `gl.tiles.abilities` now (the #526-followup shared-row redesign
-    // folded it in between X and Y, same as HudScene's arena console) rather than getting its own
-    // Garage-only tile stacked above the preview — there is nothing left to draw separately here.
+    // (HudScene.js draws those separately, alongside its own call into the same tile rects).
     col.tileRefs = {};
     for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
 
@@ -359,15 +355,16 @@ export default class GarageScene extends Phaser.Scene {
     // own top-level container rather than living inside col.layer, so it's positioned in WORLD
     // coordinates (this column's own screen offset + the local catalog rect below). Refiltered/
     // reselected whenever the selected slot or a mount changes, via _refreshCatalogList. Backs the
-    // WEAPON/ABILITY/PASSIVE tabs (#529) — the same slot-filtered catalog mechanism as before,
-    // just now only shown while one of those three tabs is active (see _refreshLabTabUI).
+    // WEAPON/ABILITY tabs (#529) — the same slot-filtered catalog mechanism as before, just now
+    // only shown while one of those two tabs is active (see _refreshLabTabUI). (A third PASSIVE
+    // tab existed briefly for #496's core-slot system; it's gone along with that system.)
     col.catalogList = new WeaponCardList(this, {
       x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: true,
       ids: this._eligibleIds(col.selectedSlot),
       onSelect: (id) => this._clickCatalogItem(col, id),
       selectedId: this._mountedIn(col, col.selectedSlot),
-      // #506: abilities/core items have no SCRAP-unlock data at all (shop.js's catalog is
-      // weapon-only) — always unlocked and free to mount, so only a weapon id is ever gated here.
+      // #506: abilities have no SCRAP-unlock data at all (shop.js's catalog is weapon-only) —
+      // always unlocked and free to mount, so only a weapon id is ever gated here.
       isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
@@ -470,7 +467,7 @@ export default class GarageScene extends Phaser.Scene {
       ref.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
       ref.text.setColor(on ? UI.accent : UI.dim);
     });
-    col.catalogList.root.setVisible(tabId === 'weapon' || tabId === 'ability' || tabId === 'passive');
+    col.catalogList.root.setVisible(tabId === 'weapon' || tabId === 'ability');
     // #532: chassis + color are now ONE merged tab — both lists show/hide together.
     const showChassisColor = tabId === 'chassis';
     col.chassisListLayer.setVisible(showChassisColor);
@@ -668,14 +665,14 @@ export default class GarageScene extends Phaser.Scene {
     return playerMechArt(col.index, { hullFrames: HULL_FRAMES, accent: mechColorFor(col.mech, col.index) });
   }
 
-  // ── Tiles (weapon/ability/core) ──────────────────────────────────────────────────────────────
+  // ── Tiles (weapon/ability) ───────────────────────────────────────────────────────────────────
   _drawColTile(col, rect) {
     const loc = rect.loc;
     const id = this._mountedIn(col, loc);
     const kind = slotKind(loc);
     const refs = drawSkillTile(this, col.layer, rect, {
       loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
-      emptyLabel: kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core',
+      emptyLabel: kind === 'weapon' ? 'weapon' : 'ability',
       subtitle: id ? getItem(id).name : '',
     });
     refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._selectSlot(col, loc));
@@ -689,7 +686,7 @@ export default class GarageScene extends Phaser.Scene {
     const kind = slotKind(loc);
     updateSkillTile(refs, {
       loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
-      emptyLabel: kind === 'weapon' ? 'weapon' : kind === 'ability' ? 'ability' : 'core',
+      emptyLabel: kind === 'weapon' ? 'weapon' : 'ability',
       subtitle: id ? getItem(id).name : '',
     });
   }
@@ -702,7 +699,6 @@ export default class GarageScene extends Phaser.Scene {
   _eligibleIds(loc) {
     const kind = slotKind(loc);
     if (kind === 'ability') return Object.keys(ABILITIES);
-    if (kind === 'core') return Object.keys(CORE_ITEMS);
     return this.catalogIds.filter((id) => {
       if (!WEAPON_SLOTS.includes(loc)) return false;
       if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
@@ -715,8 +711,8 @@ export default class GarageScene extends Phaser.Scene {
   // and after any mount/unmount.
   // #541: only actually REBUILDS the card list (setIds — which resets scroll to the top) when
   // the eligible set genuinely changed content (e.g. crossing from a melee-only arm slot into a
-  // non-melee slot, or switching tabs entirely — weapon/ability/core catalogs are disjoint id
-  // sets). Switching between two slots that share the same eligible catalog (the common case:
+  // non-melee slot, or switching tabs entirely — weapon/ability catalogs are disjoint id sets).
+  // Switching between two slots that share the same eligible catalog (the common case:
   // two ordinary weapon slots, or the two ability slots) is the SAME list, just a different
   // "what's mounted here" highlight — so it now only repaints the selection/focus highlight in
   // place, leaving scroll exactly where the player left it. A genuine list-content change still
@@ -821,7 +817,6 @@ export default class GarageScene extends Phaser.Scene {
   _mountedIn(col, loc) {
     const kind = slotKind(loc);
     if (kind === 'ability') return col.mech.abilityMounts[loc] ?? null;
-    if (kind === 'core') return col.mech.coreMounts[loc] ?? null;
     return col.mech.usedSlots(loc) >= 1 ? col.mech.mounts[loc][0] : null;
   }
 
@@ -831,17 +826,17 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // A weapon slot always mounts/replaces (re-picking the mounted item is a no-op, and there's no
-  // unmount — a weapon slot must stay filled to deploy); an ability/core slot is optional, so
+  // unmount — a weapon slot must stay filled to deploy); an ability slot is optional, so
   // re-picking the mounted item UNMOUNTS it instead.
   _mountInto(col, loc, itemId) {
     const mech = col.mech, kind = slotKind(loc);
-    if (kind === 'ability' || kind === 'core') {
+    if (kind === 'ability') {
       const prevItem = this._mountedIn(col, loc);
       if (prevItem === itemId) { this._unmountFrom(col, loc); return; }
-      if (prevItem) (kind === 'ability' ? mech.unmountAbility(loc) : mech.unmountCore(loc));
-      const res = kind === 'ability' ? mech.mountAbility(loc, itemId) : mech.mountCore(loc, itemId);
+      if (prevItem) mech.unmountAbility(loc);
+      const res = mech.mountAbility(loc, itemId);
       if (!res.ok) {
-        if (prevItem) (kind === 'ability' ? mech.mountAbility(loc, prevItem) : mech.mountCore(loc, prevItem));
+        if (prevItem) mech.mountAbility(loc, prevItem);
         this.toast(res.reason); return;
       }
     } else {
@@ -858,11 +853,10 @@ export default class GarageScene extends Phaser.Scene {
     this._onMechChanged(col);
   }
 
-  // Pad B / the ability-core "clear" path — weapon slots have no unmount at all (see above).
+  // Pad B / the ability "clear" path — weapon slots have no unmount at all (see above).
   _unmountFrom(col, loc) {
     const kind = slotKind(loc);
     if (kind === 'ability') col.mech.unmountAbility(loc);
-    else if (kind === 'core') col.mech.unmountCore(loc);
     else return;
     Audio.ui('equip');
     this._onMechChanged(col);
@@ -937,10 +931,12 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // Toggling a player TO ready is gated on their build being FULLY equipped (#532 change 2: every
-  // weapon slot, both ability slots, AND the passive/core slot — not just weapons, #506's older
-  // "ability/core stay optional" rule); toggling back off is always allowed. Ability/core slots
-  // CAN be left empty through this UI (unlike weapon slots, which always mount/replace and have
-  // no unmount), so this is a real, reachable gate now, not just a defensive one.
+  // weapon slot AND both ability slots — not just weapons, #506's older "ability stays optional"
+  // rule); toggling back off is always allowed. Ability slots CAN be left empty through this UI
+  // (unlike weapon slots, which always mount/replace and have no unmount), so this is a real,
+  // reachable gate now, not just a defensive one. The old third clause — the passive/core slot
+  // (#496) — is gone with the core-slot system itself: shield is an unconditional baseline with
+  // nothing to fill, so there's nothing left to gate on there.
   _toggleReady(i) {
     const col = this.cols[i];
     if (!col) return;
@@ -949,8 +945,7 @@ export default class GarageScene extends Phaser.Scene {
       const emptyWeapons = MOUNT_LOCATIONS.filter((loc) => col.mech.usedSlots(loc) === 0)
         .map((loc) => LOCATION_INFO[loc].short);
       const emptyAbilities = ABILITY_SLOTS.filter((slot) => !col.mech.abilityMounts[slot]).map(() => 'ability');
-      const emptyCore = CORE_SLOTS.filter((slot) => !col.mech.coreMounts[slot]).map(() => 'passive');
-      const names = [...emptyWeapons, ...emptyAbilities, ...emptyCore].join(', ') || 'all slots';
+      const names = [...emptyWeapons, ...emptyAbilities].join(', ') || 'all slots';
       this.toast(`P${i + 1} BUILD INCOMPLETE — fill ${names}`);
       return;
     }

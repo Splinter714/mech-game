@@ -10,7 +10,7 @@
 import { itemFxKey } from '../art/index.js';
 import { getItem } from '../data/items.js';
 import { SKILL_BINDS } from '../input/Controls.js';
-import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT, CORE_SLOTS } from '../data/anatomy.js';
+import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 import { CONSOLE_TILES, ARMOR_PEEK_PAD } from '../data/hudLayout.js';
 import { structureColor } from '../data/healthReadout.js';
 
@@ -23,8 +23,7 @@ export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 // abilities in weapon HUD to double-wide half-height buttons (as compared to the weapon buttons)
 // that sit in a single row above the 4 weapon buttons; so the X ability sits above the left sided
 // weapons and the Y ability above the right sided weapons." X is therefore first (left) here, Y
-// second (right) — see `weaponAbilityRows` below, which is what actually places them. The passive
-// core slot is still deliberately NOT in this list — see HudScene.js's `_makePanel`.
+// second (right) — see `weaponAbilityRows` below, which is what actually places them.
 export const HUD_ABILITY_ORDER = ['abilityX', 'abilityY'];
 
 // #544 (Jackson: "LB and X/L3 button contents swap ... RB and Y/R3 button contents swap"): the
@@ -177,9 +176,12 @@ export function stackedTileLayout(rect) {
   };
 }
 
-// #526-followup (new redesign, replacing the FOURTH rework's two-tile double-wide/half-height
-// shape): Jackson folded the passive/core slot INTO this same row, in the MIDDLE between X and
-// Y, rather than leaving it as Garage-only chrome.
+// #526-followup (redesign, replacing the FOURTH rework's two-tile double-wide/half-height shape):
+// Jackson folded the passive/core slot INTO this same row, in the MIDDLE between X and Y, rather
+// than leaving it as Garage-only chrome. That passive/core slot is gone now (shield is an
+// unconditional baseline with no equip choice, and Anti-Missile Defense moved into the mountable-
+// ability system alongside X/Y) — this is back to a plain TWO-way X/Y split of the row's own
+// ARMORED width, each tile taking half, separated by the row's own standard `gap`.
 //
 // The row's OUTER edges matched the weapon row's own BARE span exactly at first — but #526-
 // followup2 (point 5, playtest) moved that to the weapon row's ARMORED span instead (bare tiles
@@ -188,17 +190,8 @@ export function stackedTileLayout(rect) {
 // rather than the tiles hiding under that backing. See `SHIELD_ARC.overhang` (healthReadout.js)
 // for how the shield/console notch still gets an EQUAL margin against this row despite the two
 // footprints differing (point 1).
-//
-// #526-followup3 (playtest: "passive widening isn't wide enough — let it take as much space as
-// is available except for a small standardized gap") tried dropping the ratio split entirely: X
-// and Y each got just a content-fitting minimum, and the core/passive tile absorbed every
-// remaining pixel between them. #526-followup4 (playtest, after trying that: "now the active
-// abilities don't have enough space though... they should have maybe 1/3 of the space each")
-// walked it back — X, core/passive, and Y now split the row's ARMORED width into roughly EQUAL
-// THIRDS, separated by the row's own standard `gap` (the same constant the weapon row below it
-// uses), so the row's total span still matches the weapon row's ARMORED width exactly.
 export function weaponAbilityRows(x, w, {
-  bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER, coreLoc = CORE_SLOTS[0],
+  bottom, weaponOrder = TILE_ORDER, abilityOrder = HUD_ABILITY_ORDER,
   // #526-followup2 (point 4, playtest: "add a gap between the ability/passive row and the weapon
   // row below it — they read as flush/touching"): the raw 12px only measured against the BARE
   // weapon tile rects, but each weapon tile's armor backing (`ARMOR_PEEK_PAD`, HudScene.js's
@@ -217,21 +210,14 @@ export function weaponAbilityRows(x, w, {
   const rowW = (last.x + last.w - weapons[0].x) + ARMOR_PEEK_PAD * 2;
   const abilityH = Math.round(weapons[0].h / 2);
   const abilityTop = weapons[0].y - rowGap - abilityH;
-  // #526-followup4 (playtest: "now the active abilities don't have enough space though... they
-  // should have maybe 1/3 of the space each"): the previous min-fit-two/fill-remainder split
-  // starved the two ACTIVE (X/Y) tiles down to a content-fitting minimum so the passive/core tile
-  // could take almost all the row. Split into roughly EQUAL THIRDS instead — X, core/passive, and
-  // Y each get about a third of the row's armored width, still summing to the same `rowW` total
-  // (the weapon-row-matching invariant) with the row's own standard `gap` between each pair.
-  const thirdW = Math.round((rowW - gap * 2) / 3);
-  const leftW = thirdW;
-  const rightW = thirdW;
-  const midW = Math.max(0, rowW - leftW - rightW - gap * 2);
-  const midX = rowX + leftW + gap;
-  const rightX = midX + midW + gap;
+  // X and Y split the row's armored width evenly in half, with the row's own standard `gap`
+  // between them — still summing to the same `rowW` total (the weapon-row-matching invariant).
+  const halfW = Math.round((rowW - gap) / 2);
+  const leftW = halfW;
+  const rightW = rowW - leftW - gap;
+  const rightX = rowX + leftW + gap;
   const abilities = [
     { loc: abilityOrder[0], x: rowX, y: abilityTop, w: leftW, h: abilityH },
-    { loc: coreLoc, x: midX, y: abilityTop, w: midW, h: abilityH },
     { loc: abilityOrder[1], x: rightX, y: abilityTop, w: rightW, h: abilityH },
   ];
   // #544 (Jackson: "LB and X/L3 button contents swap, sizes stay the same" — same for RB/Y —
@@ -275,13 +261,6 @@ export function diamondLayout(cx, cy, { size = 46, radius } = {}) {
     const { dx, dy } = ABILITY_SLOT_LAYOUT[loc];
     return { loc, x: Math.round(cx + dx * radius - size / 2), y: Math.round(cy + dy * radius - size / 2), w: size, h: size };
   });
-}
-
-// #496: the single core-slot tile, nested in the diamond's own hollow centre — smaller than the
-// ring tiles so it doesn't crowd them. Callers own the size/radius/coreSize choices that keep it
-// clear of `diamondLayout`'s ring (coreSize/2 + size/2 < radius).
-export function coreTileRect(cx, cy, size = 30) {
-  return { loc: 'core', x: Math.round(cx - size / 2), y: Math.round(cy - size / 2), w: size, h: size };
 }
 
 // Build one tile's display objects into `parent` (a Container) and apply `opts`. Returns

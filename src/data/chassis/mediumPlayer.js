@@ -15,9 +15,10 @@
 //
 // Everything except the stat totals is MEDIUM_CONFIG verbatim (movement feel, art, name, weight
 // class), spread in so the two can never drift apart on the things that are meant to match. Only
-// `id` and the totals differ. The player's shield is configured separately at deploy time,
-// resolved from the CORE_SLOTS equip choice (#496, data/coreItems.js) — that's the 100 in
-// 200/300/100, if equipped.
+// `id` and the totals differ. The player's shield is configured separately at deploy time
+// (ArenaScene, `data/Mech.js`'s `PLAYER_SHIELD_CONFIG`) — that's the unconditional 100 in
+// 200/300/100. #496 briefly made it an equip choice through a since-removed core-slot system;
+// Jackson's follow-up call put it back as a fixed baseline every player mech always gets.
 import { MEDIUM_CONFIG } from './medium.js';
 
 export const MEDIUM_PLAYER_CONFIG = {
@@ -34,7 +35,7 @@ export const MEDIUM_PLAYER_CONFIG = {
   // So: the player is ~7x the toughest enemy (the artillery mech's 500). That is the status quo,
   // now legible. This is the one dial to turn if it should be otherwise — a deliberate decision
   // to make with the honest number in view, which was impossible while it lived in a scene.
-  // Plus the 100-point shield, if equipped (#496 core-slot choice, resolved at deploy).
+  // Plus the unconditional 100-point shield, always applied at deploy.
   totalArmor: 2100,
   totalHp: 1400,
   // #438: player-only leg proportions. First pass went SKINNIER (legW 1.0 → 0.72) and

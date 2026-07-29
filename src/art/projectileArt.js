@@ -11,11 +11,9 @@ import { gen, ART_SCALE } from './_frames.js';
 import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
-import { CORE_ITEMS } from '../data/coreItems.js';
 import { projectileKind, chargeArcPoints, chargeDistanceFade } from '../data/delivery.js';
 import { drawProjectileBody } from './projectiles/index.js';
 import { drawAbilityIcon } from './abilityIcons.js';
-import { drawCoreItemIcon } from './coreItemIcons.js';
 
 // `projectileKind` lives in the pure delivery sim (data/delivery.js); re-exported here so
 // existing art importers keep resolving it from the art layer. `drawProjectileBody` now
@@ -326,19 +324,15 @@ function drawWeaponIcon(g, weapon, S, c) {
 }
 
 const ABILITY_SWATCH_COLOR = 0x5ec8e0;   // shared UI accent — matches the ability tiles
-// #526-followup: the passive/core slot now rides in the same HUD row as X/Y (previously
-// Garage-only chrome), so it gets its own bespoke glyphs (`coreItemIcons.js`) the same way
-// abilities did in #506 — this is just the tint they're drawn in, the shared "passive/always-on"
-// gold used elsewhere.
-const CORE_SWATCH_COLOR = 0xefc14a;
 
-// Build a `wfx_<id>` texture for every weapon (bespoke per-weapon art), every ability (#506
-// THIRD rework: bespoke per-ability art, `drawAbilityIcon`), and every core item (#526-followup:
-// bespoke per-item art, `drawCoreItemIcon`, mirroring the ability pass now that the core slot has
-// a real HUD tile of its own).
+// Build a `wfx_<id>` texture for every weapon (bespoke per-weapon art) and every ability (#506
+// THIRD rework: bespoke per-ability art, `drawAbilityIcon`). The old third pass, one per passive
+// core item (#526-followup, shield/antiMissile), is gone with the core-slot system itself: shield
+// is an unconditional baseline with no catalog tile any more, and Anti-Missile Defense's glyph
+// moved into `abilityIcons.js` alongside every other mountable ability.
 // #188: this used to also build one per equipment/ability id (jumpJet/bubbleShield) —
 // equipment.js is gone (Sprint is a hardcoded built-in with its own HUD fuel-bar treatment, not
-// a catalog icon) — #506 brought mountable non-weapon items back, hence abilities/core here.
+// a catalog icon) — #506 brought mountable non-weapon items back, hence abilities here.
 export function buildItemFxTextures(scene) {
   const S = ART_SCALE;
   const c = (ICON / 2) * S;
@@ -347,8 +341,5 @@ export function buildItemFxTextures(scene) {
   }
   for (const id of Object.keys(ABILITIES)) {
     gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawAbilityIcon(g, id, S, c, ABILITY_SWATCH_COLOR));
-  }
-  for (const id of Object.keys(CORE_ITEMS)) {
-    gen(scene, itemFxKey(id), ICON * S, ICON * S, (g) => drawCoreItemIcon(g, id, S, c, CORE_SWATCH_COLOR));
   }
 }

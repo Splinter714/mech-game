@@ -5,17 +5,23 @@
 // (Mech.test.js); the arena/garage drive the model and render it.
 
 import { getChassis } from './chassis/index.js';
-import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, CORE_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
+import { LOCATIONS, MOUNT_LOCATIONS, ABILITY_SLOTS, DESTROY_CASCADE, partDestroyed, mechDestroyed } from './anatomy.js';
 import { isWeapon, getItem } from './items.js';
 import { getWeapon } from './weapons.js';
 import { isAbility } from './abilities.js';
-import { isCoreItem } from './coreItems.js';
 import { applyStatusEffect as applyEffect, tickStatusEffects as tickEffects } from './statusEffects.js';
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
   grantTempShield, shieldTotalHp, shieldTotalMax,
 } from './shield.js';
+
+// The player's baseline full-mech shield (#246, previously ArenaScene's `PLAYER_SHIELD` before
+// #496 briefly made it an equip choice through the now-removed core-slot system). Jackson: "yes,
+// always-on baseline" — every player mech simply gets this unconditionally, at deploy time, no
+// build choice to make and no way to skip it. Same 100-point pool #496 shipped with (see
+// data/chassis/mediumPlayer.js's own note on the 100 in 200/300/100).
+export const PLAYER_SHIELD_CONFIG = { max: 100 };
 
 // #402: the RELOAD period (seconds) — how long a weapon slot is locked out while it reloads,
 // after which its magazine comes back FULL. Two things start it:
@@ -67,14 +73,6 @@ export class Mech {
       this.abilityMounts[slot] = isAbility(id) ? id : null;
     }
 
-    // #496: core slots — a third, passive/always-on mount type (currently just Shield). Same
-    // stale-id-dropping treatment as the other two mount types above.
-    this.coreMounts = {};
-    for (const slot of CORE_SLOTS) {
-      const id = data.coreMounts?.[slot];
-      this.coreMounts[slot] = isCoreItem(id) ? id : null;
-    }
-
     // Per-weapon ammo: a parallel array to mounts[loc] holding each weapon's current
     // magazine (null = unlimited / non-weapon). Runtime combat state, so it isn't
     // serialized — it starts full and tops back up over time (see regenAmmo).
@@ -108,11 +106,6 @@ export class Mech {
     // #489: status effects (currently just Plasma's burn DoT) — runtime combat state like
     // ammo/reload above, never serialized. Starts empty; applied via applyStatusEffect below.
     this.statusEffects = [];
-
-    // #494: Anti-Missile Defense's cooldown, when it's the core-slot pick — runtime only, like
-    // the fields above. The actual target-finding needs the scene's live projectile list, so it
-    // can't live here (Mech stays pure/headless); this is just the cooldown gate.
-    this._interceptorCooldown = 0;
   }
 
   // Magazine capacity for an item id (null = unlimited or non-weapon).
@@ -327,12 +320,6 @@ export class Mech {
     for (const t of ticks) this.applyDamage(t.location, t.tickDamage);
   }
 
-  // #494: Anti-Missile Defense — true only while it's the actual core-slot pick AND off cooldown.
-  // The scene calls this before bothering to look for a target at all.
-  canIntercept() { return this.coreMounts.core === 'antiMissile' && this._interceptorCooldown <= 0; }
-  tickInterceptorCooldown(dt) { this._interceptorCooldown = Math.max(0, this._interceptorCooldown - dt); }
-  triggerIntercept(cooldownSeconds) { this._interceptorCooldown = cooldownSeconds; }
-
   // #381: the temp pool's remaining wall-clock expiry, in ms — 0 when no pool is live. Since the
   // shield powerup now grants the pool with NO finite expiry (it persists until spent), this reads
   // Infinity while a pool is live. Retained for symmetry/HUD readouts; the free-ammo window is
@@ -355,7 +342,7 @@ export class Mech {
 
   // Set/replace this mech's native shield config at runtime (fresh, full, no lingering temp pool).
   // Opt-in and applied outside the shared chassis/enemy data: the arena uses this to give the
-  // PLAYER a baseline shield (see ArenaScene's PLAYER_SHIELD) without touching the
+  // PLAYER the unconditional baseline shield (PLAYER_SHIELD_CONFIG, above) without touching the
   // constructor-time `data.shield` every mech (including enemy mechs) is built from. Idempotent:
   // calling it again (e.g. once per redeploy) just re-establishes the same config from scratch.
   // (#324 note: the player's armor/hp buffer used to be applied the same way, via `boostHealth`;
@@ -401,14 +388,16 @@ export class Mech {
   isComplete() { return this.validate().ok && MOUNT_LOCATIONS.every((loc) => this.usedSlots(loc) > 0); }
 
   // #532: the Garage's READY gate is stricter than isComplete() above — Jackson's Garage feedback
-  // batch asked that a column not be able to ready up with ANY gap at all: all 4 weapon slots, both
-  // ability slots, and the one core/passive slot. isComplete() is kept as-is (and still used
-  // elsewhere as "is this build even legal to deploy") since ability/core were deliberately
-  // optional up to now; this is the newer, full-loadout check the Garage's ready toggle uses.
+  // batch asked that a column not be able to ready up with ANY gap at all: all 4 weapon slots and
+  // both ability slots. isComplete() is kept as-is (and still used elsewhere as "is this build
+  // even legal to deploy") since ability slots were deliberately optional up to now; this is the
+  // newer, full-loadout check the Garage's ready toggle uses. The old third clause — every core/
+  // passive slot filled (#496) — is gone along with the core-slot system itself: shield is an
+  // unconditional baseline nothing has to equip, and Anti-Missile Defense is now just another
+  // (optional) mountable ability, same as any other ability slot.
   isFullyEquipped() {
     return this.isComplete()
-      && ABILITY_SLOTS.every((slot) => !!this.abilityMounts[slot])
-      && CORE_SLOTS.every((slot) => !!this.coreMounts[slot]);
+      && ABILITY_SLOTS.every((slot) => !!this.abilityMounts[slot]);
   }
 
   // ── Ability slots (#506) ──────────────────────────────────────────────────────────────────
@@ -430,26 +419,6 @@ export class Mech {
   unmountAbility(slot) {
     const id = this.abilityMounts[slot];
     this.abilityMounts[slot] = null;
-    return id;
-  }
-
-  // ── Core slots (#496) ─────────────────────────────────────────────────────────────────────
-  canMountCore(slot, itemId) { return loadout.canMountCore(this.coreMounts, slot, itemId); }
-  coreSlotOf(itemId) { return loadout.coreLocationOf(this.coreMounts, itemId); }
-
-  mountCore(slot, itemId) {
-    const res = this.canMountCore(slot, itemId);
-    if (res.ok) {
-      const prevSlot = this.coreSlotOf(itemId);
-      if (prevSlot && prevSlot !== slot) this.coreMounts[prevSlot] = null;
-      this.coreMounts[slot] = itemId;
-    }
-    return res;
-  }
-
-  unmountCore(slot) {
-    const id = this.coreMounts[slot];
-    this.coreMounts[slot] = null;
     return id;
   }
 
@@ -629,9 +598,8 @@ export class Mech {
     const mounts = {};
     const damage = {};
     const abilityMounts = { ...this.abilityMounts };
-    const coreMounts = { ...this.coreMounts };
     for (const loc of MOUNT_LOCATIONS) mounts[loc] = [...this.mounts[loc]];
     for (const loc of LOCATIONS) damage[loc] = { armor: this.parts[loc].armor, hp: this.parts[loc].hp };
-    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, abilityMounts, coreMounts, damage };
+    return { chassisId: this.chassisId, name: this.name, color: this.color, mounts, abilityMounts, damage };
   }
 }

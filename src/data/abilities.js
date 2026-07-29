@@ -41,6 +41,17 @@ export const JUMP_BLAST_BURST_DURATION = 0.3;
 export const JUMP_BLAST_RADIUS = 85;
 export const JUMP_BLAST_DAMAGE = 32;
 
+// #494/#546: Anti-Missile Defense used to be a passive core-slot pick (data/coreItems.js, since
+// removed) — always-on while equipped, gating a single-target scan on a flat per-shot cooldown
+// (`range: 220, cooldown: 2.5`). Jackson: "change it to some kind of active ability in that system
+// instead of passive" — it's now a normal mountable ability with the same cooldown/duration shape
+// every other entry here uses. On activation it becomes active for `duration` seconds, during
+// which it destroys EVERY incoming enemy round that comes within `range` each frame (a limited
+// burst window, not an always-on single-target gate), then goes on `cooldown`. `range` is an
+// extra field beyond the usual cooldown/duration pair — see arena/abilities.js's `antiMissile`
+// effect for the actual scan/destroy logic (data/interceptor.js's `nearestInterceptTarget` is
+// still the reusable target-selection primitive underneath it). Starting numbers, Jackson's own
+// to retune live, not locked.
 export const ABILITIES = {
   dash: {
     name: 'Dash',
@@ -105,6 +116,13 @@ export const ABILITIES = {
     cooldown: 12,
     duration: 6,
     radius: 100,
+  },
+  antiMissile: {
+    name: 'Anti-Missile Defense',
+    effect: 'antiMissile',
+    cooldown: 13,
+    duration: 3.5,
+    range: 220,
   },
 };
 

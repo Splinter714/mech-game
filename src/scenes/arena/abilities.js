@@ -8,6 +8,7 @@ import { getAbility } from '../../data/abilities.js';
 import { initialAbilityState, canActivate, activateAbility, updateAbilityState } from '../../data/abilityState.js';
 import { ABILITY_SLOTS } from '../../data/anatomy.js';
 import { damageInRadius } from '../../data/aoe.js';
+import { nearestInterceptTarget } from '../../data/interceptor.js';
 import { otherLivePlayers } from './players.js';
 import { desaturateTexture, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { Audio } from '../../audio/index.js';
@@ -220,6 +221,31 @@ export function updateAbilities(scene, intent, delta, player) {
       } else if (!next.active && wasActive) {
         scene._despawnSmokeCloud?.(player);
         Audio.ui('sprintOff');
+      }
+    } else if (def.effect === 'antiMissile') {
+      // #494/#546: Anti-Missile Defense, converted from a passive always-on core-slot pick to an
+      // active burst-window ability — same edge cues as every other ability, plus a per-frame
+      // scan-and-destroy WHILE the burst window (`next.active`) is open, replacing the old
+      // always-on single-target scan that used to live in projectiles.js's `_updateInterceptors`.
+      if (next.active && !wasActive) Audio.ui('sprintOn');
+      else if (!next.active && wasActive) Audio.ui('sprintOff');
+      if (next.active) {
+        // Since this is now a limited burst window rather than an always-on single-shot gate, it
+        // destroys EVERY incoming enemy round in range each frame it's active, not just the
+        // nearest one — repeatedly asking `nearestInterceptTarget` (data/interceptor.js, the same
+        // reusable target-selection primitive the old passive version used) against a shrinking
+        // candidate list until nothing more is in range, rather than a fresh distance sort.
+        const incoming = scene.projectiles.filter((p) => p.owner === 'enemy' && !p.dead);
+        let target;
+        while ((target = nearestInterceptTarget(player.x, player.y, def.range, incoming))) {
+          target.dead = true;
+          target.stopTrajectorySfx?.();
+          // #527: its own dedicated FX (combat.js `_interceptFx`), not `_impactFx` — see that
+          // method's own comment for why reusing the generic per-weapon impact spark read as
+          // "nothing visibly happening" in the original #494 build.
+          scene._interceptFx?.(player.x, player.y, target.x, target.y);
+          incoming.splice(incoming.indexOf(target), 1);
+        }
       }
     }
   }

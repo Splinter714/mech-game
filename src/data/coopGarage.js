@@ -67,18 +67,20 @@ export function joinerBuild(saved, hostBuild) {
   // colour they picked in the garage. The fallback (copy of the host's build) deliberately does
   // NOT copy the host's colour — `mechColorFor` will resolve the joiner to their own per-index
   // auto-default instead, so two mechs never share the host's colour.
-  // #506/#496: `abilityMounts`/`coreMounts` ride along the same way `mounts` (weapons) always
-  // has — dropping them here would silently strip a joiner's Dash/Shield the instant they used
-  // this path, which is exactly the kind of per-owner build state this function exists to carry.
+  // #506: `abilityMounts` rides along the same way `mounts` (weapons) always has — dropping it
+  // here would silently strip a joiner's Dash the instant they used this path, which is exactly
+  // the kind of per-owner build state this function exists to carry. (#496 briefly also carried
+  // `coreMounts` for a per-owner Shield/AMS pick; that's gone with the core-slot system — shield
+  // is now an unconditional baseline every mech gets, nothing to carry here for it any more.)
   if (isUsableBuild(saved)) {
     return {
       chassisId: saved.chassisId, mounts: saved.mounts, name: saved.name, color: saved.color,
-      abilityMounts: saved.abilityMounts, coreMounts: saved.coreMounts,
+      abilityMounts: saved.abilityMounts,
     };
   }
   return {
     chassisId: hostBuild?.chassisId, mounts: hostBuild?.mounts, name: hostBuild?.name,
-    abilityMounts: hostBuild?.abilityMounts, coreMounts: hostBuild?.coreMounts,
+    abilityMounts: hostBuild?.abilityMounts,
   };
 }
 

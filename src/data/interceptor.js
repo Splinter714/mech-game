@@ -1,7 +1,10 @@
 // Pure target-selection for anti-missile point defense (#494) — no engine concept of "shoot
-// down an incoming projectile" existed before this. The cooldown GATE itself lives on Mech
-// (data/Mech.js `canIntercept`/`triggerIntercept`/`tickInterceptorCooldown`, mirroring shield's
-// own runtime-state precedent); this stays here because it needs no Mech at all, just points.
+// down an incoming projectile" existed before this. #494/#546: Anti-Missile Defense moved from a
+// passive core-slot pick (whose cooldown gate used to live on Mech) to an active mountable
+// ability — the cooldown/duration/active-window state now lives in the normal ability-state
+// system (data/abilityState.js), ticked by scenes/arena/abilities.js's `antiMissile` effect. This
+// stays here because it needs no Mech at all, just points — still the reusable target-selection
+// primitive underneath the ability's per-frame scan.
 
 // Nearest candidate (an `{x,y}`-shaped point — an enemy-fired round in practice) within `range`
 // of (x, y), or null if none qualify.

@@ -5,7 +5,7 @@
 // weapon vs. ability at all: it just asks for `itemFxKey(itemId)`.
 //
 // Replaces the flat colored-swatch placeholder (`drawSwatchIcon`, projectileArt.js) the #506
-// SECOND rework shipped as a stand-in for abilities — that swatch is now CORE_ITEMS-only.
+// SECOND rework shipped as a stand-in for abilities.
 //
 // Same calling convention as `drawWeaponIcon(g, weapon, S, c)`: `g` is a raw Phaser Graphics,
 // `S` is the super-sample scale (`ART_SCALE`), `c` is the icon's center in BOTH x and y (the
@@ -120,6 +120,27 @@ function smokeScreenIcon(g, S, c, color) {
   }
 }
 
+// Anti-Missile Defense: a point-defense "radar" glyph — two concentric detection rings around a
+// small emitter dot, with short inward ticks representing incoming fire being intercepted at the
+// perimeter — reads as "a standing defense system," distinct from every other ability glyph's own
+// travel-direction language. Carried over from the item's old passive/core-slot life (#494) when
+// it moved into the mountable-ability system as an active burst-window intercept.
+function antiMissileIcon(g, S, c, color) {
+  g.lineStyle(1.4 * S, color, 0.85);
+  g.strokeCircle(c, c, 9 * S);
+  g.lineStyle(1 * S, color, 0.4);
+  g.strokeCircle(c, c, 5.5 * S);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 - Math.PI / 2;
+    const x0 = c + Math.cos(a) * 13 * S, y0 = c + Math.sin(a) * 13 * S;
+    const x1 = c + Math.cos(a) * 9.5 * S, y1 = c + Math.sin(a) * 9.5 * S;
+    g.lineStyle(1.6 * S, 0xffffff, 0.65);
+    g.lineBetween(x0, y0, x1, y1);
+  }
+  g.fillStyle(0xffffff, 0.9);
+  g.fillCircle(c, c, 2 * S);
+}
+
 const ABILITY_ICONS = {
   dash: dashIcon,
   shieldBurst: shieldBurstIcon,
@@ -127,6 +148,7 @@ const ABILITY_ICONS = {
   droneLauncher: droneLauncherIcon,
   cloak: cloakIcon,
   smokeScreen: smokeScreenIcon,
+  antiMissile: antiMissileIcon,
 };
 
 // Defensive fallback for any future ability added to `ABILITIES` before it gets its own glyph

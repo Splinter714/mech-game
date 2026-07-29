@@ -48,7 +48,6 @@
 // and a mode swap must not need the shell to know which mode it is framing.
 
 import { INTEGRITY_BARS, CONSOLE, ARMOR_PEEK_PAD } from './hudLayout.js';
-import { getCoreItem } from './coreItems.js';
 
 // The cycle order. 'fused' is FIRST because it is the default. 'none' held that spot through the
 // #448 experiment ("a fresh run starts with no integrity display at all, does the mech's own art
@@ -538,30 +537,24 @@ export function mechPools(mech, locs) {
   };
 }
 
-// ── CORE METER (fused shield line, generalised) ────────────────────────────────────────────────
+// ── CORE METER (fused shield line) ──────────────────────────────────────────────────────────────
 //
-// New playtest ask (alongside points 6/7's shield bend/gradient fix): the fused readout's whole-
-// row bracket used to be hardcoded to shield HP. Passive/core items other than Shield (#494's
-// Anti-Missile Defense today, whatever else lands in `coreItems.js` later) also want to ride that
-// same visual — AMS as its own recharge progress, e.g. — so this reads whichever value makes
-// sense for whatever is actually mounted in the core slot, rather than always asking for shield.
+// The fused readout's whole-row bracket reads the mech's own shield fraction directly — mirrors
+// the old `CORE_ITEMS.shield.meterFrac` math from #496's since-removed passive/core-slot system,
+// just computed straight off the mech instead of dispatching through a mounted item lookup. Since
+// shield is now an unconditional baseline every player mech gets (no equip choice, and Anti-
+// Missile Defense moved into the mountable-ability system, which has its own cooldown/READY
+// readout on its own tile — see HudScene.js's ability-tile loop), there is nothing left to
+// dispatch on: this is always "the mech's shield," or nothing at all if it has none (e.g. most
+// enemy mechs — see data/enemies.js).
 //
-// Deliberately MINIMAL plumbing: each `CORE_ITEMS` entry that wants a meter owns a pure
-// `meterFrac(mech)` function (see coreItems.js) — this is just the dispatcher that looks up the
-// mounted item and calls it, degrading to "no meter" (`has: false`) for an empty slot, an unknown/
-// stale mount, or an item with no `meterFrac` of its own. `_paintFusedReadout` (HudScene.js) feeds
-// the returned `frac` into the exact same `shieldArcLayout`/`bracketOutline` geometry a literal
-// shield used to — the bracket itself has never cared what the fraction MEANS, only that it's a
-// 0..1 number, so no change was needed there at all.
-//
-// Not attempted here (flagged as follow-up rather than guessed at): a fully generic (value, max)
-// pair with its own formatting/label per item, multiple simultaneous core meters, or retrofitting
-// every OTHER readout mode (bars/paperdoll/target-disc rings) off literal `mechPools().shield` —
-// this pass only generalises the ONE call site (the fused bracket) that was asked about.
+// `_paintFusedReadout` (HudScene.js) feeds the returned `frac` into the exact same
+// `shieldArcLayout`/`bracketOutline` geometry this always used — the bracket itself never cared
+// what the fraction MEANT, only that it's a 0..1 number, so no change was needed there at all.
 export function coreMeter(mech) {
-  const id = mech?.coreMounts?.core ?? null;
-  const item = id ? getCoreItem(id) : null;
-  if (!item?.meterFrac) return { has: false, frac: 0 };
-  const frac = item.meterFrac(mech);
-  return frac == null ? { has: false, frac: 0 } : { has: true, frac: Math.max(0, Math.min(1, frac)) };
+  if (!mech?.hasShield?.()) return { has: false, frac: 0 };
+  const hp = mech.shieldTotalHp?.() ?? mech.shield?.hp ?? 0;
+  const max = mech.shieldTotalMax?.() ?? mech.shield?.max ?? 0;
+  const frac = max > 0 ? hp / max : 0;
+  return { has: true, frac: Math.max(0, Math.min(1, frac)) };
 }

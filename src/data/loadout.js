@@ -9,9 +9,8 @@
 // now; Sprint (L3/Space) is a hardcoded built-in, never mounted.
 
 import { getItem, isWeapon } from './items.js';
-import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS, ABILITY_SLOTS, CORE_SLOTS } from './anatomy.js';
+import { LOCATION_INFO, MELEE_LOCATIONS, WEAPON_SLOTS, ABILITY_SLOTS } from './anatomy.js';
 import { isAbility } from './abilities.js';
-import { isCoreItem } from './coreItems.js';
 
 // Each mountable location is a single skill slot.
 export const SLOTS_PER_LOCATION = 1;
@@ -110,31 +109,6 @@ export function validateAbilityLoadout(abilityMounts) {
   for (const slot of ABILITY_SLOTS) {
     const id = abilityMounts[slot];
     if (id && !isAbility(id)) errors.push(`${id} is not an ability`);
-  }
-  return { ok: errors.length === 0, errors };
-}
-
-// ── Core slots (#496) ─────────────────────────────────────────────────────────────────────
-// Same scalar-per-slot model as ability slots above, for the passive/always-on core items
-// (currently just Shield, data/coreItems.js).
-
-export function coreLocationOf(coreMounts, itemId) {
-  for (const slot of CORE_SLOTS) if (coreMounts[slot] === itemId) return slot;
-  return null;
-}
-
-export function canMountCore(coreMounts, slotId, itemId) {
-  if (!CORE_SLOTS.includes(slotId)) return { ok: false, reason: 'not a core slot' };
-  if (!isCoreItem(itemId)) return { ok: false, reason: 'not a core item' };
-  if (coreMounts[slotId]) return { ok: false, reason: 'slot occupied' };
-  return { ok: true };
-}
-
-export function validateCoreLoadout(coreMounts) {
-  const errors = [];
-  for (const slot of CORE_SLOTS) {
-    const id = coreMounts[slot];
-    if (id && !isCoreItem(id)) errors.push(`${id} is not a core item`);
   }
   return { ok: errors.length === 0, errors };
 }

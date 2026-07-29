@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
-import { LOCATION_INFO, ABILITY_SLOTS, CORE_SLOTS, slotKind } from '../data/anatomy.js';
+import { LOCATION_INFO, ABILITY_SLOTS } from '../data/anatomy.js';
 import { TILE_ORDER, weaponAbilityRows, drawSkillTile, updateSkillTile, TILE_UI } from '../ui/skillTiles.js';
 import { getItem } from '../data/items.js';
-import { getCoreItem } from '../data/coreItems.js';
 import { ABILITY_BINDS, INTERACT_BIND } from '../input/Controls.js';
 import { InkCache, fitScale } from '../art/inkBounds.js';
 import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
@@ -814,13 +813,13 @@ export default class HudScene extends Phaser.Scene {
     // then this player's tile row immediately to its right — rather than each hugging a screen
     // edge with the leftovers in between. Nothing here has to negotiate for room any more: the
     // band already sized the group, so the block is laid out at full size (`availW: 0`).
-    // #526-followup (new redesign, superseding the #506 FOURTH rework's two-tile double-wide row):
-    // Jackson folded the passive/core slot INTO this same row, between X and Y — three tiles now
-    // (X at 1.5 weapon-widths, core at 1, Y at 1.5 — 4 total, matching the weapon row below), none
-    // of them "double-wide" any more. `weaponAbilityRows` (ui/skillTiles.js) owns that math; it
-    // still computes both rows off ONE shared width so they can never drift apart horizontally,
-    // and reports `top` = the ability row's own top (physically highest), so this panel doesn't
-    // have to re-derive that itself below.
+    // #526-followup (redesign, superseding the #506 FOURTH rework's two-tile double-wide row):
+    // X and Y split the row's own armored width evenly (the old THIRD tile between them, the
+    // passive/core slot #496 introduced, is gone — see the header note on `panel.skillRefs`
+    // below). `weaponAbilityRows` (ui/skillTiles.js) owns that math; it still computes both rows
+    // off ONE shared width so they can never drift apart horizontally, and reports `top` = the
+    // ability row's own top (physically highest), so this panel doesn't have to re-derive that
+    // itself below.
     const { weapons: tiles, abilities: abilityTiles, top: rowsTop } =
       weaponAbilityRows(group.tilesX, group.tilesW, { bottom: this.H - 10, maxSize: CONSOLE_TILES.max });
     const last = tiles[tiles.length - 1];
@@ -892,9 +891,11 @@ export default class HudScene extends Phaser.Scene {
     panel.armorBackGfx = bars.mode === 'fused' ? this.add.graphics() : null;
 
     // Skill tiles for THIS player's own mech: the bottom row is the four weapon slots (unchanged
-    // size/position from any of the reworks); the top row is now THREE tiles — X, the passive
-    // core slot, and Y, in that order (`weaponAbilityRows`, ui/skillTiles.js) — the passive slot
-    // folded into this same row per Jackson's redesign, no longer Garage-only chrome.
+    // size/position from any of the reworks); the top row is X and Y (`weaponAbilityRows`,
+    // ui/skillTiles.js). The old THIRD tile between them — the passive core slot (#496,
+    // Shield/Anti-Missile Defense) — is gone along with the core-slot system itself: shield is an
+    // unconditional baseline with no tile of its own, and Anti-Missile Defense is now a normal
+    // mountable ability, drawn through the same branch every other ability tile uses below.
     const mode = this._panelMode(panel);
     panel.skillBar = this.add.container(0, 0);
     for (const r of tiles) {
@@ -902,15 +903,6 @@ export default class HudScene extends Phaser.Scene {
       panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, { loc: r.loc, itemId: id });
     }
     for (const r of abilityTiles) {
-      if (slotKind(r.loc) === 'core') {
-        const id = snapshot?.mech?.coreMounts?.[r.loc] ?? null;
-        // The passive slot has no activation button (nothing to bind) and keeps its real item
-        // icon (see skillTiles.js's `stackedTileLayout` doc).
-        panel.skillRefs[r.loc] = drawSkillTile(this, panel.skillBar, r, {
-          loc: r.loc, itemId: id, mode, bindGlyph: '', emptyLabel: 'core',
-        });
-        continue;
-      }
       const id = snapshot?.mech?.abilityMounts?.[r.loc] ?? null;
       // #544: the ability tile no longer nips its own outer-top corner into the console notch —
       // that whole "nipped-corner" treatment (#526) is removed project-wide, see
@@ -923,8 +915,8 @@ export default class HudScene extends Phaser.Scene {
     }
     const rowTop = tiles.length ? tiles[0].y : this.H - 10;
     // The block's outer TOP is whichever row `weaponAbilityRows` reported as physically highest
-    // (`rowsTop`) — the ability row (X/core/Y). Falls back to the weapon row's own top if the rows
-    // call returned nothing (no tiles at all).
+    // (`rowsTop`) — the ability row (X/Y). Falls back to the weapon row's own top if the rows call
+    // returned nothing (no tiles at all).
     panel.tileTop = rowsTop ?? rowTop;
     // The block's outer box, so the console can recess one bay behind BOTH rows — its bottom edge
     // is now always the weapon row's own bottom (the ability row rides above it, anchored to the
@@ -1083,31 +1075,6 @@ export default class HudScene extends Phaser.Scene {
         } else {
           opts.subtitle = 'READY'; opts.subtitleColor = C.good;
         }
-      }
-      updateSkillTile(panel.skillRefs[slot], opts);
-    }
-
-    // The passive/core tile — same per-slot shape as the ability tiles above, but with no button
-    // to press (it's always-on) and its own item-specific status. Anti-Missile Defense reads its
-    // live recharge state off the mech's own interceptor cooldown; Shield shows a static label
-    // (its condition already rides the shield-line bracket, `_paintFusedReadout`, via `coreMeter`).
-    for (const slot of CORE_SLOTS) {
-      const id = mech.coreMounts?.[slot] ?? null;
-      const opts = { loc: slot, itemId: id, mode, emptyLabel: 'core', bindGlyph: '' };
-      if (id === 'antiMissile') {
-        const item = getCoreItem('antiMissile');
-        const remaining = mech._interceptorCooldown ?? 0;
-        const full = item?.cooldown || 1;
-        if (remaining > 0) {
-          opts.onCooldown = true;
-          opts.cooldownFrac = remaining / full;
-          opts.subtitle = `${remaining.toFixed(1)}s`;
-          opts.subtitleColor = C.cooldown;
-        } else {
-          opts.subtitle = 'READY'; opts.subtitleColor = C.good;
-        }
-      } else if (id === 'shield') {
-        opts.subtitle = 'SHIELD'; opts.subtitleColor = C.accent;
       }
       updateSkillTile(panel.skillRefs[slot], opts);
     }
@@ -1825,11 +1792,12 @@ export default class HudScene extends Phaser.Scene {
   //
   // And ONE whole-mech shield-line BRACKET wrapping the top+sides of the row (`shieldArcLayout` —
   // its own geometry, see that module for why it isn't `ringSweep` or the paper doll's rectangular
-  // outline), painted into `fusedGfx` alongside the structure wash. #526-followup generalised this
-  // from "always literal shield HP" to `coreMeter` (healthReadout.js) — whichever core item is
-  // actually mounted supplies the fraction (shield HP, or AMS recharge progress, etc.) — and fixed
-  // two related reports on the same paint: point 6 ("the bend/corner doesn't track the panel's
-  // fixed geometry while depleting") and point 7 ("the opacity gradient is a static overlay that
+  // outline), painted into `fusedGfx` alongside the structure wash. `coreMeter` (healthReadout.js)
+  // supplies the fraction, read straight off the mech's own shield — see that function's own doc
+  // for why (the #526-followup core-item dispatch it briefly generalised into is gone along with
+  // the core-slot system). #526-followup also fixed two related reports on the same paint: point
+  // 6 ("the bend/corner doesn't track the panel's fixed geometry while depleting") and point 7
+  // ("the opacity gradient is a static overlay that
   // doesn't recede with the fill") — see `FUSED_SHIELD_GRADIENT`'s own comment for how those turned
   // out to be the same underlying issue.
   _paintFusedReadout(panel, mech) {
@@ -1944,8 +1912,8 @@ export default class HudScene extends Phaser.Scene {
     }
 
     // Shield-line: ONE bracket over the top+sides of the whole row — a pool, not a per-tile layer,
-    // same "only draw it if there's something to show" rule the paper doll's outline follows —
-    // generalised (`coreMeter`) to whatever the core slot's own mounted item supplies.
+    // same "only draw it if there's something to show" rule the paper doll's outline follows.
+    // `coreMeter` (healthReadout.js) reads the mech's own shield fraction directly.
     //
     // #526-followup (points 6/7): only ONE always-on reference TRACK now, at a fixed dim alpha
     // (`FUSED_SHIELD_TRACK_ALPHA`) and the pad-0 shape — so there is exactly one "this is the

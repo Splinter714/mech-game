@@ -6,8 +6,6 @@ import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
-import { nearestInterceptTarget } from '../../data/interceptor.js';
-import { getCoreItem } from '../../data/coreItems.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
@@ -35,9 +33,12 @@ const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
     this.projFx.clear();
-    // #494: anti-missile point defense — runs once per frame, ahead of the per-round loop below,
-    // since it scans the WHOLE projectile list rather than reasoning about one round at a time.
-    this._updateInterceptors(dt);
+    // #494/#546: anti-missile point defense used to run here as an always-on per-frame scan
+    // (`_updateInterceptors`, gated on a passive core-slot equip choice). It's now an ACTIVE
+    // mountable ability (data/abilities.js's `antiMissile`) ticked alongside every other ability
+    // in `scenes/arena/abilities.js` — see `_tickAntiMissile` there for the burst-window scan that
+    // replaced this call. `p.dead` still needs the same early-exit guard below (#527) since an
+    // intercepted round can still be marked dead earlier this same frame.
     // #72 own-hex transparency: precompute the hexes occupied by everything a round could HIT
     // this frame — a player round may fly into any living enemy's soft-cover hex (and strike
     // it); an enemy round into the player's. Each round adds its own origin hexes (so firing
@@ -63,9 +64,10 @@ export const ProjectilesMixin = {
     const enemyIndex = this._projEnemyIndex;
     for (const p of this.projectiles) {
       // #527: a round can already be `dead` walking INTO this loop — currently only the
-      // Anti-Missile interceptor pass above does this, marking a round shot down before it's
-      // ever moved/hit-tested this frame. Without this guard, nothing here reads `p.dead` at
-      // entry (only a few narrow spots deeper down check it defensively), so an "intercepted"
+      // Anti-Missile ability's burst-window scan does this (arena/abilities.js's
+      // `_tickAntiMissile`, ticked before `_updateProjectiles` runs each frame), marking a round
+      // shot down before it's ever moved/hit-tested this frame. Without this guard, nothing here
+      // reads `p.dead` at entry (only a few narrow spots deeper down check it defensively), so an "intercepted"
       // round still fully advanced, could still detonate against its target, and still got
       // drawn as a normal in-flight round — only vanishing on the *next* frame's end-of-loop
       // filter. That's the bug behind #527 ("not seeing it happening") — the round visibly
@@ -582,33 +584,6 @@ export const ProjectilesMixin = {
       if (!isMobileEnemy(e)) continue;
       const { dx, dy } = computeImpulse(p.x, p.y, radius, strength, sign, e.x, e.y, dt);
       e.x += dx; e.y += dy;
-    }
-  },
-
-  // #494: Anti-Missile Defense — every live player whose core-slot pick is 'antiMissile' scans
-  // for the nearest enemy-fired round within its range each frame; once off cooldown, the
-  // nearest one found is simply destroyed (no explosion, no damage credit — it's a shot-down
-  // round, not a kill). `mech.canIntercept()` gates on BOTH the item actually being equipped
-  // and the cooldown, so an unequipped player costs one cheap boolean check and nothing more.
-  _updateInterceptors(dt) {
-    for (const pl of livePlayersOf(this)) {
-      // Optional chaining: the many lightweight fake `mech` fixtures across this test suite
-      // don't implement the full Mech surface, and this pass runs unconditionally for every
-      // live player each frame — same defensive treatment `tickShield`/`tickStatusEffects` get
-      // elsewhere for a non-Mech `mech` (e.g. an HpBody-backed enemy).
-      pl.mech.tickInterceptorCooldown?.(dt);
-      if (!pl.mech.canIntercept?.()) continue;
-      const item = getCoreItem('antiMissile');
-      const incoming = this.projectiles.filter((p) => p.owner === 'enemy' && !p.dead);
-      const target = nearestInterceptTarget(pl.x, pl.y, item.range, incoming);
-      if (!target) continue;
-      target.dead = true;
-      target.stopTrajectorySfx?.();
-      // #527: its own dedicated FX (combat.js `_interceptFx`), not `_impactFx` — see that
-      // method's own comment for why reusing the generic per-weapon impact spark was the
-      // reason this read as "nothing visibly happening" in the original #494 build.
-      this._interceptFx(pl.x, pl.y, target.x, target.y);
-      pl.mech.triggerIntercept(item.cooldown);
     }
   },
 
