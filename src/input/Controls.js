@@ -46,6 +46,18 @@ import { ABILITY_SLOTS } from '../data/anatomy.js';
 export const STICK_DEADZONE = 0.25;
 const TRIGGER_THRESHOLD = 0.3;
 
+// #565: rescale a raw stick (x, y) so its output magnitude ramps smoothly from 0 at the
+// deadzone edge up to 1 at full deflection, instead of the old hard on/off snap (zero inside
+// the deadzone, then an instant jump to the raw value the moment it's crossed). Direction is
+// preserved exactly — only magnitude is reshaped — so this is a drop-in replacement for the
+// previous "is magnitude > deadzone ? raw value : 0" gating.
+function applyStickDeadzone(x, y, deadzone) {
+  const mag = Math.hypot(x, y);
+  if (mag <= deadzone) return { x: 0, y: 0, mag: 0 };
+  const scaled = Math.min(1, (mag - deadzone) / (1 - deadzone));
+  return { x: (x / mag) * scaled, y: (y / mag) * scaled, mag: scaled };
+}
+
 // #386: master switch for the on-screen touch sticks. OFF — on an iPad they activated even
 // with a Bluetooth controller attached (touchCapable() is true on any touch device) and
 // hijacked input, breaking the gamepad; the owner also concluded touch controls aren't viable
@@ -217,10 +229,6 @@ export class Controls {
     this._px = 0; this._py = 0;    // last pointer position, to detect real mouse movement
     this._padReloadDown = false;   // previous frame's raw B state, for edge-detecting reload
     this._kbReloadDown = false;    // previous frame's raw F state, for edge-detecting reload
-    // #501: previous frame's raw D-pad-down state, for edge-detecting the movement-feel toggle
-    // (pad only — this is a live A/B comparison aid for the re-experiment, not a bound feature
-    // that needs a keyboard equivalent).
-    this._padDpadDownDown = false;
     // #506: previous frame's raw per-slot ability button state, one pair per device, for
     // edge-detecting each ability's press exactly like dash/reload above.
     this._padAbilityDown = {}; this._kbAbilityDown = {};
@@ -292,10 +300,13 @@ export class Controls {
     const p = this.scene.input.activePointer;
     const pad = this.pad();
     const ls = pad?.leftStick, rs = pad?.rightStick;
+    // #565: the aim stick's deadzone is rescaled (not just gated) so fine aiming near the edge
+    // ramps in smoothly instead of popping straight to the raw value.
+    const rsDz = rs ? applyStickDeadzone(rs.x, rs.y, STICK_DEADZONE) : null;
 
     // ── Decide which scheme is active (last device used wins) ──
     const padMove = !!(ls && ls.length() > STICK_DEADZONE);
-    const padAim = !!(rs && rs.length() > STICK_DEADZONE);
+    const padAim = !!(rsDz && rsDz.mag > 0);
     const padBtn = !!(pad && pad.buttons.some((b) => b && b.pressed));
     const padActive = padMove || padAim || padBtn;
 
@@ -369,7 +380,7 @@ export class Controls {
     // ── Aim ── pad: right stick (hold last angle when centred); kbm: mouse pointer. ──
     let aim;
     if (padMode) {
-      if (padAim) this.aimAngle = Math.atan2(rs.y, rs.x);
+      if (padAim) this.aimAngle = Math.atan2(rsDz.y, rsDz.x);
       aim = { mode: 'angle', angle: this.aimAngle };
     } else {
       aim = { mode: 'pointer', x: p.worldX, y: p.worldY };
@@ -418,14 +429,10 @@ export class Controls {
       ability[slot] = padMode ? padPressed : kbPressed;
     }
 
-    // #501: D-pad down live-toggles the player's movement-feel profile (twist-slew re-experiment
-    // vs. the pre-#501 legacy feel) for A/B comparison in play — pad only, edge-detected the same
-    // way as reload/ability above so a held button can't repeat-toggle every frame.
-    const padDpadDown = !!(pad && pad.buttons[PAD.DPAD_DOWN] && pad.buttons[PAD.DPAD_DOWN].pressed);
-    const movementTogglePressed = padMode && padDpadDown && !this._padDpadDownDown;
-    this._padDpadDownDown = padDpadDown;
-
-    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', ability, reloadPressed, movementTogglePressed };
+    // #556: the D-pad-down live-toggle shortcut was removed — the pause-menu "MOVEMENT FEEL"
+    // row (PauseMenuScene.js, calling `applyMovementToggle` directly) is now the only way to
+    // change movement feel, so there's no per-frame pad edge to report here.
+    return { move, aim, fire, mode: padMode ? 'pad' : 'kbm', ability, reloadPressed, movementTogglePressed: false };
   }
 
   // A neutral "nothing pressed" ability map, for the early-return branches (touch, pad-only
