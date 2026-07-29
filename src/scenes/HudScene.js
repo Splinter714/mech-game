@@ -1030,7 +1030,7 @@ export default class HudScene extends Phaser.Scene {
     const weapons = mech.weapons();
     for (const loc of TILE_ORDER) {
       const id = mech.mounts[loc][0] ?? null;
-      const opts = { loc, itemId: id, mode };
+      const opts = { loc, itemId: id, mode, firing: !!snapshot.firingNow?.[loc] };
       const w = weapons.find((x) => x.location === loc);
       if (w) {
         opts.iconAlpha = w.online ? 1 : 0.3;

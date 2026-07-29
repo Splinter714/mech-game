@@ -55,6 +55,9 @@ export const TILE_UI = {
   // (healthReadout.js) for the matching removal on the shield-meter frame/panel side.
   edgeLit: 0x46566b,  // the crisp outer edge — brighter than the old flat `edge`
   halo: 0x5ec8e0,     // the faint outside-the-edge pop (the shared UI accent)
+  // Live-chat ask: a hot, unmistakable halo while a weapon's trigger is actually down — distinct
+  // from the cool accent `sel`/`halo` use for "focused/mounted" so the two states never blur.
+  firing: 0xff9c3c, firingEdge: 0xffd199,
 };
 
 // Paint one tile's PLATE — the rounded body, its edge and the halo just outside it. A Graphics
@@ -65,15 +68,21 @@ export const TILE_UI = {
 // bigger, asymmetric round on their own outer-top corner so they'd taper into the console's own
 // nipped-corner notch (#526). Removed along with that notch shape — every tile, weapon or
 // ability, now rounds all four corners at the same plain `TILE_UI.radius`.
-export function paintTilePlate(g, rect, { selected = false } = {}) {
+//
+// Live-chat ask: `firing` (true while the tile's own weapon is actively being fired, see
+// scenes/arena/firing.js's `player.firingNow`) takes over the SAME halo+edge language `selected`
+// already uses, just hotter — the two never co-occur in practice (`selected` is Garage-only,
+// `firing` Arena-only), so one param each is enough; `firing` wins if somehow both were set.
+export function paintTilePlate(g, rect, { selected = false, firing = false } = {}) {
   const { x, y, w, h } = rect;
   const r = Math.min(TILE_UI.radius, w / 4);
   g.clear();
   // Outside-the-edge halo: two fading passes, since plain Graphics has no blur (the same stacked-
   // silhouette stand-in the HUD's chevron glow and shield bar use).
-  const haloCol = selected ? TILE_UI.sel : TILE_UI.halo;
-  for (const [pad, a] of [[3.5, selected ? 0.20 : 0.07], [1.5, selected ? 0.40 : 0.16]]) {
-    g.lineStyle(2, haloCol, a);
+  const haloCol = firing ? TILE_UI.firing : selected ? TILE_UI.sel : TILE_UI.halo;
+  const haloBoost = firing ? 1.4 : 1;   // hotter/more opaque than a plain "selected" glow
+  for (const [pad, a] of [[3.5, (selected || firing ? 0.20 : 0.07) * haloBoost], [1.5, (selected || firing ? 0.40 : 0.16) * haloBoost]]) {
+    g.lineStyle(2, haloCol, Math.min(1, a));
     g.strokeRoundedRect(x - pad, y - pad, w + pad * 2, h + pad * 2, r + pad);
   }
   // The plate itself.
@@ -83,7 +92,7 @@ export function paintTilePlate(g, rect, { selected = false } = {}) {
   // just inside this same top edge — with the two lines only ~1.5px apart it read as a stray
   // double border along the top of every tile, so it's gone; the crisp edge alone is the border,
   // same as every other side of the tile.)
-  g.lineStyle(selected ? 2 : 1.25, selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
+  g.lineStyle(selected || firing ? 2 : 1.25, firing ? TILE_UI.firingEdge : selected ? TILE_UI.sel : TILE_UI.edgeLit, 1);
   g.strokeRoundedRect(x, y, w, h, r);
 }
 
@@ -108,14 +117,16 @@ const WIDE_ASPECT = 1.6;
 export function isWideTile(rect) { return rect.w > rect.h * WIDE_ASPECT; }
 
 // #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo, make it visible
-// sooner"): the bar's WIDTH already tracks `ammoFrac` exactly (full mag = full-width bar) — what
-// made it easy to miss was that it stayed the same flat GOOD colour across the entire 33%-100%
-// range, on a thin (3px) track, so a magazine burning down from full read as "no change" until it
-// suddenly snapped to warn/bad near the end. Two fixes: the track is thicker now (`AMMO_BAR_H`,
-// see `drawSkillTile`), and the WARN colour now kicks in at `AMMO_WARN_FRAC` (60%) instead of the
-// old 33% — noticeably earlier, while `AMMO_LOW_FRAC` (25%) still gates the final BAD/red state.
+// sooner"): the bar's FILL already tracks `ammoFrac` exactly (full mag = full bar) — what made it
+// easy to miss was that it stayed the same flat GOOD colour across the entire 33%-100% range, on
+// a thin track, so a magazine burning down from full read as "no change" until it suddenly
+// snapped to warn/bad near the end. Two fixes: the WARN colour now kicks in at `AMMO_WARN_FRAC`
+// (60%) instead of the old 33% — noticeably earlier — while `AMMO_LOW_FRAC` (25%) still gates the
+// final BAD/red state; and (live-chat ask, this pass) the gauge itself is a real vertical column
+// inset inside the tile now, not a hairline at the bottom edge — see `drawSkillTile`.
 // Pulled out as a pure function so the thresholds are unit-testable without booting Phaser.
-export const AMMO_BAR_H = 5;
+export const AMMO_BAR_W = 7;      // the vertical column's width
+export const AMMO_BAR_PAD = 6;    // top/bottom inset from the tile's own edges
 export const AMMO_WARN_FRAC = 0.6;
 export const AMMO_LOW_FRAC = 0.25;
 export function ammoBarColor(frac) {
@@ -352,11 +363,15 @@ export function drawSkillTile(scene, parent, rect, opts) {
       wordWrap: { width: rect.w - 6, useAdvancedWrap: true },
     }).setOrigin(0.5, 0);
   }
-  // #526 (playtest: "the ammo bar is only noticeable when nearly out of ammo") — thickened from
-  // 3px to `AMMO_BAR_H` so it reads as a real gauge at a glance instead of a hairline that only
-  // catches the eye once it's short and red.
-  const barTrack = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.track).setOrigin(0, 0.5).setVisible(false);
-  const bar = scene.add.rectangle(rect.x + 5, rect.y + rect.h - AMMO_BAR_H, rect.w - 10, AMMO_BAR_H, TILE_UI.good).setOrigin(0, 0.5).setVisible(false);
+  // Live-chat ask: the ammo/cooldown gauge is a real vertical COLUMN inset along the tile's right
+  // edge now, spanning nearly its full height, rather than a hairline at the bottom — origin
+  // (0.5, 1) bottom-anchors it, so `setScale(1, frac)` in `updateSkillTile` grows/shrinks it
+  // straight up out of the floor instead of sideways, reading as depleting OUT of the box.
+  const barCx = rect.x + rect.w - 5 - AMMO_BAR_W / 2;
+  const barBottom = rect.y + rect.h - AMMO_BAR_PAD;
+  const barH = rect.h - AMMO_BAR_PAD * 2;
+  const barTrack = scene.add.rectangle(barCx, barBottom, AMMO_BAR_W, barH, TILE_UI.track).setOrigin(0.5, 1).setVisible(false);
+  const bar = scene.add.rectangle(barCx, barBottom, AMMO_BAR_W, barH, TILE_UI.good).setOrigin(0.5, 1).setVisible(false);
   parent.add([plate, bg, bind, icon, plus, subtitle, barTrack, bar]);
   const refs = { rect, wide, stacked, plate, bg, bind, icon, plus, subtitle, barTrack, bar };
   updateSkillTile(refs, opts);
@@ -371,7 +386,7 @@ export function drawSkillTile(scene, parent, rect, opts) {
 // reproduces the old weapon-tile defaults exactly, so no existing behavior changes.
 export function updateSkillTile(refs, opts) {
   const { rect, plate, bind, icon, plus, subtitle, barTrack, bar, wide, stacked = false } = refs;
-  const { loc, itemId, mode = 'kbm', selected = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
+  const { loc, itemId, mode = 'kbm', selected = false, firing = false, subtitle: sub = '', subtitleColor = TILE_UI.dim,
     iconAlpha = 1, ammoFrac = null, onCooldown = false, cooldownFrac = 0,
     // Falls back to the old SKILL_BINDS[loc] derivation ONLY when `loc` is actually a weapon
     // location — an ability/core `loc` (not in SKILL_BINDS) degrades to an empty glyph instead
@@ -380,7 +395,7 @@ export function updateSkillTile(refs, opts) {
     emptyLabel = 'weapon' } = opts;
 
   // #544: `nipCorners` (#526) is gone — see `paintTilePlate`'s own comment.
-  paintTilePlate(plate, rect, { selected });
+  paintTilePlate(plate, rect, { selected, firing });
   bind.setText(bindGlyph).setColor(selected ? '#efc14a' : TILE_UI.accent);
 
   // #506 THIRD rework: a wide tile sizes its icon off the tile's own HEIGHT (via
@@ -397,16 +412,16 @@ export function updateSkillTile(refs, opts) {
     plus.setVisible(false);
     subtitle.setText(sub).setColor(subtitleColor);
     if (onCooldown) {
-      // #238: the bar fills back up left-to-right as the lockout counts down (1 - remaining
+      // #238: the bar fills back up bottom-to-top as the lockout counts down (1 - remaining
       // fraction), in the distinct cooldown blue — reads as "recharging," clearly different
       // from the red "dry and just sitting there" look an out-of-cooldown empty magazine
       // would otherwise share.
       barTrack.setVisible(true);
-      bar.setVisible(true).setScale(Math.max(0, Math.min(1, 1 - cooldownFrac)), 1)
+      bar.setVisible(true).setScale(1, Math.max(0, Math.min(1, 1 - cooldownFrac)))
         .setFillStyle(TILE_UI.cooldownHex);
     } else if (ammoFrac != null) {
       barTrack.setVisible(true);
-      bar.setVisible(true).setScale(Math.max(0, Math.min(1, ammoFrac)), 1)
+      bar.setVisible(true).setScale(1, Math.max(0, Math.min(1, ammoFrac)))
         .setFillStyle(ammoBarColor(ammoFrac));
     } else {
       barTrack.setVisible(false); bar.setVisible(false);

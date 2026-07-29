@@ -61,6 +61,11 @@ export const FiringMixin = {
     player.heldAudio ??= {};
     player.fireCooldowns ??= {};
     player.chargeState ??= {};   // #493: per-slot { charging, elapsed } for chargeable weapons
+    // Live-chat ask: a HUD tile should show when its weapon is actively firing. General on
+    // purpose (unlike `heldAudio`, which is narrowed to held-SFX weapons only) — true whenever
+    // the trigger is down and the weapon can actually fire, single-shot or continuous alike.
+    // Chargeable weapons set their own (see `_handleChargeFire` below, `state.charging`).
+    player.firingNow ??= {};
     // Stamp the frame we read the fire input, so the SFX latency debug (window.__sfxDebug)
     // can measure our code-path cost from here to the audio node's start().
     Audio.markTrigger();
@@ -82,6 +87,7 @@ export const FiringMixin = {
         cd = this._fireInterval(w.weapon);
       }
       player.fireCooldowns[w.location] = Math.max(0, cd);
+      player.firingNow[w.location] = !!(intent.fire[w.location] && fireReady);
 
       // Continuous beam visual tracking (#86): a held sustained/stream hitscan (the beam
       // laser) only re-pins its beam line on the block above, which runs at the WEAPON's own
@@ -123,6 +129,7 @@ export const FiringMixin = {
     const state = (player.chargeState[w.location] ??= { charging: false, elapsed: 0, aimDrift: 0, lastAim: null });
     if (held && fireReady) {
       if (!state.charging) { state.charging = true; state.elapsed = 0; state.aimDrift = 0; state.lastAim = null; }
+      player.firingNow[w.location] = true;   // charging reads as "firing" on the HUD tile too
       state.elapsed = Math.min(w.weapon.delivery.chargeable.maxTime, state.elapsed + dt);
       // Optional chaining: a few unit tests (chargeFire.test.js) drive this state machine against
       // a minimal fake scene with no muzzle/aim system at all, on purpose — they're scoped to the
@@ -138,6 +145,7 @@ export const FiringMixin = {
     }
     // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve
     // whatever charge had accumulated, if any.
+    player.firingNow[w.location] = false;
     if (state.charging) {
       if (state.elapsed >= w.weapon.delivery.chargeable.minTime) this._releaseCharge(w, player, state);
       else { state.charging = false; state.elapsed = 0; }

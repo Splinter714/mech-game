@@ -503,6 +503,9 @@ export function hudPlayerSnapshot(p) {
     // real cooldown fill without reaching into scene internals. Shallow ref — read-only
     // downstream, ticked every frame by scenes/arena/abilities.js, so no clone needed.
     abilityStates: p.abilityStates,
+    // Live-chat ask: which weapon slots are actively firing right now, so a tile can show it.
+    // Shallow ref, ticked every frame by scenes/arena/firing.js — same convention as above.
+    firingNow: p.firingNow,
     // #368: each player's own off-screen lock chevron rides this same channel rather than a
     // second parallel one — the count-change rebuild in HudScene then covers the chevrons too.
     lock: lockPointOf(p),
