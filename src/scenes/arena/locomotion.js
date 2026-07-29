@@ -543,10 +543,20 @@ export const LocomotionMixin = {
     const SHAKE_MAX_PX = 2.5; // hard cap on camera offset (was 4) — softer ceiling
     const SHAKE_MS = 260;     // long, low tremble rather than a discrete per-step tick (was 150,
                                // originally 60); still shorter than the ~500ms between footfalls
-    const cam = this.cameras.main;
     const speedScale = Phaser.Math.Clamp(Math.abs(player.speed) / maxSpeed, 0, 1);
     const px = Math.min(SHAKE_MAX_PX, powerPx * SHAKE_GAIN) * (0.5 + 0.5 * speedScale);
+    this._shakeCamera(px, SHAKE_MS);
+  },
+
+  // #564: the generic px→camera.shake() conversion extracted out of `_footShake` above, so any
+  // other caller (e.g. combat.js's incoming-damage feedback) that wants "the world jolts by
+  // roughly N pixels for M ms" doesn't have to re-derive Phaser's fraction-of-viewport intensity
+  // math itself. Guarded for scenes/doubles with no real camera (same convention `_aoeBlastFx`,
+  // combat.js, already used inline before this existed).
+  _shakeCamera(px, ms, force = true) {
+    const cam = this.cameras?.main;
+    if (!cam?.shake || px <= 0) return;
     const intensity = px / Math.max(1, cam.height);
-    cam.shake(SHAKE_MS, intensity, true);   // force=true so a new step overrides the tail of the last
+    cam.shake(ms, intensity, force);
   },
 };

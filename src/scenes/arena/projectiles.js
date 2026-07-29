@@ -49,14 +49,18 @@ export const ProjectilesMixin = {
     // #347: every player's own hex is transparent to player-owned rounds (a round leaving a
     // mech standing in forest must not self-detonate at its own muzzle) — one Set covering all
     // of them, which for one player is the same single entry as before.
-    const playerTransparent = new Set(
-      livePlayersOf(this).map((pl) => this._hexKeyAt(pl.x, pl.y)));
-    const enemyTransparent = new Set();
-    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyTransparent.add(this._hexKeyAt(e.x, e.y));
-    // #168: a coarse spatial index over the living enemies, rebuilt once per frame, so a
-    // dumbfire round's nearest-enemy lookup checks only nearby cells rather than scanning every
-    // enemy. `nearest(x,y)` returns the EXACT same enemy the old full `_nearestEnemy` scan would.
-    const enemyIndex = this._buildEnemyIndex();
+    // #568: these three (both transparency Sets + the spatial index below) used to be rebuilt
+    // from scratch every single frame regardless of whether anything had actually moved — real
+    // GC pressure in the hottest loop in the game (every projectile, every frame). Now cached on
+    // the scene and only rebuilt when a live player/enemy's HEX actually changed (or the live
+    // enemy count changed — a spawn or a kill), via `_syncProjFrameCache` below.
+    this._syncProjFrameCache();
+    const playerTransparent = this._projPlayerTransparent;
+    const enemyTransparent = this._projEnemyTransparent;
+    // #168: a coarse spatial index over the living enemies, so a dumbfire round's nearest-enemy
+    // lookup checks only nearby cells rather than scanning every enemy. `nearest(x,y)` returns
+    // the EXACT same enemy the old full `_nearestEnemy` scan would.
+    const enemyIndex = this._projEnemyIndex;
     for (const p of this.projectiles) {
       // #527: a round can already be `dead` walking INTO this loop — currently only the
       // Anti-Missile interceptor pass above does this, marking a round shot down before it's
@@ -384,7 +388,7 @@ export const ProjectilesMixin = {
             this._damageSoftCoverHex?.(this._hexKeyAt(ally.x, ally.y));
           } else {
             const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-            this._damagePlayerAt(dmg, ally, { weaponId: p.weaponId });   // #423: friendly fire — no enemy kind
+            this._damagePlayerAt(dmg, ally, { weaponId: p.weaponId, dot: p.dot });   // #423: friendly fire — no enemy kind. #560: symmetric DoT.
             this._impactFx(p.x, p.y, p.color, p.kind, p.splash, p.weaponId);
           }
           continue;
@@ -443,7 +447,7 @@ export const ProjectilesMixin = {
             continue;
           }
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
-          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId, shotId: p._statShotId ?? null, spawnerKind: p._spawnerKind ?? null });
+          if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId, shotId: p._statShotId ?? null, spawnerKind: p._spawnerKind ?? null, dot: p.dot });   // #560: symmetric DoT
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color, false, { weaponId: p.weaponId, pullId: p.pullId ?? null, dot: p.dot });
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
@@ -873,8 +877,43 @@ export const ProjectilesMixin = {
     }
   },
 
-  // #168: a coarse uniform-grid spatial index over the living enemies, rebuilt once per frame.
-  // `nearest(x, y)` returns the closest living enemy to a point — the EXACT same result the old
+  // #568: single-pass cache sync for `_updateProjectiles`'s per-frame own-hex transparency Sets
+  // and the enemy spatial index. Stamps each live player/enemy's current hex key onto the entity
+  // itself (`_pjHexKey`) and compares against what was stamped last frame — if every entity's hex
+  // is unchanged AND the live enemy count is unchanged (nothing spawned or died), the previously
+  // built Sets/index are still exactly correct and this is a no-op past the comparison scan. Only
+  // a genuine change (a unit crossed a hex boundary, or the roster changed) pays for fresh Set/Map
+  // allocations. A brand-new player/enemy object (fresh sortie, new spawn) has no `_pjHexKey` yet,
+  // so it always compares unequal on its first tick — the cache is never stale across a scene
+  // reset without needing an explicit clear here.
+  _syncProjFrameCache() {
+    let changed = !this._projPlayerTransparent || !this._projEnemyTransparent || !this._projEnemyIndex;
+    const players = livePlayersOf(this);
+    for (const pl of players) {
+      const k = this._hexKeyAt(pl.x, pl.y);
+      if (pl._pjHexKey !== k) { pl._pjHexKey = k; changed = true; }
+    }
+    let liveCount = 0;
+    for (const e of this.enemies) {
+      if (e.mech.isDestroyed()) continue;
+      liveCount++;
+      const k = this._hexKeyAt(e.x, e.y);
+      if (e._pjHexKey !== k) { e._pjHexKey = k; changed = true; }
+    }
+    if (liveCount !== this._projCachedLiveCount) { this._projCachedLiveCount = liveCount; changed = true; }
+    if (!changed) return;
+    const playerTransparent = new Set();
+    for (const pl of players) playerTransparent.add(pl._pjHexKey);
+    const enemyTransparent = new Set();
+    for (const e of this.enemies) if (!e.mech.isDestroyed()) enemyTransparent.add(e._pjHexKey);
+    this._projPlayerTransparent = playerTransparent;
+    this._projEnemyTransparent = enemyTransparent;
+    this._projEnemyIndex = this._buildEnemyIndex();
+  },
+
+  // #168: a coarse uniform-grid spatial index over the living enemies. #568: rebuilt only when
+  // `_syncProjFrameCache` above detects an actual hex change/roster change, not unconditionally
+  // every frame. `nearest(x, y)` returns the closest living enemy to a point — the EXACT same result the old
   // full O(enemies) `_nearestEnemy` scan gave, but by expanding Chebyshev rings of grid cells
   // outward from the query cell and stopping as soon as no unsearched cell could possibly hold
   // a closer enemy. Correctness proof: the query point sits inside its own cell, so a cell that

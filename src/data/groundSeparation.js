@@ -45,6 +45,14 @@ export const MASS_SMALL = 1;      // tank, infantry
 export const MASS_LARGE = 4;      // mech, carrier
 export const MASS_IMMOBILE = Infinity;   // turret / emplaced: an obstacle, never displaced
 
+// #567: the largest ground-unit radius (`groundEnemyRadius`, arena/shared.js) tops out around
+// ~28-30px for even the biggest chassis/scale, so two units can never overlap once their CENTRES
+// are more than ~60px apart. `CELL_SIZE` below is picked comfortably above that ceiling (with
+// margin for oversized future kinds) so the 3x3-neighborhood bucket scan below never has to
+// widen its search — any pair that could possibly overlap always falls within one cell of each
+// other.
+const CELL_SIZE = 128;
+
 // Resolve every overlapping pair of ground units by pushing them apart.
 //
 // `units`   — live, non-flying ground units. Mutated in place, like every other per-frame
@@ -59,43 +67,79 @@ export const MASS_IMMOBILE = Infinity;   // turret / emplaced: an obstacle, neve
 //             share, so the pair still separates, just asymmetrically — which is exactly right
 //             when one of them is backed against a wall.
 //
+// #567: was an uncapped O(n²) all-pairs scan — cheap at today's garrison sizes but the first
+// thing to show up as a frame-rate dip if a squad ever gets much bigger (a gate assault). Now
+// buckets units into a uniform grid (`CELL_SIZE` above) and only tests a pair once each unit
+// lands in the same or a neighboring cell as the other — near-linear in the common case where
+// units are spread across more than a couple of cells, and behaviorally identical to the old
+// full scan (nothing that COULD overlap is ever skipped — see the `CELL_SIZE` note above).
+//
 // Returns the number of overlapping pairs resolved, which is all a caller or test needs.
 export function separateGroundUnits(units, { radiusOf, massOf, canMove = null } = {}) {
   const list = units ?? [];
-  if (list.length < 2) return 0;
+  const n = list.length;
+  if (n < 2) return 0;
+
+  // Bucket every unit's INDEX (not a copy) into its grid cell, keyed "gx,gy".
+  const cells = new Map();
+  const gxOf = new Array(n), gyOf = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const u = list[i];
+    const gx = Math.floor(u.x / CELL_SIZE), gy = Math.floor(u.y / CELL_SIZE);
+    gxOf[i] = gx; gyOf[i] = gy;
+    const key = gx + ',' + gy;
+    let arr = cells.get(key);
+    if (!arr) cells.set(key, (arr = []));
+    arr.push(i);
+  }
+
   let pairs = 0;
-  for (let i = 0; i < list.length; i++) {
+  for (let i = 0; i < n; i++) {
     const a = list[i], ra = radiusOf(a), ma = massOf(a);
-    for (let j = i + 1; j < list.length; j++) {
-      const b = list[j], rb = radiusOf(b), mb = massOf(b);
-      const minDist = ra + rb;
-      let dx = b.x - a.x, dy = b.y - a.y;
-      let d = Math.hypot(dx, dy);
-      if (d >= minDist) continue;
-      if (!isFinite(ma) && !isFinite(mb)) continue;   // two turrets overlapping: neither can move
-      pairs += 1;
-      const overlap = minDist - d;
-      if (d === 0) {
-        // Exactly co-located (two units spawned on the same point, a carrier drop landing on a
-        // garrison unit). Any axis works as long as it is DETERMINISTIC — random jitter would
-        // make the same frame resolve differently per machine and is untestable. Split along x,
-        // ordered by list index, so a pile always fans out the same way.
-        dx = 1; dy = 0; d = 1;
-      }
-      const ux = dx / d, uy = dy / d;
-      // Split the overlap by mass: the LIGHTER body moves more. An infinite-mass partner takes
-      // none and gives all of it to the other.
-      const shareA = !isFinite(ma) ? 0 : !isFinite(mb) ? 1 : mb / (ma + mb);
-      moveBy(a, -ux * overlap * shareA, -uy * overlap * shareA, canMove);
-      moveBy(b, ux * overlap * (1 - shareA), uy * overlap * (1 - shareA), canMove);
-      // Kill the CLOSING part of the relative velocity, split by the same mass shares, so a unit
-      // driving into another comes to rest against it instead of grinding through. Only the
-      // approaching component goes — both keep everything else, so either can immediately drive
-      // away in any other direction. This is the whole anti-deadlock guarantee.
-      const rel = ((b.vx ?? 0) - (a.vx ?? 0)) * ux + ((b.vy ?? 0) - (a.vy ?? 0)) * uy;
-      if (rel < 0) {
-        if (a.vx != null) { a.vx += rel * shareA * ux; a.vy += rel * shareA * uy; }
-        if (b.vx != null) { b.vx -= rel * (1 - shareA) * ux; b.vy -= rel * (1 - shareA) * uy; }
+    const gx = gxOf[i], gy = gyOf[i];
+    // The 3x3 neighborhood around this unit's own cell — guaranteed (per CELL_SIZE's margin
+    // above) to contain every other unit close enough to possibly overlap it.
+    for (let ngx = gx - 1; ngx <= gx + 1; ngx++) {
+      for (let ngy = gy - 1; ngy <= gy + 1; ngy++) {
+        const arr = cells.get(ngx + ',' + ngy);
+        if (!arr) continue;
+        for (const j of arr) {
+          // `j > i` both skips self-pairs and dedupes each unordered pair to exactly one check —
+          // the pair (i, j) is only ever visited from i's scan when j > i (and vice versa would
+          // be skipped), same guarantee the old `j = i + 1` inner loop gave.
+          if (j <= i) continue;
+          const b = list[j], rb = radiusOf(b), mb = massOf(b);
+          const minDist = ra + rb;
+          let dx = b.x - a.x, dy = b.y - a.y;
+          let d = Math.hypot(dx, dy);
+          if (d >= minDist) continue;
+          if (!isFinite(ma) && !isFinite(mb)) continue;   // two turrets overlapping: neither can move
+          pairs += 1;
+          const overlap = minDist - d;
+          if (d === 0) {
+            // Exactly co-located (two units spawned on the same point, a carrier drop landing on
+            // a garrison unit). Any axis works as long as it is DETERMINISTIC — random jitter
+            // would make the same frame resolve differently per machine and is untestable. Split
+            // along x, ordered by list index, so a pile always fans out the same way.
+            dx = 1; dy = 0; d = 1;
+          }
+          const ux = dx / d, uy = dy / d;
+          // Split the overlap by mass: the LIGHTER body moves more. An infinite-mass partner
+          // takes none and gives all of it to the other.
+          const shareA = !isFinite(ma) ? 0 : !isFinite(mb) ? 1 : mb / (ma + mb);
+          moveBy(a, -ux * overlap * shareA, -uy * overlap * shareA, canMove);
+          moveBy(b, ux * overlap * (1 - shareA), uy * overlap * (1 - shareA), canMove);
+          // Kill the CLOSING part of the relative velocity, split by the same mass shares, so a
+          // unit driving into another comes to rest against it instead of grinding through. Only
+          // the approaching component goes — both keep everything else, so either can
+          // immediately drive away in any other direction. This is the whole anti-deadlock
+          // guarantee.
+          const rel = ((b.vx ?? 0) - (a.vx ?? 0)) * ux + ((b.vy ?? 0) - (a.vy ?? 0)) * uy;
+          if (rel < 0) {
+            if (a.vx != null) { a.vx += rel * shareA * ux; a.vy += rel * shareA * uy; }
+            if (b.vx != null) { b.vx -= rel * (1 - shareA) * ux; b.vy -= rel * (1 - shareA) * uy; }
+          }
+        }
       }
     }
   }

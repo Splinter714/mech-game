@@ -16,6 +16,7 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
+import { SHIELD_MECH_PART_KEYS } from './shieldOutline.js';
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -27,6 +28,15 @@ const IMPACT_CIRCLE_CAP = 48;
 // one frame, and each call flings a handful of rectangles, so the concurrent-debris count is
 // hard-capped and recycled instead of growing unbounded.
 const DEBRIS_CAP = 60;
+
+// #564: incoming-damage feedback tuning. Deliberately gentler than `_aoeBlastFx`'s punch (this
+// fires on every landed enemy hit, not once per ability activation) but clearly present over the
+// continuous per-footstep tremble (`_footShake`, locomotion.js) — a discrete jolt, not a rumble.
+const PLAYER_HIT_SHAKE_PX = 3;
+const PLAYER_HIT_SHAKE_MS = 140;
+// How long the mech's tint flash holds before clearing, in ms.
+const PLAYER_HIT_FLASH_MS = 90;
+const PLAYER_HIT_FLASH_COLOR = 0xff4a3c;
 
 export const CombatMixin = {
   // ── #374 REWORK (in-flight): soft cover eats shots as they PHYSICALLY CROSS it ────────────
@@ -155,6 +165,12 @@ export const CombatMixin = {
     // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
     const loc = pickLiveWeighted(parts, (part) => player.mech.isPartDestroyed(part));
     const res = this.damagePlayer(loc, dmg, player);
+    // #560: symmetric with `_damageEnemyAt` below — a hit carrying `meta.dot` (Plasma's coating)
+    // also applies/refreshes a status effect at the same location the direct hit just resolved.
+    // Players already tick status effects every frame (`tickPlayerResources`, players.js), they
+    // just never had anything applying one before this — enemy plasma/burn weapons could hit
+    // the player but never actually burn them.
+    if (meta.dot) player.mech.applyStatusEffect(meta.dot.kind ?? 'plasmaBurn', { ...meta.dot, location: loc });
     // #423/#440: book the damage the player took, attributed to the enemy kind (+ weapon) that
     // dealt it. Booked AFTER applyDamage so it records the EFFECTIVE damage — raw incoming MINUS
     // the location OVERSHOOT that applyDamage clamped away (see Mech.applyDamage `overshoot`).
@@ -173,6 +189,14 @@ export const CombatMixin = {
     // then broke through (shieldAbsorbed > 0 but not `shielded`, see damagePlayer above).
     if (res.shieldAbsorbed) this._shieldHitFlash(player);
     if (res.shielded) return;
+    // #564: a brief tint flash on the player's own mech + a light camera shake — nothing on the
+    // player's own sprite reacted to taking a hit before this (a particle burst + sound play at
+    // the impact point, but the mech itself just silently absorbed it), which made it easy to
+    // under-register real damage in a busy fight. Gated past the shield-absorbed early return
+    // above: a fully-shielded hit already gets its own dedicated feedback (`_shieldHitFlash`'s
+    // bubble pulse), so this is reserved for a hit that actually reached the mech.
+    this._playerHitFlash(player);
+    this._shakeCamera(PLAYER_HIT_SHAKE_PX, PLAYER_HIT_SHAKE_MS);
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons) or which segments have lost their ARMOR plating (#246's armor-shell overlay —
     // see mechArt.js), not on continuous health — so only pay the 9-texture procedural rebuild
@@ -240,6 +264,20 @@ export const CombatMixin = {
     // exactly as the accent was preserved before — a custom pick must not revert on a broken part.
     reskinMech(this, player.textureKey ?? 'playerMech', player.mech,
       playerMechArt(player.id ?? 0, { statusSpot, accent: player.color }));
+  },
+
+  // #564: a quick full-mech tint flash — every pivoting part sprite on the player's own view
+  // (same six-sprite set the shield outline hugs, `SHIELD_MECH_PART_KEYS`) gets tinted red for a
+  // beat, then clears. Re-triggering (a second hit lands before the last flash cleared) just
+  // restamps the same timer rather than stacking — always reads as one flash, not a strobe.
+  _playerHitFlash(player) {
+    const v = player.view;
+    if (!v) return;
+    for (const key of SHIELD_MECH_PART_KEYS) v[key]?.setTint?.(PLAYER_HIT_FLASH_COLOR);
+    if (player._hitFlashTimer) player._hitFlashTimer.remove(false);
+    player._hitFlashTimer = this.time?.delayedCall?.(PLAYER_HIT_FLASH_MS, () => {
+      for (const key of SHIELD_MECH_PART_KEYS) v[key]?.clearTint?.();
+    });
   },
 
   // Impact effect, animated per ordnance type: a bright core flash plus a kind-specific
@@ -400,31 +438,42 @@ export const CombatMixin = {
       const overkill = this._statOverkill ? this._statOverkill(damage, remainingBefore, killedNow) : 0;
       this._statPlayerHit?.(meta.weaponId, meta.pullId ?? null, statKind, damage, killedNow, overkill);
     }
-    if (e.mech.isDestroyed()) {
-      this._statEnemyKilled?.(e);   // #423: one kill + its time-to-kill, whatever downed it
-      // #87 (corrected per playtest 2026-07-10): a lingering, frozen corpse before cleanup read
-      // as "horrible and looks dumb" — the corpse must vanish IMMEDIATELY on death, with the
-      // explosion itself (sized to the enemy) AS the death feedback, not a delayed afterthought.
-      // Read everything off `e` we still need BEFORE tearing it down.
-      const dx = e.x, dy = e.y;
-      // #100: the red "DESTROYED" floating text read as redundant/noisy on top of the
-      // explosion itself (which IS the death feedback) — removed. No lingering body either way.
-      this._deathFx(dx, dy, deathScaleFor(e), explosionCategoryFor(e));
-      // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
-      // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
-      // #90/#106: pass the kill's TOUGHNESS (structure + armor + shield — uniform across
-      // Mech/HpBody) so the odds scale with how tough the enemy actually was, instead of a flat
-      // roll; plus the crush flag, which swaps the curve for a flat tiny chance (#106).
-      // #336: `e.flying` — a flyer downed over a base wall has no real side of its own, so its
-      // drops follow the PLAYER's side; a ground kill's follow its own death position.
-      this._maybeDropPowerup?.(dx, dy, e.mech.toughness ?? e.mech.maxHp, isCrush, !!e.flying);
-      // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
-      // in data/shop.js) — independent roll from the powerup drop, same kill site.
-      this._maybeDropSalvage?.(dx, dy, !!e.flying);
-      // Tear the corpse (view + generated textures) down and drop it out of `this.enemies` in
-      // the SAME tick the kill registers — no delayed teardown, no frozen body sitting around.
-      this._removeEnemy(e);
-    }
+    if (e.mech.isDestroyed()) this._killEnemy(e, isCrush);
+  },
+
+  // #557: the enemy death pipeline (kill stats, explosion FX, drops, teardown), factored out of
+  // `_damageEnemyAt`'s kill block so it can also be reached from a DAMAGE-OVER-TIME tick
+  // (`e.mech.tickStatusEffects`, enemies.js `_updateEnemy`/`_updateVehicle`), which applies
+  // damage straight through `Mech`/`HpBody.applyDamage` and previously bypassed this pipeline
+  // entirely — a burn tick landing the killing blow could leave a frozen, unkillable corpse (same
+  // symptom as the already-fixed #536, from a different damage source). Callers MUST guard with
+  // `e.mech.isDestroyed()` before calling — this does not re-check.
+  // `isCrush` (#106) only affects the powerup drop-rate curve; a DoT kill is never a crush, so
+  // status-effect callers omit it (default false).
+  _killEnemy(e, isCrush = false) {
+    this._statEnemyKilled?.(e);   // #423: one kill + its time-to-kill, whatever downed it
+    // #87 (corrected per playtest 2026-07-10): a lingering, frozen corpse before cleanup read
+    // as "horrible and looks dumb" — the corpse must vanish IMMEDIATELY on death, with the
+    // explosion itself (sized to the enemy) AS the death feedback, not a delayed afterthought.
+    // Read everything off `e` we still need BEFORE tearing it down.
+    const dx = e.x, dy = e.y;
+    // #100: the red "DESTROYED" floating text read as redundant/noisy on top of the
+    // explosion itself (which IS the death feedback) — removed. No lingering body either way.
+    this._deathFx(dx, dy, deathScaleFor(e), explosionCategoryFor(e));
+    // #60: killing an enemy may drop a timed-buff powerup at its death position (drop chance
+    // + weighted type live in data/powerups.js). Source-agnostic — facilities can drop too.
+    // #90/#106: pass the kill's TOUGHNESS (structure + armor + shield — uniform across
+    // Mech/HpBody) so the odds scale with how tough the enemy actually was, instead of a flat
+    // roll; plus the crush flag, which swaps the curve for a flat tiny chance (#106).
+    // #336: `e.flying` — a flyer downed over a base wall has no real side of its own, so its
+    // drops follow the PLAYER's side; a ground kill's follow its own death position.
+    this._maybeDropPowerup?.(dx, dy, e.mech.toughness ?? e.mech.maxHp, isCrush, !!e.flying);
+    // #65: killing an enemy may also drop a SCRAP salvage pickup (drop chance + amount live
+    // in data/shop.js) — independent roll from the powerup drop, same kill site.
+    this._maybeDropSalvage?.(dx, dy, !!e.flying);
+    // Tear the corpse (view + generated textures) down and drop it out of `this.enemies` in
+    // the SAME tick the kill registers — no delayed teardown, no frozen body sitting around.
+    this._removeEnemy(e);
   },
 
   // Catastrophic-kill explosion, sized to the dying enemy (`scale`: ~0.5 drone … ~1.3 heavy

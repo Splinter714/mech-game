@@ -36,7 +36,7 @@ import { kindWeaponSlot, kindMaxFireRange } from '../../data/kindWeapons.js';
 import { initKindAmmo, initKindReload, slotHasAmmo, consumeSlotAmmo, tickKindReload } from '../../data/kindAmmo.js';
 import { HpBody } from '../../data/HpBody.js';
 import { resolveWeapon } from '../../data/weapons.js';
-import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE } from '../../art/index.js';
+import { buildMechTextures, reskinMech, buildVehicleTextures, mechLayout, ART_SCALE, HULL_FRAMES } from '../../art/index.js';
 import { hexToPixel, range, HEX_SIZE, axialKey, pixelToHex, hexesAlongSegment } from '../../data/hexgrid.js';
 import { nearestValidPixel, minSafeSpawnDist, spawnDistance } from '../../data/spawnPlacement.js';
 import { pickWanderGoal } from '../../data/wander.js';
@@ -705,7 +705,11 @@ export const EnemiesMixin = {
     // there's no legitimate case where a live vehicle's shared texture ever needs to be replaced
     // out from under it.)
     if (e.kind !== 'mech') return;
-    const suffixes = ['hull_0', 'hull_1', 'hull_2', 'hull_3', 'turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm'];
+    // #566: hull-frame suffixes are derived from HULL_FRAMES (mechArt.js) rather than hardcoded,
+    // so a future bump to the enemy walk-cycle frame count doesn't leak un-cleaned textures.
+    const suffixes = [];
+    for (let f = 0; f < HULL_FRAMES; f++) suffixes.push(`hull_${f}`);
+    suffixes.push('turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm');
     for (const s of suffixes) {
       const key = `${e.key}_${s}`;
       if (this.textures.exists(key)) this.textures.remove(key);
@@ -1453,6 +1457,12 @@ export const EnemiesMixin = {
     // #489/#536: status effects (Plasma's burn DoT) — HpBody (vehicle-kind, `_updateVehicle`
     // below) now carries the same tick method, so this is no longer mech-kind only.
     e.mech.tickStatusEffects(dt);
+    // #557: a DoT tick applies damage straight through Mech.applyDamage, bypassing the normal
+    // hit pipeline's kill handling entirely — so a burn kill needs its own explicit check here,
+    // routed through the same `_killEnemy` the direct-hit path uses (combat.js), or the corpse
+    // stays a frozen, unkillable husk (`_updateEnemy`'s isDestroyed guard above just early-returns
+    // on it forever otherwise).
+    if (e.mech.isDestroyed()) { this._killEnemy(e); return; }
 
     // #398 fourth pass: the stompy stepped gait (see ENEMY_STEP_BOB_FRAC above) — an enemy mech
     // used to render on hull frame 0 forever and glide, which is most of the "floaty" read. Now it
@@ -1510,6 +1520,10 @@ export const EnemiesMixin = {
     // #536: status effects (Plasma's burn DoT) — vehicle-kind enemies are HpBody-backed, which
     // now carries the same applyStatusEffect/tickStatusEffects pair as a Mech.
     e.mech.tickStatusEffects(dt);
+    // #557: same DoT-kill fix as the mech path in `_updateEnemy` above — a burn tick applies
+    // damage straight through HpBody.applyDamage, bypassing the normal kill pipeline, so check
+    // and route through the shared `_killEnemy` (combat.js) right here.
+    if (e.mech.isDestroyed()) { this._killEnemy(e); return; }
     // #115: a ground unit (infantry/tank/turret) should never be sitting on off-map/impassable
     // terrain to begin with — the per-frame integration below already blocks it from MOVING
     // there, but this recovers one that somehow ended up there anyway (a bad spawn placement
