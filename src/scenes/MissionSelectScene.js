@@ -205,19 +205,26 @@ export default class MissionSelectScene extends Phaser.Scene {
     });
   }
 
-  // A quick-glance "what biome is this" cue (live-chat ask, not a filed issue): a loose cluster
-  // of 4 representative baked hex tiles — ground, cover, hazard, channel — scaled down small and
-  // centered at (cx, cy). Deliberately skips groundB (too similar to groundA to read as a
-  // distinct tile at a glance) and never touches `deep` (boundary-only, no baked texture — see
-  // hexArt.js `isBoundaryTerrainId`).
+  // A quick-glance "what biome is this" cue (live-chat ask, not a filed issue): all 5 of the
+  // biome's representative terrain roles — groundA, groundB, cover, hazard, channel — as a
+  // real interlocking pointy-top hex cluster (3 tiles top row, 2 nested in the gaps below),
+  // not just a loose scatter of icons. Never touches `deep` (boundary-only, no baked texture —
+  // see hexArt.js `isBoundaryTerrainId`).
+  //
+  // Spacing mirrors hexgrid.js's own pointy-top axial math (hexToPixel: same-row neighbours are
+  // one full hex-width apart, adjacent rows are 3/4 of a hex-height apart and offset by half a
+  // hex-width) — just expressed in the baked TEXTURE's own width/height (tw/th) rather than
+  // HEX_SIZE, since these are scaled-down copies of the exact same tile art, not a live grid.
   _buildBiomePreview(biome, cx, cy) {
     const scale = 0.42;
     const tw = HEX_TEX_W * scale, th = HEX_TEX_H * scale;
+    const colStep = tw, rowStep = th * 0.75;
     const spots = [
-      { id: biome.groundA, dx: -tw * 0.55, dy: -th * 0.32 },
-      { id: biome.cover, dx: tw * 0.55, dy: -th * 0.32 },
-      { id: biome.hazard, dx: -tw * 0.55, dy: th * 0.55 },
-      { id: biome.channel, dx: tw * 0.55, dy: th * 0.55 },
+      { id: biome.groundA, dx: -colStep, dy: -rowStep / 2 },
+      { id: biome.cover, dx: 0, dy: -rowStep / 2 },
+      { id: biome.hazard, dx: colStep, dy: -rowStep / 2 },
+      { id: biome.groundB, dx: -colStep / 2, dy: rowStep / 2 },
+      { id: biome.channel, dx: colStep / 2, dy: rowStep / 2 },
     ];
     for (const { id, dx, dy } of spots) {
       if (!id) continue;
