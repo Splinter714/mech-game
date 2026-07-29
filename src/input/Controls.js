@@ -164,7 +164,15 @@ export class PadEdges {
     // frame or two later once the wrapper syncs — closing the menu instantly after opening
     // it. `prev` still tracks every poll during the window (so once it ends, a still-held
     // button is already correctly baselined); only the returned edge is held back.
-    this._graceUntil = (scene.time?.now ?? 0) + 120;
+    //
+    // Measured in FRAMES off Phaser's global loop counter, not `scene.time.now` — a scene's
+    // own clock reads 0 inside create() (before its Systems have ticked even once) but has
+    // already caught up to the real elapsed game time by the first update() poll, so a
+    // wall-clock deadline computed at construction is stale nonsense by the time it's checked
+    // (confirmed live: `_graceUntil` computed as ~120 while the first real poll landed at
+    // scene-local t≈4990 — the "grace window" was never actually in effect). The game loop's
+    // frame counter has no such per-scene reset.
+    this._graceUntilFrame = (scene.sys?.game?.loop?.frame ?? 0) + 3;
   }
   pad() {
     const gp = this.scene.input.gamepad;
@@ -181,12 +189,12 @@ export class PadEdges {
     const firstPoll = !(i in this.prev);
     const was = firstPoll ? down : this.prev[i];
     this.prev[i] = down;
-    const now = this.scene.time?.now ?? 0;
-    const inGrace = now < this._graceUntil;
+    const frame = this.scene.sys?.game?.loop?.frame ?? 0;
+    const inGrace = frame < this._graceUntilFrame;
     const edge = down && !was;
     // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
     if (import.meta.env.DEV && edge) {
-      console.log(`[PadEdges] btn ${i} edge — scene=${this.scene.scene?.key} pad=${this.padIndex} t=${now.toFixed(0)} graceUntil=${this._graceUntil.toFixed(0)} suppressed=${inGrace}`);
+      console.log(`[PadEdges] btn ${i} edge — scene=${this.scene.scene?.key} pad=${this.padIndex} frame=${frame} graceUntilFrame=${this._graceUntilFrame} suppressed=${inGrace}`);
     }
     if (inGrace) return false;
     return edge;
