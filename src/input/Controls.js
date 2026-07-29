@@ -181,8 +181,15 @@ export class PadEdges {
     const firstPoll = !(i in this.prev);
     const was = firstPoll ? down : this.prev[i];
     this.prev[i] = down;
-    if ((this.scene.time?.now ?? 0) < this._graceUntil) return false;
-    return down && !was;
+    const now = this.scene.time?.now ?? 0;
+    const inGrace = now < this._graceUntil;
+    const edge = down && !was;
+    // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
+    if (import.meta.env.DEV && edge) {
+      console.log(`[PadEdges] btn ${i} edge — scene=${this.scene.scene?.key} pad=${this.padIndex} t=${now.toFixed(0)} graceUntil=${this._graceUntil.toFixed(0)} suppressed=${inGrace}`);
+    }
+    if (inGrace) return false;
+    return edge;
   }
 }
 
@@ -333,6 +340,10 @@ export class Controls {
     // #348: a pad-only player ignores the keyboard/mouse entirely — those belong to player 1.
     const kbmActive = this.hasKeyboard && (mouseMoved || mouseBtn || kbDown);
 
+    // TEMP DEBUG (pause-menu flicker investigation) — remove once root-caused.
+    if (import.meta.env.DEV && this.mode !== (padActive ? 'pad' : (kbmActive ? 'kbm' : this.mode))) {
+      console.log(`[Controls] mode ${this.mode} -> ${padActive ? 'pad' : 'kbm'} — scene=${this.scene.scene?.key} t=${this.scene.time?.now?.toFixed?.(0)}`);
+    }
     if (padActive) this.mode = 'pad';
     else if (kbmActive) this.mode = 'kbm';
     // else: no input this frame — stay in the current mode (don't fall back to mouse).

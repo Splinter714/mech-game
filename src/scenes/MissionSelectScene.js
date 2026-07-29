@@ -8,6 +8,7 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { DirRepeater, dominantDir } from '../ui/padNav.js';
 import { launchMission } from './base/launchMission.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
+import { buildHexTextures, HEX_TEX_W, HEX_TEX_H } from '../art/hexArt.js';
 
 // #510: reached by walking onto the base's scanner hex. Presents a small set of candidate runs
 // (data/missions.js `offerMissions`) — pick a card (click, or d-pad/stick + A on a controller),
@@ -46,6 +47,11 @@ export default class MissionSelectScene extends Phaser.Scene {
   }
 
   create() {
+    // #546-ish (live chat ask, not filed): bake hex textures unconditionally so each mission
+    // card can show a small preview cluster of its biome's terrain tiles, regardless of whether
+    // BaseScene/ArenaScene already baked them this session (buildHexTextures is idempotent).
+    buildHexTextures(this);
+
     const dpr = this.registry.get('dpr') || 1;
     this.W = Math.round(this.scale.width / dpr);
     this.H = Math.round(this.scale.height / dpr);
@@ -184,7 +190,8 @@ export default class MissionSelectScene extends Phaser.Scene {
       .setStrokeStyle(2, offer.isDeep ? UI.deep : UI.panelEdge)
       .setInteractive({ useHandCursor: true });
     this._cardRects.set(offer.id, rect);
-    this.add.text(x + w / 2, y + 26, biome.name.toUpperCase(), {
+    this._buildBiomePreview(biome, x + w / 2, y + 58);
+    this.add.text(x + w / 2, y + 104, biome.name.toUpperCase(), {
       fontFamily: 'monospace', fontSize: '15px', fontStyle: 'bold', color: UI.text,
     }).setOrigin(0.5);
     this.add.text(x + w / 2, y + h - 24, offer.isDeep ? 'DEEP STRIKE' : 'EXPLORE', {
@@ -196,6 +203,26 @@ export default class MissionSelectScene extends Phaser.Scene {
       this._focusIndex = this._offers.indexOf(offer);
       this._selectOffer(offer);
     });
+  }
+
+  // A quick-glance "what biome is this" cue (live-chat ask, not a filed issue): a loose cluster
+  // of 4 representative baked hex tiles — ground, cover, hazard, channel — scaled down small and
+  // centered at (cx, cy). Deliberately skips groundB (too similar to groundA to read as a
+  // distinct tile at a glance) and never touches `deep` (boundary-only, no baked texture — see
+  // hexArt.js `isBoundaryTerrainId`).
+  _buildBiomePreview(biome, cx, cy) {
+    const scale = 0.42;
+    const tw = HEX_TEX_W * scale, th = HEX_TEX_H * scale;
+    const spots = [
+      { id: biome.groundA, dx: -tw * 0.55, dy: -th * 0.32 },
+      { id: biome.cover, dx: tw * 0.55, dy: -th * 0.32 },
+      { id: biome.hazard, dx: -tw * 0.55, dy: th * 0.55 },
+      { id: biome.channel, dx: tw * 0.55, dy: th * 0.55 },
+    ];
+    for (const { id, dx, dy } of spots) {
+      if (!id) continue;
+      this.add.image(cx + dx, cy + dy, `hex_${id}`).setScale(scale);
+    }
   }
 
   // Selecting a card highlights it (and un-highlights whichever was selected before) and enables
