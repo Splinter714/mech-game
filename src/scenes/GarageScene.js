@@ -200,7 +200,9 @@ export default class GarageScene extends Phaser.Scene {
     // #523: ESC always opens the shared pause menu. #529: openStats lets the pause menu's
     // dev-only STATS row reach back into THIS scene's StatsOverlay instance (outside dev,
     // this._statsOverlay is undefined and the optional chain just no-ops).
-    wirePauseMenu(this, { openStats: () => this._statsOverlay?.open() });
+    // padStart: false — gamepad START is the Garage's own ready-up trigger (see the per-pad
+    // update loop below), not the pause menu's open button here. ESC still reaches it.
+    wirePauseMenu(this, { openStats: () => this._statsOverlay?.open(), padStart: false });
 
     // Every column's catalogList registers its own wheel/pointer listeners on the scene's input
     // plugin (WeaponCardList's constructor) — clean them up on the way out, mirroring the old
@@ -1005,8 +1007,10 @@ export default class GarageScene extends Phaser.Scene {
   // always live, no sub-mode to enter first (_navSlot). A binds the list-focused item into the
   // slot-selected destination in one press (_confirmOrSelect → _activateCatalogFocus); B unbinds
   // whatever's in the selected slot (_unmountFrom — a no-op on weapon slots, which always
-  // mount/replace and have no unmount). SELECT toggles ready (#535 — moved off START, which now
-  // opens the shared pause menu everywhere, see PauseMenuScene.js).
+  // mount/replace and have no unmount). SELECT and START both toggle ready — START is freed up
+  // for this in the Garage specifically (padStart: false on wirePauseMenu, above) rather than
+  // opening the shared pause menu the way it does everywhere else (see PauseMenuScene.js); ESC
+  // (keyboard) still reaches the pause menu here for STATS/AUDIO/ART/settings access.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -1017,7 +1021,7 @@ export default class GarageScene extends Phaser.Scene {
       const col = this.cols[i];
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
-      if (e.pressed(PAD.SELECT)) { this._toggleReady(i); continue; }
+      if (e.pressed(PAD.SELECT) || e.pressed(PAD.START)) { this._toggleReady(i); continue; }
       // Bumpers cycle tabs; triggers move the live slot cursor (weapon/ability sub-items). D-pad
       // left/right is one more way to move the slot cursor, same as the triggers.
       if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }

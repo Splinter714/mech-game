@@ -28,6 +28,7 @@ import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 import { applyMovementToggle } from './arena/shared.js';
 import { Slider } from '../ui/slider.js';
+import { dominantDir, DirRepeater } from '../ui/padNav.js';
 import {
   DEV_NAV_ROWS, pauseRowIds, toggleRowLabel, navRowLabel, movementRowLabel, movementRowEnabled,
 } from '../data/pauseMenu.js';
@@ -115,6 +116,7 @@ export default class PauseMenuScene extends Phaser.Scene {
 
     this.input.keyboard.on('keydown-ESC', () => this._close());
     this._padEdges = new PadEdges(this, 0);
+    this._stickRepeat = new DirRepeater();   // left-stick cursor/volume nav, mirrors D-pad below
     Slider.attachDrag(this);   // #558: the VOLUME row's slider drag needs this wired once
 
     this._refreshRows();
@@ -256,13 +258,22 @@ export default class PauseMenuScene extends Phaser.Scene {
     this._setVolume(v);
   }
 
-  update() {
+  update(time) {
     if (this._padEdges.pressed(PAD.START) || this._padEdges.pressed(PAD.B)) { this._close(); return; }
     if (this._padEdges.pressed(PAD.DPAD_DOWN)) this._moveCursor(1);
     if (this._padEdges.pressed(PAD.DPAD_UP)) this._moveCursor(-1);
     if (this._padEdges.pressed(PAD.DPAD_LEFT)) this._adjustVolume(-VOLUME_STEP);
     if (this._padEdges.pressed(PAD.DPAD_RIGHT)) this._adjustVolume(VOLUME_STEP);
     if (this._padEdges.pressed(PAD.A)) this._activate(this._rowIds[this._cursor]);
+    // Left stick mirrors the D-pad exactly (up/down cursor, left/right volume step), same
+    // auto-repeat cadence padNav.js's DirRepeater gives every other held-direction control.
+    const ls = this._padEdges.pad()?.leftStick;
+    const dir = ls ? dominantDir(ls.x, ls.y) : null;
+    const step = this._stickRepeat.step(dir, time);
+    if (step === 'up') this._moveCursor(-1);
+    else if (step === 'down') this._moveCursor(1);
+    else if (step === 'left') this._adjustVolume(-VOLUME_STEP);
+    else if (step === 'right') this._adjustVolume(VOLUME_STEP);
   }
 }
 
@@ -272,6 +283,9 @@ export default class PauseMenuScene extends Phaser.Scene {
 // #529: `dev` (import.meta.env.DEV) is passed through automatically — every caller gets the
 // AUDIO/ART pause-menu rows for free in a dev build, with no per-scene wiring needed. `opts.
 // openStats` (GarageScene-only) additionally surfaces the STATS row — see pauseRowIds.
+// `opts.padStart` (default true) — set false to skip the gamepad START wiring entirely; ESC
+// still opens the menu. GarageScene opts out of this so gamepad START is free to be its own
+// ready-up trigger (see GarageScene.js's per-pad update loop) instead of colliding with it.
 export function wirePauseMenu(scene, opts = {}) {
   const open = () => {
     if (scene.scene.isActive('PauseMenuScene')) return;   // already open — ignore a repeat edge
@@ -285,8 +299,10 @@ export function wirePauseMenu(scene, opts = {}) {
     for (const key of pauseAlso) scene.scene.pause(key);
   };
   scene.input.keyboard.on('keydown-ESC', open);
-  const edges = new PadEdges(scene, 0);
-  const onUpdate = () => { if (edges.pressed(PAD.START)) open(); };
-  scene.events.on('update', onUpdate);
-  scene.events.once('shutdown', () => scene.events.off('update', onUpdate));
+  if (opts.padStart !== false) {
+    const edges = new PadEdges(scene, 0);
+    const onUpdate = () => { if (edges.pressed(PAD.START)) open(); };
+    scene.events.on('update', onUpdate);
+    scene.events.once('shutdown', () => scene.events.off('update', onUpdate));
+  }
 }
