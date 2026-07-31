@@ -33,7 +33,15 @@ const DEBRIS_CAP = 60;
 // continuous per-footstep tremble (`_footShake`, locomotion.js) — a discrete jolt, not a rumble.
 // Playtest (2026-07-29): the original 3px/140ms read as excessive and the accompanying full-mech
 // tint flash (removed) as actively bad — cut the shake to about half.
-const PLAYER_HIT_SHAKE_PX = 1.5;
+// Live-chat ask (2026-07-31): "screen shake needs to be less overall, and should also maybe be
+// proportional to the amount of damage taken by a given shake-starter." Both, here: the whole
+// band sits below the previous FLAT 1.5px, and the magnitude now scales with the size of the hit
+// instead of a graze and a heavy slug jolting the frame identically. Costs nothing measurable —
+// this is a clamp and a lerp at the moment a hit resolves, not per-frame work, and `camera.shake`
+// itself is the same single call either way.
+const PLAYER_HIT_SHAKE_MIN_PX = 0.3;   // a chip/DoT tick barely registers
+const PLAYER_HIT_SHAKE_MAX_PX = 1.2;   // a heavy slug — still under the old flat value
+const PLAYER_HIT_SHAKE_REF_DMG = 35;   // damage at which the shake tops out (weapons run ~0.6–52)
 const PLAYER_HIT_SHAKE_MS = 100;
 
 export const CombatMixin = {
@@ -194,7 +202,14 @@ export const CombatMixin = {
     // own dedicated feedback (`_shieldHitFlash`'s bubble pulse), so this is reserved for a hit
     // that actually reached the mech. Playtest (2026-07-29): the original also tinted the mech
     // red on every hit — cut entirely, it read as bad rather than as damage feedback.
-    this._shakeCamera(PLAYER_HIT_SHAKE_PX, PLAYER_HIT_SHAKE_MS);
+    // Scaled by what actually REACHED the mech: `effective` (raw minus the overshoot applyDamage
+    // clamped away) minus anything the shield ate. Shield-absorbed damage deliberately doesn't
+    // shake — it already has its own feedback in `_shieldHitFlash` above, and counting it here
+    // would jolt the frame for a hit the player successfully tanked.
+    const landed = Math.max(0, effective - (res.shieldAbsorbed ?? 0));
+    const t = Math.min(1, landed / PLAYER_HIT_SHAKE_REF_DMG);
+    this._shakeCamera(PLAYER_HIT_SHAKE_MIN_PX + (PLAYER_HIT_SHAKE_MAX_PX - PLAYER_HIT_SHAKE_MIN_PX) * t,
+                      PLAYER_HIT_SHAKE_MS);
     // #71: the mech textures only depend on WHICH parts are destroyed (stumps / vanished
     // weapons) or which segments have lost their ARMOR plating (#246's armor-shell overlay —
     // see mechArt.js), not on continuous health — so only pay the 9-texture procedural rebuild
@@ -371,7 +386,10 @@ export const CombatMixin = {
     this._burst(x, y, radius * 0.2, radius * 0.8, color, 0.35, 320, false);       // afterglow fill
     const cam = this.cameras?.main;
     if (cam?.shake) {
-      const px = Math.min(8, radius * 0.09);   // scales with radius, capped well under a jarring shake
+      // Live-chat ask (2026-07-31), "screen shake needs to be less overall": cap 8 → 5 and the
+      // radius coefficient down with it. Already radius-proportional, which is the same idea the
+      // player-hit shake just adopted — a bigger blast shakes more.
+      const px = Math.min(5, radius * 0.06);
       cam.shake(180, px / Math.max(1, cam.height), true);
     }
   },
