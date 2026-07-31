@@ -250,12 +250,14 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   const aoY  = back ? cy - h / 2 + h * 0.085 : cy + h / 2 - h * 0.08;
   const rimW = w - 2 * inset;
   const rimCol = opts.rim ?? T.rim;
+  const rimR = rimH * 0.3;              // corner radius for the glowing rim (rimGlow callers only)
   sub('rim');
   if (opts.rimGlow) {
     const out = back ? 1 : -1;          // "forward" = outward from the plate's centre
     const RIM_GLOW_STEPS = 22;          // band count — smoothness
     const RIM_GLOW_ALPHA = 0.035;       // per-band opacity — intensity (accumulates at the rim)
     const RIM_GLOW_REACH = 2.6;         // how far the outermost band extends, in rim heights
+    const RIM_GLOW_WEDGE = 0.5;         // forward flare per rim height — the wedge's taper
     // Each band is ANCHORED to the rim's BACK edge (the one nearer the plate centre) and extends
     // FORWARD from there — it never grows sideways or rearward. The first pass instead grew each
     // band in every direction and merely nudged it forward, which bloomed the glow out past both
@@ -263,20 +265,36 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
     // forward off an edge ("the forward glow is perfect, the side and back glow are bad").
     // Anchoring this way also means every band still covers the rim itself, so the accumulation is
     // brightest AT the rim and falls off forward — which is the direction the gradient should run.
+    // Each band is a TRAPEZOID, not a rect: exactly rim-width where it meets the rim, flaring
+    // slightly wider at its forward tip (live-chat ask — "let the forward glow wedge-out slightly,
+    // not just a straight shot"). A rect that simply got wider with reach would also be wider AT
+    // the rim, which is precisely the side spill removed a moment ago; the taper is what lets the
+    // glow open out forward while still starting flush with the rim's own ends.
+    // `glowCol`: the SAME hue as the rim, driven to full chroma (`fullChroma`, below) — see its
+    // comment for why a thin layer of the raw accent reads grey and this one doesn't.
+    const glowCol = fullChroma(rimCol);
     const backEdge = rimY - out * rimH / 2;
+    const halfBack = rimW / 2;
     for (let i = RIM_GLOW_STEPS; i >= 1; i--) {
-      const bandH = rimH + rimH * RIM_GLOW_REACH * (i / RIM_GLOW_STEPS);
-      rectC(sg, cx, backEdge + out * bandH / 2, rimW, bandH, rimCol, RIM_GLOW_ALPHA);
+      const t = i / RIM_GLOW_STEPS;
+      const tipY = backEdge + out * (rimH + rimH * RIM_GLOW_REACH * t);
+      const halfTip = halfBack + rimH * RIM_GLOW_WEDGE * t;
+      poly(sg, [[cx - halfBack, backEdge], [cx + halfBack, backEdge],
+                [cx + halfTip, tipY], [cx - halfTip, tipY]], glowCol, RIM_GLOW_ALPHA);
     }
     // Separately, the "very slightly soften the edges and corners" half: two faint pads a hair
-    // larger than the core band in EVERY direction. Deliberately tiny — a fraction of a design
-    // unit, so at ART_SCALE this is about half a texture pixel of feathering. This is the only
-    // thing that touches the rim's sides/ends, and it must stay at this scale; anything more and
-    // it becomes the side glow that was just removed.
-    rectC(sg, cx, rimY, rimW + rimH * 0.22, rimH * 1.22, rimCol, 0.16);
-    rectC(sg, cx, rimY, rimW + rimH * 0.10, rimH * 1.10, rimCol, 0.26);
+    // larger than the core band in EVERY direction, rounded to match it. Deliberately tiny — a
+    // fraction of a design unit, so at ART_SCALE this is about half a texture pixel of feathering.
+    // This is the only thing that touches the rim's sides/ends, and it must stay at this scale;
+    // anything more and it becomes the side glow that was just removed.
+    roundC(sg, cx, rimY, rimW + rimH * 0.22, rimH * 1.22, glowCol, rimR * 1.2, 0.16);
+    roundC(sg, cx, rimY, rimW + rimH * 0.10, rimH * 1.10, glowCol, rimR * 1.1, 0.26);
   }
-  rectC(sg, cx, rimY, rimW, rimH, rimCol);
+  // Live-chat ask: "add very slight rounding to the corners of it." Only the rim gets it — every
+  // other band on the plate stays a hard rect, so this is a deliberate softening of the one part
+  // carrying the player accent, not a change to the plate language generally.
+  if (opts.rimGlow) roundC(sg, cx, rimY, rimW, rimH, rimCol, rimR);
+  else rectC(sg, cx, rimY, rimW, rimH, rimCol);
   sub('ao');
   rectC(sg, cx, aoY, rimW, h * 0.13, T.ao, 0.5);
   if (opts.seam !== false) { sub('seam'); rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7); }
@@ -395,6 +413,25 @@ function mixToWhite(c, t) {
   const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
   const m = (v) => Math.round(v + (255 - v) * t);
   return (m(r) << 16) | (m(g) << 8) | m(b);
+}
+
+// The same HUE at full brightness — every channel scaled up until the largest hits 255. Note this
+// is NOT `mixToWhite`, which washes toward white and therefore DESATURATES; this preserves the
+// channel ratios, so the result reads as the same colour, just at its most vivid.
+//
+// Why plate()'s rim bloom needs it (live-chat ask: "all of this bloom and softening should be the
+// same colour as the player colour"): the bloom already IS drawn in exactly the accent colour —
+// `themeFor` assigns `rim: opts.accent`, and the rim bloom uses that same value. But a band at
+// 0.035 alpha composited over a dark plate lands most of the way back toward the plate's own tone,
+// so it READS as a desaturated grey-blue next to the full-alpha core band. Painting the thin
+// layers at full chroma is what makes the composite land on the player's actual hue — matching the
+// colour on screen rather than merely in the source.
+function fullChroma(c) {
+  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+  const m = Math.max(r, g, b);
+  if (!m) return c;                       // pure black has no hue to preserve
+  const k = 255 / m, s = (v) => Math.min(255, Math.round(v * k));
+  return (s(r) << 16) | (s(g) << 8) | s(b);
 }
 
 // A weapon barrel: a capsule (`roundBarrel` themes) or a plain dark bar. #446: the enemy's old
