@@ -449,7 +449,7 @@ export const FiringMixin = {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId });
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distMult: s.distMult });
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -911,6 +911,11 @@ export const FiringMixin = {
       // the shared travel budget above is resolved — see delivery.js `scatterMaxDist`. A no-op
       // for every weapon that doesn't set `delivery.scatterJitter`.
       if (d.scatterJitter) maxDist = scatterMaxDist(maxDist, d.scatterJitter);
+      // Plasma Coater's `burstFan` (delivery.js): a FIXED per-shot distance multiplier so its
+      // flanking shots land closer than its centre shot — two proximal + one distal, a real
+      // triangle instead of a same-range arc. A no-op (distMult defaults to 1) for every other
+      // weapon.
+      if (meta.distMult && meta.distMult !== 1) maxDist *= meta.distMult;
       // #376: CONSTANT HORIZONTAL SPEED. This deliberately replaces the old constant-apex
       // rule ("hold flight time fixed so every arc peaks at the same height", which derived
       // speed as maxDist / (opt / velocity)). That made velocity a function of RANGE — a
