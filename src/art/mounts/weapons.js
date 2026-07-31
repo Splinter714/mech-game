@@ -114,10 +114,14 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // outside its face anyway — see mechPrims.js `plate()`), and its chamfer is computed with the
 // arm plate's own `plateCut()` formula instead of an ad hoc fraction, so the corner cut matches
 // the plate's proportions instead of looking like a mismatched shape dropped on top of it.
+// Round 5: "position towards front of arm is still wrong" — the width fix (round 4) made the
+// collar visibly wider without changing its vertical placement, and a quarter of the way down
+// still reads as too far from the front/firing edge now that it spans the full plate width.
+// Pulled it in closer to frontY.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.29;
-  const collarH = L * 0.8, collarY = frontY + L * 0.75;   // ~quarter of the way down the arm
+  const collarH = L * 0.8, collarY = frontY + L * 0.35;   // close to the front/firing edge
   const collarChamfer = plateCut(T, w, collarH);
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
