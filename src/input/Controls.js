@@ -403,7 +403,16 @@ export class Controls {
       if (padAim) this.aimAngle = Math.atan2(rsDz.y, rsDz.x);
       aim = { mode: 'angle', angle: this.aimAngle };
     } else {
-      aim = { mode: 'pointer', x: p.worldX, y: p.worldY };
+      // #playtest: `p.worldX`/`worldY` is a single value the Pointer carries, overwritten by
+      // WHICHEVER active scene's camera last resolved it this frame — fine for a lone scene, but
+      // Arena always has HudScene stacked on top as a second active scene with its own (unscrolled,
+      // UI-zoomed) camera, and Base has no such overlay. When HudScene's camera was the last to
+      // touch it, aim came out computed against the HUD's screen-space camera instead of the
+      // arena's scrolled/zoomed world one — "mouse doesn't point at the right spot in Arena, but
+      // works fine in Base." Resolving against THIS scene's own camera directly sidesteps the
+      // shared/ambiguous value entirely, regardless of what else is stacked on top.
+      const world = this.scene.cameras.main.getWorldPoint(p.x, p.y);
+      aim = { mode: 'pointer', x: world.x, y: world.y };
     }
 
     // ── Fire ── only from the active scheme's buttons. ──
