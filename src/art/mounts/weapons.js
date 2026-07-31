@@ -134,7 +134,7 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // plate, no overhang risk) get their own more pronounced taper for visual distinction.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.29;
+  const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.22;   // live-chat ask: tubes scooted closer together
   const collarH = L * 0.8;
   const topC = partH ? plateCut(T, w, partH) : 0;   // arm plate's own front-corner chamfer amount
   const botC = plateCut(T, w, collarH);
@@ -149,9 +149,10 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   ], T.deep);
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
-  // tips read as a triangle, not a shallow arc.
+  // tips read as a triangle, not a shallow arc. Live-chat ask: back pair scooted closer to the
+  // front tube (shrunk the depth gap).
   const tubes = [
-    [-off, collarY + collarH * 0.28], [0, collarY - collarH * 0.32], [off, collarY + collarH * 0.28],
+    [-off, collarY + collarH * 0.16], [0, collarY - collarH * 0.32], [off, collarY + collarH * 0.16],
   ];
   sg.layer('weapons.plasmaCoater.tubes');
   for (const [dx, ty] of tubes) {
