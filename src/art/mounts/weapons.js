@@ -87,6 +87,14 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
 // or positive offset) instead of a negative one, so the whole launcher reads as sitting on/in
 // the limb's own body rather than floating in front of it. Unverified live (this session's
 // environment can't render WebGL) — iterate from here.
+// Live-chat ask: "plasma coater lights should match the purple projectile" — the mount would
+// otherwise glow the shared 'energy' category cyan (`n`, the neon this fn is normally handed),
+// visibly mismatched from the weapon's own purple bolt (weapons.js `projectileColor: 0xa04dff`).
+// A local NEON-shaped override, same halo/core/hot/edge spread as the category table
+// (mechPrims.js `NEON`) just built around that purple instead. (Same mismatch #583 tracks
+// generally for every weapon; applied directly here since Jackson's already looking at this one.)
+const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge: 0xc98cff };
+
 function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = 6.6 * s, tubeR = 1.05 * s, off = 2.2 * s;
@@ -100,7 +108,7 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
     const tx = bx + dx;
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened
     ellipseC(sg, tx, ty, tubeR * 1.5, tubeR * 0.8, T.deep);      // bore
-    emissive(sg, () => glowDot(sg, tx, ty - tubeR * 0.08, tubeR * 0.55, n));   // slight light inside the tip
+    emissive(sg, () => glowDot(sg, tx, ty - tubeR * 0.08, tubeR * 0.55, PLASMA_COATER_NEON));   // slight light inside the tip
   }
 }
 
