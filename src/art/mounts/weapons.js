@@ -152,7 +152,10 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
     const tx = bx + dx;
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened
     ellipseC(sg, tx, ty, tubeR * 1.5, tubeR * 0.8, T.deep);      // bore
-    emissive(sg, () => glowDot(sg, tx, ty - tubeR * 0.08, tubeR * 0.55, PLASMA_COATER_NEON));   // slight light inside the tip
+    // Live-chat ask: "the streak pod and cluster salvo have some nice glow, add that glow to the
+    // plasma coater" — those two size their glowDot to fill/dominate their own tube instead of a
+    // small light tucked inside the bore; matched that here (radius up from tubeR*0.55 to *1.0).
+    glowDot(sg, tx, ty, tubeR, PLASMA_COATER_NEON);
   }
 }
 
