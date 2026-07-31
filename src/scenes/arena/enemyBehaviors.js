@@ -14,7 +14,8 @@
 // which pulls the weapon from data (no weapon-id literal here) and respects the kind's cadence.
 
 import Phaser from 'phaser';
-import { enemyTargetOf } from './players.js';
+import { enemyTargetOf, playersOf } from './players.js';
+import { scaleEnemyCount } from '../../data/playerScaling.js';
 import { rotateToward, hullTravelAngle } from './shared.js';
 import { kindWeaponSlot } from '../../data/kindWeapons.js';
 import { AWARE } from '../../data/awareness.js';
@@ -416,13 +417,11 @@ function helicopterBehavior(scene, e, ctx) {
 // second sprite — the launch BAY DOOR, where every other kind has a gun turret — is pinned to
 // the hull's own angle so it reads as bolted to the deck.
 //
-// #152 (round-2 playtest): "deploy drones only" — DEPLOY_INFANTRY gates infantry back OUT of the
-// rotation (flag-disabled, not deleted — flip it back to `true` to restore the drone+infantry
-// mix from #147, same disable-not-delete pattern #144 used for the aim-line).
-// #239: confirmed this already stays `false`, so the nest-deploy can't spawn infantry even
-// though infantryMob itself is separately pulled from ENEMY_ROTATION (DEFAULT_SQUAD/LATE_POOL are gone)
-// (data/enemies.js, data/run.js) pending a redesign — no change needed here for #239.
-const DEPLOY_INFANTRY = false;
+// #152 (round-2 playtest): "deploy drones only" — DEPLOY_INFANTRY gated infantry OUT of the
+// rotation for a while (flag-disabled, not deleted). #562: flipped back on — the mixed
+// drone+infantry mode is fully built and was previously playtested, it was just sitting behind
+// this flag with no remaining reason to.
+const DEPLOY_INFANTRY = true;
 const CARRIER_DEPLOY_KINDS = DEPLOY_INFANTRY ? ['drone', 'infantry'] : ['drone'];
 
 // #328: how long (ms) the bay door holds OPEN after a batch launches. Long enough to actually
@@ -588,7 +587,11 @@ export function carrierDeployTick(scene, e, def, delta) {
     // #416: count THIS carrier's own live brood (enemies still on `scene.enemies` — dead ones
     // are pruned the same tick they die, #87 `_removeEnemy`) against the cap before spawning.
     const liveDrones = (scene.enemies ?? []).filter((u) => u.carrierId === e).length;
-    const room = CARRIER_MAX_LIVE_DRONES - liveDrones;
+    // #563: the cap itself scales with player count, same as every other enemy source
+    // (playerScaling.js) — otherwise a carrier is a proportionally weaker threat in co-op right
+    // when everything else got harder.
+    const cap = scaleEnemyCount(CARRIER_MAX_LIVE_DRONES, playersOf(scene).length);
+    const room = cap - liveDrones;
     if (room <= 0) return;   // #416: bay stays shut this cycle — the brood is already at capacity.
     // #147: deploy a whole SWARM-sized batch at once (not one unit per tick), sized between
     // deployBatchMin/Max, trimmed to whatever room is left under the live cap.
