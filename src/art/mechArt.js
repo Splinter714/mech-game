@@ -268,8 +268,9 @@ function drawShoulder(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   sg.layer('plate.vent');
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
   if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
-  sg.layer('pauldron');
-  drawPauldronFor(sg, mech, lay, loc, T);
+  // drawShoulderDecorFor sets its own per-kind layer (SHOULDER_DECOR: pauldron, vane), so no
+  // blanket tag here — otherwise a shoulder with no decor would leave an empty 'pauldron' group.
+  drawShoulderDecorFor(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
@@ -293,13 +294,24 @@ function drawPartGlow(sg, mech, loc, T) {
 // Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftShoulder, > 0 → rightShoulder),
 // so it rides on the same pivoting texture as its shoulder. The other decor kinds stay on
 // the body (see drawDecor's `skip`).
-function drawPauldronFor(sg, mech, lay, loc, T) {
+// Decor kinds that ride on the PIVOTING SHOULDER textures rather than the body, so they cant with
+// the shoulder instead of staying rigid on the torso. `drawDecor`'s `skip` is fed from this same
+// list, so a kind can never be drawn twice (or dropped) by the two call sites disagreeing.
+// Live-chat ask (2026-07-31): "can we attach the vane decor on light mech to the shoulders instead
+// of the torso?" — vane joined pauldron here. Both were ALREADY positioned off `lay.leftShoulder`/
+// `lay.rightShoulder` in their draw fns, so nothing about their geometry had to change; what
+// changed is which texture they bake into, and therefore whether they move with the shoulder.
+const SHOULDER_DECOR = ['pauldron', 'vane'];
+
+function drawShoulderDecorFor(sg, mech, lay, loc, T) {
   const side = loc === 'leftShoulder' ? -1 : 1;
   for (const d of mech.chassis.art.decor || []) {
-    // #585: same tagging path as drawDecor, but under this texture's own 'pauldron' prefix rather
-    // than 'decor.pauldron' — the pauldron is the one decor kind that lives on the shoulder
-    // texture (so it cants with it), and the prefix has to match where it actually landed.
-    if (d.kind === 'pauldron' && d.side === side) drawDecorPiece(sg, DECOR_ART.pauldron, d, lay, T, 'pauldron');
+    // #585: same tagging path as drawDecor, but under this texture's own `<kind>` prefix rather
+    // than `decor.<kind>` — the prefix has to match where the piece actually landed, and these
+    // land on the shoulder texture, not the body.
+    if (SHOULDER_DECOR.includes(d.kind) && d.side === side) {
+      drawDecorPiece(sg, DECOR_ART[d.kind], d, lay, T, d.kind);
+    }
   }
 }
 
@@ -379,7 +391,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // are drawn on the shoulder textures instead (so they cant with the shoulder), so skip
   // them here.
   sg.layer('decor');
-  drawDecor(sg, mech, lay, T, { skip: ['pauldron'] });
+  drawDecor(sg, mech, lay, T, { skip: SHOULDER_DECOR });
 
   // Weapon hardware for the centre/head mounts only — the ARM and SHOULDER mounts are drawn
   // in their own pivoting textures (drawArm / drawShoulder), so skip them here.
@@ -421,9 +433,14 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     sg.layer(loc);   // 'leftLeg' / 'rightLeg'
     const p = lay[loc];   // legs are animation-only now — never destroyed
     const fy = p.y + dir * shift;
-    sg.layer(`${loc}.thruster`);
-    ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
-    ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
+    // Live-chat ask (2026-07-31): "remove thruster with all player mechs" — the reactor-purple
+    // wash+core under each foot. Gated on the theme's own `thrusters` flag (mechPrims.js) so it's
+    // the PLAYER theme that opts out; enemies keep them.
+    if (T.thrusters) {
+      sg.layer(`${loc}.thruster`);
+      ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
+      ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
+    }
     // Live-chat follow-up: player color removed from legs too (head-only marker now) —
     // rim: T.baseRim was T.rim (the accent) before.
     plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.baseRim, seam: false, tag: `${loc}.plate` });

@@ -34,14 +34,18 @@ export const CENTER = DESIGN / 2;
 // state. It's a theme property rather than a call-site branch because the faction palette table
 // is already the single place a mech's LOOK is decided.
 const THEMES = {
+  // `thrusters` (live-chat ask, 2026-07-31: "remove thruster with all player mechs"): whether the
+  // legs draw the reactor-purple wash+core under each foot. An explicit theme flag rather than
+  // reusing `armorArt` as a de-facto "is this the player" test — that one means "shows armour
+  // state on the body", and the two questions are only coincidentally the same today.
   player: {
-    faceted: false, armorArt: true,
+    faceted: false, armorArt: true, thrusters: false,
     outline: 0x0b0e14, deep: 0x1b212b, ao: 0x10131a, recess: 0x14181f, housing: 0x14181f,
     lower: 0x252c38, faceDk: 0x2a323e, faceMid: 0x2e3543, face: 0x3a4250,
     rim: 0x4b5666, rimHi: 0x566273, joint: 0x181d27, grime: 0x0e1219, char: 0x17120f,
   },
   enemy: {
-    faceted: true, roundBarrel: true, legibilityHalo: true, armorArt: false,
+    faceted: true, roundBarrel: true, legibilityHalo: true, armorArt: false, thrusters: true,
     outline: 0x2b3441, deep: 0x9aa7b6, ao: 0x8b97a6, recess: 0x96a3b2, housing: 0x5a6675,
     lower: 0xc3ccd6, faceDk: 0xb6c2cf, faceMid: 0xd3dae2, face: 0xe7ecf1,
     rim: 0xf6f9fb, rimHi: 0xffffff, joint: 0x8b97a6, grime: 0x96a3b2, char: 0x4a3a36,

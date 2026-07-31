@@ -13,7 +13,11 @@ export const LIGHT_CONFIG = {
   art: {
     bodyLen: 30, bodyWid: 22, accent: 0x49c2e8,
     shape: { head: 0.78, torso: 0.9, shoulder: 0.9, armW: 0.62, armH: 1.45, armSpread: 0.8, legW: 0.62, legH: 1.42, legSpread: 1.02, legDrop: 1.08, headDy: -0.03, armDy: -0.04 },
-    decor: [{ kind: 'mast', side: -1 }, { kind: 'vane', side: -1 }, { kind: 'vane', side: 1 }],
+    // Live-chat ask (2026-07-31): "remove mast decor from light mech" — the tall sensor antenna
+    // over the head is gone; the swept vanes carry the recon read on their own now. The vanes also
+    // moved from the body texture onto the pivoting SHOULDER textures (mechArt.js SHOULDER_DECOR),
+    // so they cant with the shoulder rather than staying rigid on the torso.
+    decor: [{ kind: 'vane', side: -1 }, { kind: 'vane', side: 1 }],
   },
   movement: {
     // #3 MechWarrior-feel pass. Even a light mech is a walking tank: it takes a beat to
