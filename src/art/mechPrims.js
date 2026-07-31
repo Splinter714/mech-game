@@ -232,6 +232,26 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   if (opts.seam !== false) { sub('seam'); rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7); }
 }
 
+// Live-chat ask: a mounted item can widen enough to slightly overhang a plate's own chamfered
+// corner (e.g. Plasma Coater's collar, sized to span the full arm width, poking past the arm
+// plate's own diagonal corner cut). Rather than chase exact geometric containment for every
+// bespoke mount shape, call this AFTER drawing whatever's mounted on the plate: it repaints the
+// plate's own 4 corner wedges (bounding-rect corner -> the two chamfer points, same amount
+// `plate()` itself uses) in the plate's outline colour, so any overhang gets visually clipped by
+// the plate's real silhouette instead of poking into the background. Player theme only — the
+// enemy's faceted trapezoid corners aren't a simple bounding-rect wedge, and this overhang case
+// is specific to the player's own mount-art iteration.
+export function clipCornersToPlate(sg, T, cx, cy, w, h, opts = {}) {
+  if (T.faceted) return;
+  const c = (opts.chamfer ?? plateCut(T, w, h)) + 0.4;   // matches plate()'s own outline chamfer
+  const x0 = cx - w / 2 - 0.6, x1 = cx + w / 2 + 0.6, y0 = cy - h / 2 - 0.6, y1 = cy + h / 2 + 0.6;
+  const fill = T.outline;
+  poly(sg, [[x0, y0], [x0 + c, y0], [x0, y0 + c]], fill);
+  poly(sg, [[x1, y0], [x1 - c, y0], [x1, y0 + c]], fill);
+  poly(sg, [[x1, y1], [x1 - c, y1], [x1, y1 - c]], fill);
+  poly(sg, [[x0, y1], [x0 + c, y1], [x0, y1 - c]], fill);
+}
+
 // The faceted plate's surface detail. Everything here runs on a DIAGONAL, which is the whole point:
 // the previous pass kept the player's orthogonal bands on a near-rectangular plate, and horizontal
 // stripes on a rectangle are exactly what reads as blocky. Order: the shaded second plane, the lit
