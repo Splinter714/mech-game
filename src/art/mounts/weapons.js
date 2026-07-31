@@ -3,10 +3,18 @@
 // beam lens vs a heavy rail rod, a single-barrel autocannon vs a multi-barrel repeater vs
 // a wide scatter muzzle, a stacked swarm rack vs a slim streak pod vs a fat cluster tube).
 //
-// All draw the same way as the category fallbacks: `(sg, T, bx, frontY, s, n, cap)`, pointing
-// forward (-y) from `frontY`, glowing the weapon's CATEGORY neon `n` so type still reads.
-// Sizes are in design px scaled by `s` (chassis size) and clamped to `cap` so the muzzle
+// All draw the same way as the category fallbacks: `(sg, T, bx, frontY, s, n, cap, partW, partH,
+// tag)`, pointing forward (-y) from `frontY`, glowing the weapon's CATEGORY neon `n` so type still
+// reads. Sizes are in design px scaled by `s` (chassis size) and clamped to `cap` so the muzzle
 // stays inside the canvas. Keyed by weapon id in WEAPON_MOUNT_ART at the bottom.
+//
+// #585: `tag(name)` sub-tags the shapes for the dev art-dissect tool, using the ONE standardized
+// vocabulary every mount shares — `collar` (structure bolted to the mech) / `barrel` (the emitting
+// body) / `muzzle` (the solid flared/belled/capped piece at the barrel's tip, where a mount has
+// one) / `color` (every lit layer: glowDot/glowBar/`emissive()`) / `detail` (the flat residual
+// bucket). See drawWeaponMount in ./index.js for the full rationale. A fn tags only what it
+// actually draws, and re-tags inside a loop where grouping the draws by tag would reorder
+// overlapping shapes and change the bake.
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
@@ -17,46 +25,63 @@ import { barrelLen } from './barrelSpec.js';
 
 // Pulse Laser — a SHORT twin-emitter block: a compact housing with two stubby little barrels
 // and two small glowing eyes, reading as a rapid-fire pulse array (not one long beam).
-function pulseLaser(sg, T, bx, frontY, s, n, cap) {
+function pulseLaser(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('pulseLaser', s, cap), w = 5.4 * s, off = 1.2 * s;
+  tag('collar');
   rectC(sg, bx, frontY - L * 0.5, w, L, T.deep);                     // squat housing
-  for (const dx of [-1, 1]) {
+  for (const dx of [-1, 1]) {                                        // bare tubes: no tip piece
+    tag('barrel');
     barrel(sg, T, bx + dx * off, frontY - L * 0.5, 1.5 * s, L * 0.9);
+    tag('color');
     glowDot(sg, bx + dx * off, frontY - L + 0.3, 1.4 * s, n);
   }
 }
 
 // Beam Laser — a LONG slim barrel with a big focusing LENS at the muzzle: reads as a
 // continuous-beam projector. Bright edge light runs the whole length.
-function beamLaser(sg, T, bx, frontY, s, n, cap) {
+function beamLaser(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('beamLaser', s, cap), w = 2.2 * s;
+  tag('barrel');
   barrel(sg, T, bx, frontY - L / 2, w, L);
+  tag('color');
   emissive(sg, () => rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7)); // edge light down the barrel
-  ellipseC(sg, bx, frontY - L * 0.9, w * 1.8, w * 1.1, T.deep);        // lens collar
+  tag('muzzle');
+  ellipseC(sg, bx, frontY - L * 0.9, w * 1.8, w * 1.1, T.deep);        // lens collar (belled tip)
+  tag('color');
   glowDot(sg, bx, frontY - L, 3.4 * s, n);                            // big emitter lens
 }
 
 // Rail Lance — a HEAVY long rail rod: a thick barrel flanked by twin accelerator rails, a
 // blocky breech at the base and a bright charge glow at the tip. The sniper of the set.
-function railLance(sg, T, bx, frontY, s, n, cap) {
+// The accelerator rails are `detail`, not `barrel`: they flank the tube rather than emit, and
+// nothing leaves the mount through them.
+function railLance(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('railLance', s, cap), w = 2.8 * s, rail = 1.1 * s, off = 2.1 * s;
+  tag('collar');
   rectC(sg, bx, frontY - L * 0.14, w * 2.8, 3 * s, T.deep);           // blocky breech
   for (const dx of [-1, 1]) {                                        // twin accelerator rails
+    tag('detail');
     rectC(sg, bx + dx * off, frontY - L * 0.52, rail, L * 0.9, T.faceDk);
+    tag('color');
     emissive(sg, () => rectC(sg, bx + dx * off, frontY - L * 0.52, rail * 0.5, L * 0.9, n.core, 0.8)); // lit rail slit
   }
+  tag('barrel');
   barrel(sg, T, bx, frontY - L / 2, w, L);                           // heavy central rod
+  tag('color');
   glowBar(sg, bx, frontY - L * 0.9, w * 0.7, L * 0.5, n);            // charged rail slit
   glowDot(sg, bx, frontY - L, 2.2 * s, n);
 }
 
 // Plasma Arc — a wide-mouthed mortar-ish emitter that lobs a bolt: a flared cup on a short
 // neck with a fat plasma ball glowing at the mouth.
-function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
+function plasmaCannon(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('plasmaCannon', s, cap), w = 3.2 * s;
+  tag('barrel');
   rectC(sg, bx, frontY - L * 0.35, w, L * 0.7, T.deep);              // short neck
+  tag('muzzle');
   poly(sg, [[bx - w * 1.1, frontY - L], [bx + w * 1.1, frontY - L],
             [bx + w * 0.5, frontY - L * 0.6], [bx - w * 0.5, frontY - L * 0.6]], T.faceDk);  // flared cup
+  tag('color');
   emissive(sg, () => ellipseC(sg, bx, frontY - L, w * 1.5, w * 0.8, n.halo, 0.4)); // plasma pool
   glowDot(sg, bx, frontY - L, 2.8 * s, n);                          // fat plasma ball
 }
@@ -132,13 +157,16 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // genuinely flush AND non-overhanging at the same time: same edge, same corner cut, literally
 // inscribed in the plate's own silhouette at the top. Only the bottom corners (deep inside the
 // plate, no overhang risk) get their own more pronounced taper for visual distinction.
-function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
+function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = partW ?? 5.4 * s, tubeR = 1.15 * s, off = w * 0.22;   // live-chat ask: bigger tubes/purple glow
   const collarH = L * 0.8;
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
-  sg.layer('weapons.plasmaCoater.collar');
+  // #585 generalized that one-off pair into the vocabulary every mount now shares — this fn used
+  // to hardcode its own weapon id into the tag string ('weapons.plasmaCoater.collar'), which is
+  // exactly the pattern `tag` replaces, and its 'tubes' is the standard `barrel`.
+  tag('collar');
   const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
@@ -147,26 +175,33 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const tubes = [
     [-off, collarY + collarH * 0.16], [0, collarY - collarH * 0.24], [off, collarY + collarH * 0.16],
   ];
-  sg.layer('weapons.plasmaCoater.tubes');
   for (const [dx, ty] of tubes) {
     const tx = bx + dx;
+    // Rim + bore are both the tube itself seen end-on, not a separate flared tip piece, so both
+    // are `barrel` — no `muzzle` on this mount.
+    tag('barrel');
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened
     ellipseC(sg, tx, ty, tubeR * 1.5, tubeR * 0.8, T.deep);      // bore
     // Live-chat ask: "the streak pod and cluster salvo have some nice glow, add that glow to the
     // plasma coater" — those two size their glowDot to fill/dominate their own tube instead of a
     // small light tucked inside the bore; matched that here (radius up from tubeR*0.55 to *1.0).
+    tag('color');
     glowDot(sg, tx, ty, tubeR, PLASMA_COATER_NEON);
   }
 }
 
 // Flamethrower — a stubby fuel-tank body with a flared FLAME NOZZLE at the tip and a pilot
 // glow. Squat and wide, reading as a close-range gout gun.
-function flamethrower(sg, T, bx, frontY, s, n, cap) {
+function flamethrower(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('flamethrower', s, cap), w = 3.4 * s;
+  tag('collar');
   ellipseC(sg, bx, frontY - L * 0.28, w * 1.3, L * 0.6, T.deep);     // rounded fuel body
+  tag('barrel');
   rectC(sg, bx, frontY - L * 0.62, w * 0.5, L * 0.5, T.faceDk);      // neck
+  tag('muzzle');
   poly(sg, [[bx - w * 0.75, frontY - L], [bx + w * 0.75, frontY - L],
             [bx + w * 0.28, frontY - L * 0.78], [bx - w * 0.28, frontY - L * 0.78]], T.faceMid);  // flared nozzle
+  tag('color');
   glowDot(sg, bx, frontY - L, 1.8 * s, n);                          // pilot flame
 }
 
@@ -174,42 +209,56 @@ function flamethrower(sg, T, bx, frontY, s, n, cap) {
 
 // Autocannon — one BIG single barrel with a chunky muzzle brake and a base housing: a heavy
 // direct-fire shell gun (contrasts the repeater's many small barrels).
-function autocannon(sg, T, bx, frontY, s, n, cap) {
+function autocannon(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('autocannon', s, cap), w = 3.2 * s;
+  tag('collar');
   rectC(sg, bx, frontY - L * 0.16, w * 1.9, 3 * s, T.deep);          // base housing
+  tag('barrel');
   barrel(sg, T, bx, frontY - L / 2, w, L);                          // fat barrel
+  tag('muzzle');
   rectC(sg, bx, frontY - L * 0.82, w * 1.5, L * 0.18, T.faceDk);     // muzzle brake
+  tag('color');
   glowDot(sg, bx, frontY - L, 1.7 * s, n);
 }
 
 // Repeater — a MULTI-barrel gatling: two thin barrels in a row over a wide housing, each
 // with its own small muzzle glow (matches its two stream lanes). Reads as a rapid tracer stream.
-function machineGun(sg, T, bx, frontY, s, n, cap) {
+function machineGun(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('machineGun', s, cap), w = 1.2 * s, off = 1.7 * s;
+  tag('collar');
   rectC(sg, bx, frontY - L * 0.4, (off * 2 + w) * 1.5, L * 0.8, T.deep);  // gatling housing
-  for (const dx of [-0.5, 0.5]) {
+  for (const dx of [-0.5, 0.5]) {                                   // bare tubes: no tip piece
+    tag('barrel');
     barrel(sg, T, bx + dx * off, frontY - L / 2, w, L);
+    tag('color');
     glowDot(sg, bx + dx * off, frontY - L + 0.4, 1.0 * s, n);
   }
 }
 
 // Scatter Gun — a WIDE flared shotgun muzzle: a short barrel opening into a broad cone with
 // pellet glints across the mouth. Reads as a spread weapon.
-function shotgun(sg, T, bx, frontY, s, n, cap) {
+function shotgun(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('shotgun', s, cap), w = 2.2 * s, mouth = 5.6 * s;
+  tag('barrel');
   rectC(sg, bx, frontY - L * 0.35, w, L * 0.7, T.deep);             // stubby barrel
+  tag('muzzle');
   poly(sg, [[bx - mouth / 2, frontY - L], [bx + mouth / 2, frontY - L],
             [bx + w * 0.6, frontY - L * 0.55], [bx - w * 0.6, frontY - L * 0.55]], T.faceDk);  // wide funnel
+  tag('color');
   for (const dx of [-1, 0, 1]) glowDot(sg, bx + dx * mouth * 0.3, frontY - L + 0.4, 1.0 * s, n);  // pellet glints
 }
 
 // Napalm Lobber — a fat upward-angled MORTAR tube: a short stout barrel with a thick collar
 // and a canister glow in the mouth. Reads as a lobbed incendiary.
-function napalm(sg, T, bx, frontY, s, n, cap) {
+function napalm(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('napalm', s, cap), w = 4 * s;
+  tag('collar');
   rectC(sg, bx, frontY - L * 0.4, w * 0.5, L * 0.8, T.deep);        // base
+  tag('barrel');
   barrel(sg, T, bx, frontY - L * 0.55, w, L * 0.7);                // stout tube
-  ellipseC(sg, bx, frontY - L * 0.9, w * 0.9, w * 0.55, T.faceDk);  // thick rim collar
+  tag('muzzle');
+  ellipseC(sg, bx, frontY - L * 0.9, w * 0.9, w * 0.55, T.faceDk);  // thick rim collar (belled tip)
+  tag('color');
   glowDot(sg, bx, frontY - L * 0.9, 2.4 * s, n);                   // canister in the mouth
 }
 
@@ -223,10 +272,15 @@ function napalm(sg, T, bx, frontY, s, n, cap) {
 
 // Swarm Rack — a TALL stacked launch rack: a 2×3 grid of glowing tubes on the flush collar,
 // reading as a big all-at-once salvo.
-function swarmRack(sg, T, bx, frontY, s, n, cap, partW, partH) {
+// #585 tags: like the generic missile fallback, every launch cell here is drawn purely as
+// `emissive()` colour with no dark tube under it — so this mount is `collar` + `color` and has
+// neither a `barrel` nor a `muzzle` piece.
+function swarmRack(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const w = partW ?? 5.6 * s, collarH = barrelLen('swarmRack', s, cap) * 0.8;
+  tag('collar');
   const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
   const y0 = collarY - collarH / 2;
+  tag('color');
   for (const dx of [-1, 1]) for (const dy of [0, 1, 2]) {           // 2×3 launch cells
     const cxx = bx + dx * w * 0.22, cyy = y0 + collarH * (0.2 + dy * 0.28);
     emissive(sg, () => {
@@ -241,24 +295,32 @@ function swarmRack(sg, T, bx, frontY, s, n, cap, partW, partH) {
 
 // Streak Pod — a SLIM twin-tube pod on the flush collar: two tubes side by side, each with a
 // bright seeker glow at the tip. Reads as a precise pair of seekers, not a box.
-function streakPod(sg, T, bx, frontY, s, n, cap, partW, partH) {
+function streakPod(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const w = partW ?? 5.4 * s, collarH = barrelLen('streakPod', s, cap) * 0.8;
+  tag('collar');
   const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
   const off = w * 0.22;
   for (const dx of [-1, 1]) {
+    tag('barrel');
     roundC(sg, bx + dx * off, collarY, w * 0.24, collarH * 0.7, T.faceDk, w * 0.12);   // #446: no bubbly variant
+    tag('color');
     glowDot(sg, bx + dx * off, collarY - collarH * 0.24, 1.5 * s, n);       // seeker eye
   }
+  tag('detail');   // a tie-bar between the tubes, not structure/body/tip — the residual bucket
   rectC(sg, bx, collarY + collarH * 0.16, (off * 2 + w * 0.24), collarH * 0.14, T.deep);   // yoke tying the tubes
 }
 
 // Cluster Salvo — a single FAT dumbfire tube on the flush collar: one wide short launch barrel
 // with a cluster of small warhead glints packed in the mouth. Reads as a tight clump, not a rack.
-function clusterRocket(sg, T, bx, frontY, s, n, cap, partW, partH) {
+function clusterRocket(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const w = partW ?? 5.4 * s, collarH = barrelLen('clusterRocket', s, cap) * 0.8;
+  tag('collar');
   const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
+  tag('barrel');
   roundC(sg, bx, collarY, w * 0.7, collarH * 0.7, T.faceDk, w * 0.2);   // fat tube (#446: one variant)
+  tag('muzzle');
   rectC(sg, bx, collarY - collarH * 0.28, w * 0.6, collarH * 0.14, T.deep);     // muzzle lip
+  tag('color');
   for (const dx of [-1, 1]) for (const dy of [-1, 1]) {             // packed cluster of warheads
     glowDot(sg, bx + dx * w * 0.14, collarY - collarH * (0.28 + dy * 0.06), 0.9 * s, n);
   }
