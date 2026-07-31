@@ -70,23 +70,32 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
 // actually got drawn; skipping that meant this mount's own fired shots spawned from a point
 // that had nothing to do with its new art. Rebuilt on `barrelLen()` like every sibling mount.
 //
-// Follow-up (same day): "move the mount further back on its mech section" — a SHORT modeled
-// length (`BARREL_SPECS.plasmaCoater`, below) keeps the whole assembly close to the limb's own
-// front edge rather than projecting far forward. "Update to be like three tubes facing up
-// (towards viewer) and forward (towards enemy) with slight light inside tip of each tube" — three
-// short launch tubes on a low mounting collar, each drawn as a foreshortened ellipse (an
+// Follow-up (same day, round 1): "move the mount further back on its mech section" — a SHORT
+// modeled length (`BARREL_SPECS.plasmaCoater`, below). "Update to be like three tubes facing up
+// (towards viewer) and forward (towards enemy) with slight light inside tip of each tube" —
+// three launch tubes on a low mounting collar, each drawn as a foreshortened ellipse (an
 // up-and-forward-angled tube mouth reads as an ellipse from top-down, not a flat circle) with a
-// soft inner glow. Matches the weapon's own 3-blob volley. Unverified live (this session's
+// soft inner glow. Matches the weapon's own 3-blob volley.
+//
+// Follow-up (round 2): "cluster the barrels ... tips are a triangle" — round 1's depth gap
+// between the front tube and the back pair was too shallow to read as a triangle at a glance
+// (the same "reads as a line, not a triangle" lesson from the projectile-landing-pattern
+// iteration earlier this session — a shallow arc/line needs a real depth gap, not a subtle one).
+// Widened it substantially. "Pull the whole muzzle thing back onto the mech section, not on
+// front of it" — round 1 still had the entire assembly, collar included, sitting ahead of
+// `frontY` (the limb's own front edge). Every position below is now AT or BEHIND frontY (zero
+// or positive offset) instead of a negative one, so the whole launcher reads as sitting on/in
+// the limb's own body rather than floating in front of it. Unverified live (this session's
 // environment can't render WebGL) — iterate from here.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = 6.4 * s, tubeR = 1.05 * s, off = 2.1 * s;
-  // Low mounting collar under the tubes, sat close to the front edge (short L keeps it "further
-  // back" rather than projecting out like a barrel).
-  rectC(sg, bx, frontY - L * 0.32, w, L * 0.85, T.deep);
-  // The three tube mouths: left/right pair a touch further back, centre one a touch further
-  // forward — a shallow arrowhead rather than a dead-flat row, still reading as one launcher.
-  const tubes = [[-off, frontY - L * 0.62], [0, frontY - L * 0.78], [off, frontY - L * 0.62]];
+  const w = 6.6 * s, tubeR = 1.05 * s, off = 2.2 * s;
+  // Low mounting collar, centred just behind the front edge — on the limb, not ahead of it.
+  rectC(sg, bx, frontY + L * 0.18, w, L * 0.85, T.deep);
+  // Triangle cluster: the back pair sit well behind the front edge; the front tube's tip barely
+  // reaches the edge itself (never past it) — a real depth gap between the two, so 3 clearly
+  // non-collinear points instead of a shallow arc.
+  const tubes = [[-off, frontY + L * 0.32], [0, frontY - L * 0.02], [off, frontY + L * 0.32]];
   for (const [dx, ty] of tubes) {
     const tx = bx + dx;
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened
