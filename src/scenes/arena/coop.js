@@ -104,7 +104,7 @@ export const CoopMixin = {
     // between the baked walk frames), so its grey variants have to already exist before the first
     // cloaked footstep or that frame would show a missing/blank texture. Safe to do once and cache
     // forever: hull art is damage-independent (see buildMechTextures' skipHull note), so unlike the
-    // torso/arm/turret grey variants (rebaked fresh on every cloak press in abilities.js, to track
+    // shoulder/arm/turret grey variants (rebaked fresh on every cloak press in abilities.js, to track
     // damage) these can never go stale. Gated on the build actually mounting Cloak in some slot, so
     // a build that never cloaks never pays for it.
     const hasCloak = Object.values(mech.abilityMounts || {}).some((id) => id && getAbility(id)?.effect === 'cloak');

@@ -119,7 +119,7 @@ export const WINDUP_TURN_FRAC = 0.8;       // fraction of chassis turnRate the h
 // (3) SEGMENTED ROTATION: a real rotation accumulator per axis (`e.angleRaw`/`e.turretRaw`) still
 // slews continuously, but what's RENDERED (and what the guns fire along) is that accumulator
 // snapped to fixed angular DETENTS — so the mech ratchets round in servo steps instead of gliding.
-// The legs get a COARSE detent and the turret (which carries the torsos + arms via _syncTilts) a
+// The legs get a COARSE detent and the turret (which carries the shoulders + arms via _syncTilts) a
 // finer one, so the two halves visibly step at different moments rather than turning as one fluid
 // piece — that mismatch is the "segmented between legs/torso/arms" read. Firing keys off the same
 // snapped `e.turret` the art uses, so shots always leave along the barrel you can see (and the
@@ -233,7 +233,7 @@ export function isAllIndirect(mech) {
   return ws.length > 0 && ws.every(isIndirectWeapon);
 }
 
-// Lowest health fraction among the enemy's lethal parts — #128: both side torsos, since
+// Lowest health fraction among the enemy's lethal parts — #128: both shoulders, since
 // losing both is now the kill condition (LETHAL_GROUPS) — the AI reads "am I hurt?" off
 // this to decide whether to seek cover / disengage.
 export function lethalHealth(mech) {

@@ -21,20 +21,20 @@ import { COLOSSUS_PLAYER_CONFIG } from './colossusPlayer.js';
 // renamed from "structure" — plain language, same layering) from the chassis' baseline
 // stats. #128: head/cockpit/centerTorso dropped out of LOCATIONS (cosmetic only now, no
 // armor/HP), so they no longer need a factor.
-// #230: torso factor bumped 0.75 -> 0.85 (arm left at 0.6, so the HP ratio moves from
+// #230: shoulder factor bumped 0.75 -> 0.85 (arm left at 0.6, so the HP ratio moves from
 // ~1.25x to ~1.42x an arm's health). Paired with easing combat.js's player-hit weighting
-// from 2:1 to 1.5:1 torso:arm, the two changes together bring torsos' effective
+// from 2:1 to 1.5:1 shoulder:arm, the two changes together bring the shoulders' effective
 // destruction rate (hits-needed, factoring in how much more often they're hit) within
-// ~6% of an arm's instead of torsos dying ~1.6x faster — see _damagePlayerAt for the math.
+// ~6% of an arm's instead of shoulders dying ~1.6x faster — see _damagePlayerAt for the math.
 const FACTORS = {
-  leftTorso: 0.85, rightTorso: 0.85,
+  leftShoulder: 0.85, rightShoulder: 0.85,
   leftArm: 0.6, rightArm: 0.6,
 };
 
 // #299: distribute a WHOLE-CHASSIS total across the damage-tracked locations by FACTORS weight,
 // landing on the total EXACTLY. Per-location `Math.round` used to be the rule, which meant the
 // summed total was whatever the rounding happened to produce — and because the locations come in
-// symmetric pairs (torso ×2, arm ×2), a rounded total could only ever be EVEN. #299's table asks
+// symmetric pairs (shoulder ×2, arm ×2), a rounded total could only ever be EVEN. #299's table asks
 // for odd totals (light armor 75, heavy armor 225), so the distribution now uses largest-
 // remainder: floor each share, then hand the leftover points out to the largest fractional parts
 // (ties broken by LOCATIONS order, so it's deterministic). At most one point of left/right

@@ -1,6 +1,6 @@
 // #404 (third pass) — the shared SPRITE ASSEMBLY for a mech.
 //
-// A mech is not one sprite: it's a hull, two side torsos, two arms, a per-slot muzzle-glow overlay
+// A mech is not one sprite: it's a hull, two shoulders, two arms, a per-slot muzzle-glow overlay
 // above each of those four, and the body/turret on top — in that exact back-to-front order, each
 // posed at its own joint. The arena (`arena/locomotion.js`) and the garage lab preview
 // (`GarageScene`) both build that stack, and they used to build it from two hand-kept-in-sync
@@ -14,20 +14,20 @@
 import { partSpriteTransform, PIVOT_LOCATIONS, MUZZLE_GLOW_SUFFIX } from './mechArt.js';
 
 // The four off-centre parts that pivot on a joint, paired with the field each is stored under.
-// (`PIVOT_LOCATIONS` order is side torsos then arms — the same back-to-front order they draw in.)
-const PIVOT_FIELDS = { leftTorso: 'torL', rightTorso: 'torR', leftArm: 'armL', rightArm: 'armR' };
+// (`PIVOT_LOCATIONS` order is shoulders then arms — the same back-to-front order they draw in.)
+const PIVOT_FIELDS = { leftShoulder: 'shldL', rightShoulder: 'shldR', leftArm: 'armL', rightArm: 'armR' };
 
 // Build one mech's sprite stack under texture `key`, at `scale`, positioned at (x, y).
-// Returns `{ hull, torL, torR, armL, armR, turret, glow, children }` where `children` is the
-// stack in BACK-TO-FRONT draw order (hull → side torsos → arms, each followed by its muzzle-glow
+// Returns `{ hull, shldL, shldR, armL, armR, turret, glow, children }` where `children` is the
+// stack in BACK-TO-FRONT draw order (hull → shoulders → arms, each followed by its muzzle-glow
 // overlay → turret) — the arena hands that array straight to a container, the lab adds them in
 // order. `isPlayer` gates the muzzle-glow overlays, which are baked for the player theme only.
 export function makeMechParts(scene, key, { x = 0, y = 0, scale = 1, isPlayer = false } = {}) {
   const spr = (tex) => scene.add.sprite(x, y, tex).setScale(scale);
   const parts = {
     hull: spr(`${key}_hull_0`),
-    torL: spr(`${key}_leftTorso`),
-    torR: spr(`${key}_rightTorso`),
+    shldL: spr(`${key}_leftShoulder`),
+    shldR: spr(`${key}_rightShoulder`),
     armL: spr(`${key}_leftArm`),
     armR: spr(`${key}_rightArm`),
     turret: spr(`${key}_turret`),

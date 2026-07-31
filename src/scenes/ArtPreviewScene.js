@@ -734,7 +734,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   // ── Shared mech posing ────────────────────────────────────────────────────────────────
   // The six-sprite mech, assembled the way GarageScene's preview does it: hull frame, the two
-  // side torsos and two arms pivoted at their joints via partSpriteTransform, the player-only
+  // shoulders and two arms pivoted at their joints via partSpriteTransform, the player-only
   // muzzle-glow overlays (#433) sharing each part's transform, then the turret on top.
 
   // At the shared preview facing (-π/2) partSpriteTransform reproduces each part's baked-in
@@ -754,7 +754,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
   // parts, and enemy mechs can't be compared to each other by size.
   _mechCell(label, key, mech, { frame = 0, animate = false, ink = null, factor = null } = {}) {
     // #546: a mech bakes SIX separate textures under this one `key` prefix (hull per walk
-    // frame, turret, both side torsos, both arms — see mechArt.js's buildMechTextures), each
+    // frame, turret, both shoulders, both arms — see mechArt.js's buildMechTextures), each
     // carrying its own `.layer()` tags. #545 could only ever open the turret; #546 offered every
     // baked texture as a named target so a picker row could reach any of them.
     //
@@ -763,9 +763,9 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // FOR INDEPENDENT AIMING, not body parts — live-chat ask: "the 'turret' isn't really a
     // thing… that terminology doesn't make any sense to me. maybe do head and torso, then change
     // the left and right torsos to left and right shoulders." So the turret texture is served as
-    // `head` + `torso`, the hull texture as its five own pieces, and the side-torso textures are
-    // presented as SHOULDERS. This renaming is DISPLAY-ONLY, confined to this map: the location ids
-    // (`leftTorso`/`rightTorso`, data/anatomy.js) and texture keys are untouched.
+    // `head` + `torso` and the hull texture as its five own pieces. (#586 then carried the second
+    // half of that ask into the ids themselves, so the two shoulder rows below are now plain
+    // texture keys — they were `${key}_leftTorso`/`_rightTorso` renamed for display only.)
     //
     // Map ORDER is the panel order — top-to-bottom anatomy. `z` is the separate paint order for
     // the assembled `= overlaid` panel, matching the real draw order (preview.js `poseMechInto`:
@@ -782,8 +782,8 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // from the chest plate itself.
     offer('head',  { key: turretKey, tags: { head: '' }, z: 10 });
     offer('torso', { key: turretKey, tags: { centerTorso: '', decor: 'decor' }, z: 9 });
-    offer('leftShoulder',  { key: `${key}_leftTorso`,  z: 5 });
-    offer('rightShoulder', { key: `${key}_rightTorso`, z: 6 });
+    offer('leftShoulder',  { key: `${key}_leftShoulder`,  z: 5 });
+    offer('rightShoulder', { key: `${key}_rightShoulder`, z: 6 });
     offer('leftArm',  { key: `${key}_leftArm`,  z: 7 });
     offer('rightArm', { key: `${key}_rightArm`, z: 8 });
     offer('pelvis',     { key: hullKey, tags: { pelvis: '' },     z: 0 });
@@ -910,8 +910,8 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const steps = [
       { label: 'intact', hits: [] },
       { label: 'right arm gone', hits: ['rightArm'] },
-      { label: 'right torso gone\n(+ its arm, cascade)', hits: ['rightTorso'] },
-      { label: 'both torsos gone\n(destroyed)', hits: ['leftTorso', 'rightTorso'] },
+      { label: 'right shoulder gone\n(+ its arm, cascade)', hits: ['rightShoulder'] },
+      { label: 'both shoulders gone\n(destroyed)', hits: ['leftShoulder', 'rightShoulder'] },
     ];
     const damaged = steps.map((step, i) => {
       const m = this._freshPlayerMech();

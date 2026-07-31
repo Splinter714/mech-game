@@ -30,7 +30,7 @@ export const STRIKER_PLAYER_CONFIG = {
     // player's own #438 leg tuning (inherited above) rather than reverting to DEFAULT_SHAPE.
     shape: {
       ...MEDIUM_PLAYER_CONFIG.art.shape,
-      head: 0.8, torso: 0.88, sideTorso: 0.85,
+      head: 0.8, torso: 0.88, shoulder: 0.85,
       armW: 0.7, armH: 1.3, armSpread: 1.15,
       legW: 0.78, legSpread: 1.55, legH: 1.3,
       headDy: -0.05, armDy: -0.06,

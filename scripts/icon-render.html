@@ -11,7 +11,7 @@
       scripts/gen-icons.mjs through a programmatic Vite dev server so the REAL
       procedural art pipeline (src/art/*) resolves via ESM. It boots a tiny Phaser
       scene, builds the default player mech's textures with the shipping art code,
-      composites hull + arms + side torsos + muzzle-glow overlays + turret onto a dark-background canvas,
+      composites hull + arms + shoulders + muzzle-glow overlays + turret onto a dark-background canvas,
       and exposes window.__renderIcon(size, { maskable }) for Playwright to snapshot.
     -->
     <script type="module">
@@ -21,7 +21,7 @@
         mechLayout,
         DESIGN,
         ART_SCALE,
-        SIDE_TORSO_LOCATIONS,
+        SHOULDER_LOCATIONS,
         ARM_LOCATIONS,
         MUZZLE_GLOW_SUFFIX,
         partSpriteTransform,
@@ -104,10 +104,10 @@
           ctx.restore();
         };
 
-        // Hull (walk frame 0), then pivoting side torsos + arms, then the body turret on
+        // Hull (walk frame 0), then pivoting shoulders + arms, then the body turret on
         // top — the same back-to-front order buildMechTextures / the arena rely on.
         blit(tex(`${KEY}_hull_0`), 0, 0, angle + Math.PI / 2, 0.5, 0.5);
-        for (const loc of [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS]) {
+        for (const loc of [...SHOULDER_LOCATIONS, ...ARM_LOCATIONS]) {
           const t = partSpriteTransform(mech, loc, angle, S);
           blit(tex(`${KEY}_${loc}`), t.dx, t.dy, t.rot, t.ox, t.oy);
           // #433 split the lit muzzle out of the part texture into a glow-only overlay that the

@@ -1,6 +1,6 @@
 // Posing a unit OUT of the arena — the shared "show this thing in isolation" helpers.
 //
-// A mech is six sprites (hull frame + two side torsos + two arms + turret), assembled at run time
+// A mech is six sprites (hull frame + two shoulders + two arms + turret), assembled at run time
 // rather than baked as one image, so anything that wants to display one standing still — the
 // garage preview, the #461 art gallery, #452's HUD target readout — has to reproduce that stack.
 // This is the one copy of it: pose at a fixed facing, with each part pivoted at its joint by the

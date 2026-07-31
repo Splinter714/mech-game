@@ -2,7 +2,7 @@
 import { rectC, glowBar } from '../mechPrims.js';
 
 export function draw(sg, d, lay, T, tag) {
-  const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
+  const st = lay[d.side < 0 ? 'leftShoulder' : 'rightShoulder'];
   const cx = st.x, cy = st.y + st.h * 0.5;
   tag('body');
   rectC(sg, cx, cy, st.w * 0.4, st.h * 0.22, T.deep);

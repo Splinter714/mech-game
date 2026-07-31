@@ -64,7 +64,7 @@ try {
     // slot — so a held trigger is a torrent of hits. Set the mounts directly on the model (the
     // firing mixin reads mech.weapons() live each frame) and give each an oversized magazine so
     // it never runs dry mid-profile.
-    for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) {
+    for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) {
       a.mech.mounts[loc] = ['machineGun'];
       a.mech.ammo[loc] = [9999];
     }
@@ -77,7 +77,7 @@ try {
     a.controls.read = () => {
       const intent = origRead();
       intent.aim = { mode: 'pointer', x: target.x, y: target.y };
-      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) intent.fire[loc] = true;
+      for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) intent.fire[loc] = true;
       return intent;
     };
 
@@ -88,7 +88,7 @@ try {
       setInterval(() => {
         a.mech.repairAll();
         target.mech.repairAll();
-        for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) a.mech.ammo[loc] = [9999];
+        for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) a.mech.ammo[loc] = [9999];
         // Pin the target next to the player so all fire keeps converging on one point.
         target.x = a.px + 150; target.y = a.py;
       }, 100),

@@ -179,7 +179,7 @@ export class Mech {
   //      never touches armor/hp at all unless it breaks mid-hit (overflow).
   //   2) the location's ARMOR absorbs next.
   //   3) the location's HP takes whatever's left; HP at 0 destroys the part (cascading to
-  //      dependent locations — a side torso takes its arm with it).
+  //      dependent locations — a shoulder takes its arm with it).
   // `weaponCategory` is an optional forward-compat seam (#246 decision: architect for a future
   // category-vs-layer bonus — e.g. energy strong vs shields — WITHOUT implementing one now).
   // Every category currently resolves to a 1.0 multiplier at every layer (see data/shield.js
@@ -227,7 +227,7 @@ export class Mech {
     };
   }
 
-  // Destroy the locations that depend on `loc` (a side torso takes its arm, the head
+  // Destroy the locations that depend on `loc` (a shoulder takes its arm, the head
   // takes the cockpit), recursively, zeroing their armor + hp so their mounts go
   // offline too.
   _cascadeDestroy(loc) {

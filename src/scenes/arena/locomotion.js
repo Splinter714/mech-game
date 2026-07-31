@@ -88,13 +88,13 @@ const TILT_SMOOTH_K = 12;
 const COLLISION_SUBSTEP_PX = HEX_SIZE / 6;
 
 export const LocomotionMixin = {
-  // A mech = hull (legs) + side torsos + arms + turret-body stacked in a container so they can
+  // A mech = hull (legs) + shoulders + arms + turret-body stacked in a container so they can
   // rotate independently around the shared centre. Layer order back→front:
-  // [hull, leftTorso, rightTorso, armL, armR, body]. The side torsos sit behind the arms and
+  // [hull, leftShoulder, rightShoulder, armL, armR, body]. The shoulders sit behind the arms and
   // UNDER the body (centre torso + head) so the body occludes their inner edges and the arms
   // occlude them — the top-down read at tilt 0, and what keeps an inward-canted part tucked
   // under the body. Each off-centre part pivots at its own joint (arms at the shoulder, side
-  // torsos nearer their centre — see partSpriteTransform).
+  // shoulders nearer their centre — see partSpriteTransform).
   // #113/#289: `isPlayer` picks the depth tier — the player mech (ArenaScene.create()) passes true
   // and stays at DEPTH.UNITS; every enemy mech (enemies.js `_spawnMech`) leaves it false. A mech is
   // always a LARGE ground unit (`small=false`), so an enemy mech renders at DEPTH.LARGE_GROUND_UNITS
@@ -106,7 +106,7 @@ export const LocomotionMixin = {
     // surfaces can't drift. What's arena-specific stays here: the container, its depth tier, the
     // world scale and the per-view convergence-tilt state.
     const p = makeMechParts(this, key, { x: 0, y: 0, scale: ARENA_MECH_SCALE, isPlayer });
-    const { hull, torL, torR, armL, armR, turret, glow } = p;
+    const { hull, shldL, shldR, armL, armR, turret, glow } = p;
     hull.rotation = angle + Math.PI / 2;
     turret.rotation = angle + Math.PI / 2;
     const c = this.add.container(x, y, p.children);
@@ -116,14 +116,14 @@ export const LocomotionMixin = {
     // cover canopy (DEPTH.LARGE_GROUND_UNITS) — see `unitDepth` / the tier comment in shared.js. An
     // enemy mech is never flying (`flying=false`) and is never small (`small=false`).
     c.setDepth(unitDepth(isPlayer, false, false));
-    c.hull = hull; c.torL = torL; c.torR = torR; c.armL = armL; c.armR = armR; c.turret = turret;
+    c.hull = hull; c.shldL = shldL; c.shldR = shldR; c.armL = armL; c.armR = armR; c.turret = turret;
     // #433: per-slot muzzle-glow overlays (empty {} for enemies), keyed by location; _syncPivots
     // poses each onto its part, arena/ammoIndicators.js toggles its visibility for the reload blink.
     c.glow = glow;
     // Per-view smoothing state: the CURRENTLY-APPLIED convergence tilt of each pivoting part,
     // eased toward its target each frame (see _syncTilts). Starts at the resting tilt (0) so a
     // fresh deploy/spawn doesn't swing in from a stale angle.
-    c._tilt = { leftTorso: 0, rightTorso: 0, leftArm: 0, rightArm: 0 };
+    c._tilt = { leftShoulder: 0, rightShoulder: 0, leftArm: 0, rightArm: 0 };
     return c;
   },
 
@@ -144,7 +144,7 @@ export const LocomotionMixin = {
     this._syncPivots(view, mech, angle, scale, baseX, baseY, t);
   },
 
-  // Place + pivot a mech view's four off-centre part sprites (side torsos + arms) toward their
+  // Place + pivot a mech view's four off-centre part sprites (shoulders + arms) toward their
   // convergence tilt. The sprites are children of the container (local origin = centre), so
   // callers pass baseX = baseY = 0. `tilts` maps a loc → its convergence tilt (0 = straight).
   // #404: the joint math (and keeping each #433 muzzle-glow overlay welded to its part) lives in
@@ -154,9 +154,9 @@ export const LocomotionMixin = {
     poseMechParts(view, mech, angle, scale, baseX, baseY, tilts);
   },
 
-  // Convergence tilt for one off-centre part (arm or side torso), from its own first mounted
+  // Convergence tilt for one off-centre part (arm or shoulder), from its own first mounted
   // weapon: how far that weapon's fire angle deviates from the turret facing. Direct-fire
-  // weapons converge inward (a small tilt — smaller for side torsos, whose muzzles are less
+  // weapons converge inward (a small tilt — smaller for shoulders, whose muzzles are less
   // off-centre); indirect/melee/empty parts return 0 (straight). Mirrors firing's _fireAngle.
   // #347: `player` is whose limb this is. Defaults to the primary player, so every existing
   // caller and arena test double is unaffected.
@@ -172,9 +172,9 @@ export const LocomotionMixin = {
 
   // World position of a weapon's muzzle: its body-location offset (the mounted weapon's
   // actual ART TIP — #233 — not just the front edge of the part) rotated by the turret
-  // facing. So a left-arm shot leaves the tip of the left arm's gun, a right-torso shot the
-  // tip of the right torso's, etc.
-  // #233 follow-up: a pivoting part (arm/side-torso) is currently sitting at its OWN live
+  // facing. So a left-arm shot leaves the tip of the left arm's gun, a right-shoulder shot the
+  // tip of the right shoulder's, etc.
+  // #233 follow-up: a pivoting part (arm/shoulder) is currently sitting at its OWN live
   // convergence tilt (`this.playerView._tilt[loc]`, eased in `_syncTilts`/`_stepGait`, which
   // runs earlier in the same frame — see ArenaScene.update()'s `_stepGait` before
   // `_handleFiring`), not necessarily its neutral/rest angle. Passing that live tilt (plus the
@@ -454,7 +454,7 @@ export const LocomotionMixin = {
     p.view.turret.rotation = p.turretAngle + Math.PI / 2;
     // Ease each pivoting part toward its convergence tilt (smoothing kills the lock-engage snap).
     this._syncTilts(p.view, p.mech, p.turretAngle, ARENA_MECH_SCALE, 0, 0, {
-      leftTorso: this._partTilt('leftTorso', p), rightTorso: this._partTilt('rightTorso', p),
+      leftShoulder: this._partTilt('leftShoulder', p), rightShoulder: this._partTilt('rightShoulder', p),
       leftArm: this._partTilt('leftArm', p), rightArm: this._partTilt('rightArm', p),
     }, dt);
     p.view.setPosition(p.x, p.y - bob);

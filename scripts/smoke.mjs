@@ -111,25 +111,25 @@ try {
     mech.mount('rightArm', 'autocannon');   // restore for the rest of the smoke run
 
     // #84: mounting an already-mounted weapon into a NEW slot MOVES it — mouse flow. rightArm
-    // holds 'autocannon' (restored above); mounting it into leftTorso via the same click-to-mount
+    // holds 'autocannon' (restored above); mounting it into leftShoulder via the same click-to-mount
     // path (_selectSlot + _pickItem) must empty rightArm, not leave it duplicated in both. Save
-    // whatever leftTorso held so the default build's completeness is restored afterward.
-    const leftTorsoWas = mech.mounts.leftTorso[0] ?? null;
-    sc._selectSlot('leftTorso');
+    // whatever leftShoulder held so the default build's completeness is restored afterward.
+    const leftShoulderWas = mech.mounts.leftShoulder[0] ?? null;
+    sc._selectSlot('leftShoulder');
     sc._pickItem('autocannon');
-    const moveMouseNewSlot = mech.mounts.leftTorso.includes('autocannon');
+    const moveMouseNewSlot = mech.mounts.leftShoulder.includes('autocannon');
     const moveMouseOldSlotEmptied = !mech.mounts.rightArm.includes('autocannon');
 
-    // #84: pad quick-mount flow — highlighting a catalog item already mounted (leftTorso) and
+    // #84: pad quick-mount flow — highlighting a catalog item already mounted (leftShoulder) and
     // pressing a DIFFERENT slot's bind (_quickMount) must move it there too, never duplicate.
     sc._quickMount('rightArm', 'autocannon');
     const moveQuickNewSlot = mech.mounts.rightArm.includes('autocannon');
-    const moveQuickOldSlotEmptied = !mech.mounts.leftTorso.includes('autocannon');
+    const moveQuickOldSlotEmptied = !mech.mounts.leftShoulder.includes('autocannon');
     // Exactly one slot holds it across the whole build, never two.
     const onlyOneSlotHoldsIt = Object.values(mech.mounts).filter((arr) => arr.includes('autocannon')).length === 1;
-    // Restore leftTorso's original occupant (autocannon's move displaced it) so the rest of the
+    // Restore leftShoulder's original occupant (autocannon's move displaced it) so the rest of the
     // smoke run still sees the default, complete build.
-    if (leftTorsoWas && !mech.mounts.leftTorso.includes(leftTorsoWas)) mech.mount('leftTorso', leftTorsoWas);
+    if (leftShoulderWas && !mech.mounts.leftShoulder.includes(leftShoulderWas)) mech.mount('leftShoulder', leftShoulderWas);
 
     return {
       chassis: mech.chassisId,
@@ -328,9 +328,9 @@ try {
     const anyPartDamaged = partsAfter.some((f, i) => f < partsBefore[i]);
 
     // #128: centerTorso is no longer damage-tracked (cosmetic only) — the kill condition is
-    // now both side torsos destroyed, so overkill those instead of the old one-hit centerTorso.
-    em.applyDamage('leftTorso', 999);
-    em.applyDamage('rightTorso', 999);
+    // now both shoulders destroyed, so overkill those instead of the old one-hit centerTorso.
+    em.applyDamage('leftShoulder', 999);
+    em.applyDamage('rightShoulder', 999);
     const dummyDead = em.isDestroyed();
 
     // #158b: restore the full squad now that the deterministic single-target firing block
@@ -349,7 +349,7 @@ try {
     a._damageEnemyAt(e1, e1.x, e1.y, 30, 0xffffff);
     const extraDamaged = sumHp(e1.mech) < e1Hp0;
     a._resetEnemies();
-    // em was just killed (both-side-torso overkill above); reset must bring it back to life.
+    // em was just killed (both-shoulder overkill above); reset must bring it back to life.
     const resetWorked = !em.isDestroyed();
 
     // #68: NON-MECH kinds spawn, render (their own vehicle textures), take damage through the
@@ -575,14 +575,14 @@ try {
         a.enemies.length === beforeLen - 1 && a.enemies.indexOf(drone) === -1 && drone._tornDown === true;
       deathFx.droneMaxR = recorded.length ? Math.max(...recorded) : 0;
 
-      // #128: killing a mech now needs BOTH side torsos destroyed (a single centre-mass hit no
-      // longer kills). Pre-destroy rightTorso directly (engine-level, no FX) so the mech is one
-      // torso from dead, then land the real _damageEnemyAt hit dead-centre — the nearest-part
-      // tie-break always resolves a centre hit to leftTorso (still alive), so this single call
-      // both destroys the last torso AND is the call that flips isDestroyed(), landing the death
+      // #128: killing a mech now needs BOTH shoulders destroyed (a single centre-mass hit no
+      // longer kills). Pre-destroy rightShoulder directly (engine-level, no FX) so the mech is one
+      // shoulder from dead, then land the real _damageEnemyAt hit dead-centre — the nearest-part
+      // tie-break always resolves a centre hit to leftShoulder (still alive), so this single call
+      // both destroys the last shoulder AND is the call that flips isDestroyed(), landing the death
       // FX exactly where the real game would trigger it.
       const heavy = a._spawnEnemy(-500, -520, 'sniper');
-      heavy.mech.applyDamage('rightTorso', 99999);
+      heavy.mech.applyDamage('rightShoulder', 99999);
       recorded = [];
       a._damageEnemyAt(heavy, heavy.x, heavy.y, 99999, 0xffffff);
       deathFx.heavyMaxR = recorded.length ? Math.max(...recorded) : 0;
@@ -1054,9 +1054,9 @@ try {
       // (d) Gunfire CHIPS an unoccupied soft-cover hex: kill the occupant, step the player
       // back to open ground, and fire into the forest hex — the round detonates on it now
       // (no occupant exemption) and bites its HP. #128: centerTorso is no longer damage-
-      // tracked/lethal — kill via both side torsos instead.
-      fe.mech.applyDamage('leftTorso', 9999);
-      fe.mech.applyDamage('rightTorso', 9999);
+      // tracked/lethal — kill via both shoulders instead.
+      fe.mech.applyDamage('leftShoulder', 9999);
+      fe.mech.applyDamage('rightShoulder', 9999);
       a.px = 0; a.py = 0;
       a.turretAngle = Math.atan2(FP.y, FP.x); a.aimX = FP.x; a.aimY = FP.y;
       const cHp0 = a.coverHp.get(FK);

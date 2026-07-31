@@ -12,12 +12,12 @@ import { draw as stack } from './stack.js';
 export const DECOR_ART = { pauldron, mast, vane, stack };
 
 // `opts.skip` is a list of decor kinds to NOT draw here (e.g. pauldrons, which ride on the
-// pivoting side-torso textures so they cant with the side torso).
+// pivoting shoulder textures so they cant with the shoulder).
 // #585 (art dissect): decor used to bake into ONE flat `decor` blob, so the tool couldn't tell a
 // sensor mast from an exhaust stack. Each entry now gets its own `decor.<kind>` layer, and every
 // decor draw fn takes the same trailing `tag(name)` helper the weapon mounts do so it can split
 // its own pieces below that — the tag PREFIX is threaded in rather than hardcoded per fn, because
-// the pauldron is also drawn from the side-torso texture under a different prefix entirely
+// the pauldron is also drawn from the shoulder texture under a different prefix entirely
 // (drawPauldronFor, mechArt.js). `opts.prefix` is what lets that second call site reuse the same fn.
 export function drawDecor(sg, mech, lay, T, opts = {}) {
   const a = mech.chassis.art;

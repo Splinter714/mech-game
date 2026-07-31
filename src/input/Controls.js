@@ -7,7 +7,7 @@
 // space (no tank turning), the right stick / mouse aims the turret freely (full 360°, no
 // torso-twist arc). Skill slots are body locations, each on a fixed button (SKILL_BINDS):
 //   right arm    RT / right-mouse        left arm     LT / left-mouse
-//   right torso  RB / E                  left torso   LB / Q
+//   right shoulder  RB / E               left shoulder  LB / Q
 // R3 is no longer a fire bind — the head stopped being a skill slot (#31). #62's R3 "drop the
 // current indirect-fire lock" action was removed by #252, which replaced the lock with a live
 // mirror of convergence that has no maintained state left to drop. #262 then gave R3 (keyboard:
@@ -81,8 +81,8 @@ export const PAD = {
 export const SKILL_BINDS = {
   rightArm:    { key: 'RMB',   pad: 'RT' },
   leftArm:     { key: 'LMB',   pad: 'LT' },
-  rightTorso:  { key: 'E',     pad: 'RB' },
-  leftTorso:   { key: 'Q',     pad: 'LB' },
+  rightShoulder:  { key: 'E',     pad: 'RB' },
+  leftShoulder:   { key: 'Q',     pad: 'LB' },
 };
 
 // Manual-RELOAD bind: B on pad (moved off L3 now that the ability diamond shrank to two slots —
@@ -374,7 +374,7 @@ export class Controls {
       return {
         move: t.move,
         aim: { mode: 'angle', angle: t.aimAngle },
-        fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
+        fire: { rightArm: false, leftArm: false, rightShoulder: false, leftShoulder: false },
         mode: 'touch',
         ability: this._noAbilityPressed(),
         reloadPressed: false,   // #402: touch reports no reload, same as no fire/dash/ability
@@ -390,7 +390,7 @@ export class Controls {
       return {
         move: { x: 0, y: 0 },
         aim: { mode: 'angle', angle: this.aimAngle },
-        fire: { rightArm: false, leftArm: false, rightTorso: false, leftTorso: false },
+        fire: { rightArm: false, leftArm: false, rightShoulder: false, leftShoulder: false },
         mode: 'pad',
         ability: this._noAbilityPressed(),
         reloadPressed: false,   // #402: no pad, no reload edge to report
@@ -438,15 +438,15 @@ export class Controls {
       fire = {
         rightArm:    pad.R2 > TRIGGER_THRESHOLD,
         leftArm:     pad.L2 > TRIGGER_THRESHOLD,
-        rightTorso:  pad.R1,
-        leftTorso:   pad.L1,
+        rightShoulder:  pad.R1,
+        leftShoulder:   pad.L1,
       };
     } else {
       fire = {
         rightArm:    this._armedMouseFire('rightArm', p.rightButtonDown()),
         leftArm:     this._armedMouseFire('leftArm', p.leftButtonDown()),
-        rightTorso:  k.E.isDown,
-        leftTorso:   k.Q.isDown,
+        rightShoulder:  k.E.isDown,
+        leftShoulder:   k.Q.isDown,
       };
     }
 

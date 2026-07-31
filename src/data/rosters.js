@@ -6,6 +6,30 @@
 import { Mech } from './Mech.js';
 import { PLAYER_CHASSIS_IDS } from './chassis/index.js';
 
+// #586: the two side locations were renamed `leftTorso`/`rightTorso` → `leftShoulder`/
+// `rightShoulder` (owner: "change the left and right torsos to left and right shoulders").
+// Every persisted mech is keyed BY LOCATION, so without this an existing save would come back
+// with two empty weapon slots — Mech's constructor only reads MOUNT_LOCATIONS/LOCATIONS, so the
+// stale keys would simply never be looked at and the weapons in them would silently vanish.
+// Applies to BOTH location-keyed sub-objects `Mech.toJSON` writes: `mounts` (item-id arrays) and
+// `damage` ({ armor, hp } per part). `abilityMounts` is keyed by ability slot, not location, so
+// it's untouched. Old key wins only if the new one isn't already there, so this is a no-op on a
+// save that's already been through it (and `load()` re-saves in the new shape immediately).
+const RENAMED_LOCATIONS = { leftTorso: 'leftShoulder', rightTorso: 'rightShoulder' };
+
+function renameLocationKeys(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  let changed = false;
+  const out = { ...obj };
+  for (const [from, to] of Object.entries(RENAMED_LOCATIONS)) {
+    if (!(from in out)) continue;
+    if (!(to in out)) out[to] = out[from];
+    delete out[from];
+    changed = true;
+  }
+  return changed ? out : obj;
+}
+
 // Player 1's build slot. Still THE slot as far as every single-player path is concerned —
 // #349 added exactly one more ('mech2', player 2's persistent build in local co-op), it did not
 // introduce a general roster picker. The two keys, indexed by player, live in
@@ -43,9 +67,15 @@ export const ROSTERS = {
     // that choice must now SURVIVE a save/load round-trip instead of being force-reset every
     // load. Only a chassisId that ISN'T one of those three (an old light/heavy/medium/enemy pick
     // from before #248, or a stale/unknown value) still gets force-migrated onto mediumPlayer.
+    // #586: …and rewrite the renamed side-location keys (see RENAMED_LOCATIONS above). `load()`
+    // spreads a saved sub-object over the default WHOLESALE, so a pre-#586 save's `mounts` arrives
+    // here still carrying `leftTorso`/`rightTorso` and would lose both shoulder weapons without
+    // this. The re-save `load()` does straight afterwards persists the new shape.
     migrate: (data) => ({
       ...data,
       chassisId: PLAYER_CHASSIS_IDS.includes(data.chassisId) ? data.chassisId : 'mediumPlayer',
+      mounts: renameLocationKeys(data.mounts),
+      damage: renameLocationKeys(data.damage),
     }),
     defaultRoster: () => ({
       [ACTIVE_MECH_KEY]: {
@@ -54,8 +84,8 @@ export const ROSTERS = {
         mounts: {
           rightArm: ['autocannon'],
           leftArm: ['pulseLaser'],
-          leftTorso: ['clusterRocket'],
-          rightTorso: ['machineGun'],   // #188: centerTorso is no longer mountable.
+          leftShoulder: ['clusterRocket'],
+          rightShoulder: ['machineGun'],   // #188: centerTorso is no longer mountable.
         },
         // Dash is a mountable ability rather than a hardcoded built-in — every default build
         // equips it (on Y) so existing mobility isn't silently lost until a player rebuilds.
@@ -72,8 +102,8 @@ export const ROSTERS = {
         mounts: {
           rightArm: ['pulseLaser'],
           leftArm: ['autocannon'],
-          leftTorso: ['machineGun'],
-          rightTorso: ['clusterRocket'],
+          leftShoulder: ['machineGun'],
+          rightShoulder: ['clusterRocket'],
         },
         abilityMounts: { abilityY: 'dash', abilityX: 'droneLauncher' },
       },
@@ -86,8 +116,8 @@ export const ROSTERS = {
         mounts: {
           rightArm: ['machineGun'],
           leftArm: ['clusterRocket'],
-          leftTorso: ['autocannon'],
-          rightTorso: ['pulseLaser'],
+          leftShoulder: ['autocannon'],
+          rightShoulder: ['pulseLaser'],
         },
         abilityMounts: { abilityY: 'dash', abilityX: 'droneLauncher' },
       },
@@ -97,8 +127,8 @@ export const ROSTERS = {
         mounts: {
           rightArm: ['clusterRocket'],
           leftArm: ['machineGun'],
-          leftTorso: ['pulseLaser'],
-          rightTorso: ['autocannon'],
+          leftShoulder: ['pulseLaser'],
+          rightShoulder: ['autocannon'],
         },
         abilityMounts: { abilityY: 'dash', abilityX: 'droneLauncher' },
       },

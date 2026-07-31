@@ -79,7 +79,7 @@ try {
         if (d < bd) { bd = d; best = e; }
       }
       if (best) intent.aim = { mode: 'pointer', x: best.x, y: best.y };
-      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) intent.fire[loc] = true;
+      for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) intent.fire[loc] = true;
       return intent;
     };
 

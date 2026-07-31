@@ -30,7 +30,7 @@ export const COLOSSUS_PLAYER_CONFIG = {
     // above) rather than reverting to DEFAULT_SHAPE.
     shape: {
       ...MEDIUM_PLAYER_CONFIG.art.shape,
-      head: 1.15, torso: 1.22, sideTorso: 1.25,
+      head: 1.15, torso: 1.22, shoulder: 1.25,
       armW: 1.4, armH: 0.75, armSpread: 0.85,
       legW: 1.35, legSpread: 1.2, legH: 1.15,
       headDy: 0.05, armDy: 0.08,

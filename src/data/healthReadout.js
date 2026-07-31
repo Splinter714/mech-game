@@ -13,7 +13,7 @@
 //   'bars'      — the bar block (laid out by hudLayout.js `integrityLayout`; named here only
 //                 so the mode cycle has something to return to).
 //   'paperdoll' — one rounded rect per damage-tracked location, arranged as a mech silhouette
-//                 (arm, torso, torso, arm). Each segment stays FULLY FILLED and its COLOUR rides a
+//                 (arm, shoulder, shoulder, arm). Each segment stays FULLY FILLED and its COLOUR rides a
 //                 health ramp for that part's STRUCTURE (dark blue → purple → red as it drops,
 //                 `structureColor`); per-segment OUTLINE = that part's armor (drawn as a perimeter
 //                 that drains around the frame, so an outline can show a FRACTION at all), and ONE
@@ -110,22 +110,22 @@ export function noneLayout({ anchorX = 0, bottomY = 0 } = {}) {
 
 // ── PAPER DOLL ───────────────────────────────────────────────────────────────────────────────
 //
-// A mech silhouette: a narrow arm rect, two torso rects, a narrow arm rect, in the same
+// A mech silhouette: a narrow arm rect, two shoulder rects, a narrow arm rect, in the same
 // left-to-right body order the skill tiles and the bar block already use. Arms hang from the
-// SHOULDER line (top-aligned, shorter than the torsos) so the block reads as a body rather than a
-// bar chart with uneven heights.
+// SHOULDER line (top-aligned, shorter than the shoulder rects) so the block reads as a body
+// rather than a bar chart with uneven heights.
 export const PAPER_DOLL = {
   armW: 17,          // an arm segment's nominal width
-  torsoW: 25,        // a torso segment's nominal width
+  shoulderW: 25,     // a shoulder segment's nominal width
   gap: 5,            // between segments
-  armH: 0.74,        // an arm's height, as a fraction of the torso's (the full bar height)
+  armH: 0.74,        // an arm's height, as a fraction of the shoulder's (the full bar height)
   outlinePad: 8,     // how far the whole-mech SHIELD outline stands off the doll
   minScale: 0.55,    // never squeeze narrower than this, matching the bar block's floor
 };
 
-// Which nominal width a location gets. Arms are the narrow ones; everything else is a torso.
+// Which nominal width a location gets. Arms are the narrow ones; everything else is a shoulder.
 function dollSegW(loc) {
-  return /arm$/i.test(loc) ? PAPER_DOLL.armW : PAPER_DOLL.torsoW;
+  return /arm$/i.test(loc) ? PAPER_DOLL.armW : PAPER_DOLL.shoulderW;
 }
 
 export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'left' }) {
@@ -149,8 +149,8 @@ export function paperDollLayout(locs, { anchorX, bottomY, availW = 0, side = 'le
     const seg = {
       loc,
       x: cursor,
-      // Arms hang from the shoulder: same TOP as the torsos, shorter, so their bottoms stop above
-      // the torso's — that shape is the whole reason this reads as a doll.
+      // Arms hang from the shoulder: same TOP as the shoulder rects, shorter, so their bottoms stop
+      // above the shoulders' — that shape is the whole reason this reads as a doll.
       y: top,
       w: sw,
       h: arm ? armH : S.barH,

@@ -34,7 +34,7 @@ const config = {
   // Why: with roundPixels on, the renderer does `gx = Math.floor(gameObject.x)` PER TEXTURED
   // GAME OBJECT (MultiPipeline.batchSprite), and for a CONTAINER CHILD that `x` is its LOCAL
   // offset. A mech view is six stacked sprites in a container: hull and turret-body sit at local
-  // (0,0) and so never quantize, but the four pivoting parts (both arms, both side torsos) sit at
+  // (0,0) and so never quantize, but the four pivoting parts (both arms, both shoulders) sit at
   // local offsets that sweep continuously as the turret rotates (partSpriteTransform's dx/dy).
   // Each of those four floors independently, crossing its integer boundary at a different turret
   // angle from the others — so a smooth slew made each arm/shoulder POP a whole world pixel

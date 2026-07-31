@@ -52,7 +52,7 @@ export function canMount(chassis, mounts, locationId, itemId) {
     return { ok: false, reason: 'slot occupied' };
   }
   if (!isWeapon(itemId)) return { ok: false, reason: 'not a weapon' };
-  if (!WEAPON_SLOTS.includes(locationId)) return { ok: false, reason: 'weapons go in arms/torsos' };
+  if (!WEAPON_SLOTS.includes(locationId)) return { ok: false, reason: 'weapons go in arms/shoulders' };
   if (isMelee(itemId) && !MELEE_LOCATIONS.includes(locationId)) return { ok: false, reason: 'melee only in arms' };
   return { ok: true };
 }

@@ -74,7 +74,7 @@ const holdTriggers = async () => {
       aim: { mode: 'pointer', x: a2.px + 800, y: a2.py, angle: 0 },
       fire: (window.__a313slots
         ? Object.fromEntries(window.__a313slots.map((l) => [l, true]))
-        : { rightArm: true, leftArm: true, rightTorso: true, leftTorso: true,
+        : { rightArm: true, leftArm: true, rightShoulder: true, leftShoulder: true,
             centerTorso: false, head: true }),
       mode: 'kbm', dashPressed: false,
     });

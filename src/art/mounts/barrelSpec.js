@@ -5,7 +5,7 @@
 // blade tip, a launch-box edge, …) at `frontY - L * frac` — i.e. `frac` of the way along that
 // modeled length. Before this fix, the arena's muzzle math (`partMuzzle`, shared.js) spawned
 // every shot at the mount's front edge (`frontY`) itself: the BASE of the barrel, not its tip
-// — a visible "shots leave from inside the arm/torso" gap of `len * frac` design units (scaled
+// — a visible "shots leave from inside the arm/shoulder" gap of `len * frac` design units (scaled
 // up to several world px), worst on the longest barrels (Rail Lance, Beam Laser).
 // `barrelLen()` is called both by the draw fns (so the rendered art never drifts from this
 // table) and by `weaponMuzzleTip()` below (so the fired shot always matches whatever actually

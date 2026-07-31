@@ -14,7 +14,7 @@
 //   - The player moves continuously at full stick deflection with frequent direction reversals
 //     (to actually cross hex boundaries at the new ~2x chassis speeds and exercise
 //     `_blockedAlongSegment`/`hexesAlongSegment`, not just sit still) and holds all four
-//     arm/torso fire buttons the whole time.
+//     arm/shoulder fire buttons the whole time.
 //
 // It additionally wraps world.js's `_blockedAlongSegment`/`_wallDistance`/`_blockedByGroundEnemy`/
 // `_crushTargetAt` (call count + wall time), since those are the #159/#148 hypotheses under test,
@@ -76,7 +76,7 @@ try {
     a._spawnEnemy(a.px + 300, a.py - 300, 'sniper');
     for (const e of a.enemies) e.awareness = 'aware';
 
-    // Hold all four arm/torso fire buttons, aim at nearest living enemy, and move at FULL
+    // Hold all four arm/shoulder fire buttons, aim at nearest living enemy, and move at FULL
     // deflection with frequent direction reversals (so the player actually crosses hex
     // boundaries continuously at the new ~2x chassis speeds, exercising the #159 collision
     // sweep every frame — sitting still or drifting slowly would under-exercise it).
@@ -90,7 +90,7 @@ try {
         if (d < bd) { bd = d; best = e; }
       }
       if (best) intent.aim = { mode: 'pointer', x: best.x, y: best.y };
-      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) intent.fire[loc] = true;
+      for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) intent.fire[loc] = true;
       // Faster direction-reversal period than profile-cpu.mjs's, and normalized so the stick
       // is at full deflection (magnitude 1) rather than a Lissajous curve that spends time near
       // the deadzone.

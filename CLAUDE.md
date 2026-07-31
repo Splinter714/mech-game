@@ -33,8 +33,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     Configured entirely by data. No heat (removed); ammo is the only firing constraint.
   - `anatomy.js` — the 8 body locations + the kill rule (`mechDestroyed`): head OR
     cockpit OR centerTorso destroyed, OR both legs. The **four skill slots** are the
-    mountable upper-body locations (`MOUNT_LOCATIONS`) — the two arms and the two side
-    torsos; head dropped out with #31, centerTorso with #188. Legs aren't mount points.
+    mountable upper-body locations (`MOUNT_LOCATIONS`) — the two arms and the two
+    shoulders; head dropped out with #31, centerTorso with #188. Legs aren't mount points.
+    #586 renamed the two side locations `leftTorso`/`rightTorso` → `leftShoulder`/
+    `rightShoulder` everywhere, ids and labels included (`centerTorso` is unrelated and
+    kept its name); `rosters.js`'s `migrate` hook rewrites the old keys in existing saves.
   - `chassis/` — weight classes (light/medium/heavy). `index.js` expands a short
     config (`light.js` etc.) into per-location stats + movement tuning. **Add a chassis
     = a new config + one registry entry.**

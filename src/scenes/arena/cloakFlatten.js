@@ -4,7 +4,7 @@
 // fix on the legs like I asked for."
 //
 // ROOT CAUSE (why a per-part alpha number can never fix this): a mech view is a Phaser
-// CONTAINER holding SIX-PLUS SIBLING sprites (hull, leftTorso, rightTorso, leftArm, rightArm,
+// CONTAINER holding SIX-PLUS SIBLING sprites (hull, leftShoulder, rightShoulder, leftArm, rightArm,
 // turret, plus a muzzle-glow overlay per weapon-carrying slot — see mechView.js
 // `makeMechParts`). Phaser renders a container by drawing each child independently into the
 // shared render target, MULTIPLYING the CONTAINER's own alpha into every child as it draws
@@ -35,7 +35,7 @@ import { ARENA_MECH_SCALE } from './shared.js';
 // Pure (no Phaser): the flatten canvas's side length in px, given the part-texture design
 // constants. Every mech part is baked into a DESIGN×DESIGN (super-sampled by ART_SCALE) square
 // and displayed at ARENA_MECH_SCALE, so one part's own on-screen footprint is
-// `designPx * artScale * mechScale` px — but a PIVOTING part (side torso/arm) also carries a
+// `designPx * artScale * mechScale` px — but a PIVOTING part (shoulder/arm) also carries a
 // joint offset that walks it away from dead-centre (mechArt.js `partSpriteTransform`), so the
 // canvas needs headroom beyond a single part's own footprint to avoid clipping a wide chassis'
 // spread arms at the flatten's edge. `margin` is that headroom as a multiple of one part's

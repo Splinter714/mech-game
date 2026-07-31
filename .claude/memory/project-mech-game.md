@@ -26,11 +26,12 @@ Locked design decisions (from planning on 2026-06-26):
   straight/arcing, dumbfire/lockon/homing, single/spread/stream). So plasma=arcing
   projectile, laser=hitscan, MG=stream, shotgun=spread, etc. — same short category list,
   rich distinct feel.
-- **Anatomy**: 6 targetable upper-body locations (head, cockpit, centerTorso, L/R torso,
-  L/R arm), each with own armor+structure. Kill = head OR cockpit OR centerTorso destroyed.
+- **Anatomy**: 6 targetable upper-body locations (head, cockpit, centerTorso, L/R shoulder,
+  L/R arm), each with own armor+structure. (#586 renamed L/R torso -> L/R shoulder, ids included;
+  centerTorso kept its name.) Kill = head OR cockpit OR centerTorso destroyed.
   Legs were REMOVED as targets (#7, 2026-06-27) — they're animation-only now (no health, not
   in the kill rule; the old both-legs rule is retired). Build model = **5 skill slots** (#31,
-  2026-06-27): four weapon slots (arms+side-torsos = RT/LT/RB/LB) + ONE ability slot (centre
+  2026-06-27): four weapon slots (arms+shoulders = RT/LT/RB/LB) + ONE ability slot (centre
   torso = L3/Space). The **head is NOT a skill slot** — just a targetable location (armor +
   cockpit). No tonnage, no multi-slot. Heat removed; each weapon has a self-regenerating ammo
   magazine. **Aim-assist is a DEFAULT always-on mechanic** (#31): shots are gently pulled

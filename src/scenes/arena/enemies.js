@@ -511,7 +511,7 @@ export const EnemiesMixin = {
     // so a future bump to the enemy walk-cycle frame count doesn't leak un-cleaned textures.
     const suffixes = [];
     for (let f = 0; f < HULL_FRAMES; f++) suffixes.push(`hull_${f}`);
-    suffixes.push('turret', 'leftTorso', 'rightTorso', 'leftArm', 'rightArm');
+    suffixes.push('turret', 'leftShoulder', 'rightShoulder', 'leftArm', 'rightArm');
     for (const s of suffixes) {
       const key = `${e.key}_${s}`;
       if (this.textures.exists(key)) this.textures.remove(key);
@@ -1146,7 +1146,7 @@ export const EnemiesMixin = {
     }
     else if (Math.hypot(e.vx, e.vy) > 5) e.turretRaw = rotateToward(e.turretRaw ?? e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     // #398 fourth pass: SNAP the continuously-slewed heading onto its detent — the turret (and
-    // with it the torsos/arms that _syncTilts poses off `e.turret`) steps round in servo clicks
+    // with it the shoulders/arms that _syncTilts poses off `e.turret`) steps round in servo clicks
     // instead of interpolating smoothly. Done once, after both branches, so the rendered gun and
     // the fired shot always agree.
     e.turret = detent(e.turretRaw ?? e.turret, TURRET_DETENT_RAD);

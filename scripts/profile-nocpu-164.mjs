@@ -60,7 +60,7 @@ try {
         if (d < bd) { bd = d; best = e; }
       }
       if (best) intent.aim = { mode: 'pointer', x: best.x, y: best.y };
-      for (const loc of ['rightArm', 'leftArm', 'rightTorso', 'leftTorso']) intent.fire[loc] = true;
+      for (const loc of ['rightArm', 'leftArm', 'rightShoulder', 'leftShoulder']) intent.fire[loc] = true;
       const t = performance.now();
       const ang = Math.sin(t / 650) * Math.PI * 2 + Math.cos(t / 400);
       intent.move = { x: Math.cos(ang), y: Math.sin(ang) };

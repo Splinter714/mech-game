@@ -22,7 +22,7 @@ import { Audio } from '../../audio/index.js';
 // `import Phaser` already requires a stub in carrierDeploy.test.js/dormantWake.test.js. (mechArt.js
 // is safe to import directly, below — unlike shieldOutline.js it never touches the real `phaser`
 // package, it only calls duck-typed methods on whatever `scene` it's handed.)
-const MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
+const MECH_PART_KEYS = ['hull', 'shldL', 'shldR', 'armL', 'armR', 'turret'];
 // Every part EXCEPT the hull: these six textures never change on their own, so this function can
 // safely swap them straight to/from their pre-baked `_grey` variant. The hull is the one part
 // something ELSE re-picks every frame (locomotion.js `_stepGait` sets `p.view.hull`'s texture to
@@ -74,7 +74,7 @@ export const CLOAK_GLOW_TINT = 0x8a8a8a; // mid-grey multiply — knocks the hot
 // genuinely-desaturated `_grey` texture variant (baked fresh from whatever the part's CURRENT
 // texture is, so it always matches the mech's live damage state). `active` false restores every
 // swapped part to the exact texture key it had before cloaking. Guarded per-part (`?.`) so a
-// hand-rolled test double's partial view (or a torso/arm currently missing after part loss — see
+// hand-rolled test double's partial view (or a shoulder/arm currently missing after part loss — see
 // anatomy.js) never throws. Deliberately does NOT touch `player.marker` — the co-op ground
 // identity ring (coop.js) — which lives entirely outside `player.view` and is never in scope of
 // this loop at all, so the ring keeps its own player colour while the mech greys out around it.

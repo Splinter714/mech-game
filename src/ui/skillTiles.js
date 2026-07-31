@@ -14,10 +14,10 @@ import { ABILITY_SLOTS, ABILITY_SLOT_LAYOUT } from '../data/anatomy.js';
 import { CONSOLE_TILES, ARMOR_PEEK_PAD } from '../data/hudLayout.js';
 import { structureColor } from '../data/healthReadout.js';
 
-// Body order, left → right: left arm · left torso · right torso · right arm. #188: the old
-// centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
+// Body order, left → right: left arm · left shoulder · right shoulder · right arm. #188: the
+// old centre-torso ability slot is gone (#261: L3/Space is a hardcoded Dash, not mounted), so
 // this is now four weapon slots only. Still what the Garage's paper-doll tile row uses.
-export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
+export const TILE_ORDER = ['leftArm', 'leftShoulder', 'rightShoulder', 'rightArm'];
 
 // #506 SECOND rework (playtest): the first rework's one-row-of-6 didn't stick. Jackson: "move x/y
 // abilities in weapon HUD to double-wide half-height buttons (as compared to the weapon buttons)
@@ -27,14 +27,14 @@ export const TILE_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm'];
 export const HUD_ABILITY_ORDER = ['abilityX', 'abilityY'];
 
 // #544 (Jackson: "LB and X/L3 button contents swap ... RB and Y/R3 button contents swap"): the
-// two RENDER-POSITION swaps `weaponAbilityRows` applies at the end of its own layout — leftTorso's
-// weapon-row rect trades screen geometry with abilityX's ability-row rect, and rightTorso's with
+// two RENDER-POSITION swaps `weaponAbilityRows` applies at the end of its own layout — leftShoulder's
+// weapon-row rect trades screen geometry with abilityX's ability-row rect, and rightShoulder's with
 // abilityY's. Pure position swap: `mounts`/`abilityMounts`, TILE_ORDER, HUD_ABILITY_ORDER,
 // SKILL_BINDS, ABILITY_BINDS and GarageScene's `_navSlot` are all untouched — see that function's
 // own comment for the full reasoning.
 const RENDER_SWAP_PAIRS = [
-  ['leftTorso', 'abilityX'],
-  ['rightTorso', 'abilityY'],
+  ['leftShoulder', 'abilityX'],
+  ['rightShoulder', 'abilityY'],
 ];
 
 export const TILE_UI = {
@@ -226,7 +226,7 @@ export function weaponAbilityRows(x, w, {
   // the weapon row itself) is derived from the UN-swapped layout first. Each pair trades its
   // `{x,y,w,h}` only — the `loc` label on each rect stays put, so every consumer (HudScene,
   // GarageScene/columnLayout) still looks up content by the SAME unchanged key
-  // (`mech.mounts.leftTorso`, `mech.abilityMounts.abilityX`, TILE_ORDER, HUD_ABILITY_ORDER,
+  // (`mech.mounts.leftShoulder`, `mech.abilityMounts.abilityX`, TILE_ORDER, HUD_ABILITY_ORDER,
   // SKILL_BINDS, ABILITY_BINDS, GarageScene's `_navSlot` pad cursor — none of it touched) and
   // hands the looked-up content to `drawSkillTile`, which simply draws into whichever box this
   // function attached to that loc. The weapon content now lands in the ability row's own

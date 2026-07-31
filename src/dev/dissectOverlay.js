@@ -161,7 +161,7 @@ function rootNameFor(map) {
 // ── Assembling one flat op list ─────────────────────────────────────────────
 // A single texture contributes its ops verbatim. A MULTI-TEXTURE subject contributes each source's
 // ops with the layer path rewritten to sit under that source's segment name, so:
-//   - names can't collide (each arm and each side torso tags its own `plate`/`weapons`, and merged
+//   - names can't collide (each arm and each shoulder tags its own `plate`/`weapons`, and merged
 //     naively they would fold into one panel showing both arms' plating at once), and
 //   - the segment becomes an ordinary crumb level with no special-casing anywhere below.
 // A target is either a texture key or `{ key, tags, z }`:
@@ -174,7 +174,7 @@ function rootNameFor(map) {
 //             surface here.
 //   `z`     — paint order for the assembled composite, independent of the panel order (which
 //             follows the map's own key order, top-to-bottom anatomy). Without it the `= overlaid`
-//             panel would stack the mech in whatever order reads best as a LIST — legs over torso.
+//             panel would stack the mech in whatever order reads best as a LIST — legs over body.
 // `sharedSpace` records whether every source bakes on the same canvas size. Mech part textures all
 // do (`DESIGN * ART_SCALE` square, same CENTER origin — see buildMechTextures), so their ops are
 // directly comparable and composite into the standing mech. A weapon cell's `{mount, fx}` pair does

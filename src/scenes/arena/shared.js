@@ -348,9 +348,9 @@ export function nearestLocation(lay, locs, lx, ly, dispUnit) {
 // #231 (real bug: "easy to destroy one side torso, then waaaaaay harder to destroy the
 // second" — reported 2026-07-15): a hit maps to the part nearest the world hit point, but
 // that part may already be destroyed (armor+structure both zeroed — directly, or cascaded,
-// e.g. a side torso takes its arm with it per DESTROY_CASCADE). Applying damage to an
-// already-dead part just wastes the hit into nothing, and since a kill needs BOTH side
-// torsos destroyed (LETHAL_GROUPS), every hit that geometrically lands on the now-empty side
+// e.g. a shoulder takes its arm with it per DESTROY_CASCADE). Applying damage to an
+// already-dead part just wastes the hit into nothing, and since a kill needs BOTH shoulders
+// destroyed (LETHAL_GROUPS), every hit that geometrically landed on the now-empty first side
 // silently did nothing instead of redirecting — making the second side (the actual kill)
 // feel far tankier than the first. Redirects to the nearest still-LIVE location instead,
 // falling back to the originally-nearest (dead) one only if every candidate is dead (should
@@ -366,7 +366,7 @@ export function resolveHitLocation(lay, locs, lx, ly, dispUnit, isPartDestroyed)
 // #231: same redirect idea as `resolveHitLocation` above, for the player's weighted-random
 // hit-location roll (combat.js `_damagePlayerAt`) instead of nearest-part geometry. Rerolls
 // only among the LIVE entries of the same weighted pool (so relative weights among survivors
-// are preserved, e.g. losing one torso still leaves the other torso doubly-weighted against
+// are preserved, e.g. losing one shoulder still leaves the other shoulder doubly-weighted against
 // the arms) rather than a plain uniform pick or a reroll loop. `rng` is injectable for tests.
 export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
   const loc = pool[Math.floor(rng() * pool.length)];
@@ -388,14 +388,14 @@ export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
 // own fixed near-centre offset (#109).
 // `tipOffset` (#233, design units, same scale as `part`): how much further forward the
 // weapon's actual drawn muzzle art reaches PAST the part's own front edge — e.g. a Rail
-// Lance's barrel juts well beyond its arm/torso box, so spawning at the bare front edge (the
+// Lance's barrel juts well beyond its arm/shoulder box, so spawning at the bare front edge (the
 // old default of 0) visibly started every shot inside the mech instead of at the barrel tip.
 // Callers with real weapon art (mech mounts via `weaponMuzzleTip`, mounts/barrelSpec.js) pass
 // that length in; callers with no such art (or that predate #233) get the old front-edge
 // behaviour unchanged.
 //
 // `tilt`/`pivotFrac` (#233 follow-up, playtest: "not matching up with the arm/torso tilt that
-// happens with convergence tuning"): a pivoting part (arm/side-torso) doesn't rotate around the
+// happens with convergence tuning"): a pivoting part (arm/shoulder) doesn't rotate around the
 // MECH CENTRE — it rotates around its own joint (see mechArt.js `partSpriteTransform`/
 // `PART_PIVOT`), `pivotFrac` of the way toward the part's rear. At tilt 0 the whole box still
 // behaves as if rigidly attached to the centre (rotating everything by the same `angle`
@@ -405,7 +405,7 @@ export function pickLiveWeighted(pool, isPartDestroyed, rng = Math.random) {
 // joint forward (including the muzzle tip) swings by the full `angle + tilt`. Computing the tip
 // as one rotation of the whole centre-to-tip vector by `angle` (the old formula, unconditionally)
 // silently assumed the part was still at its neutral/rest orientation, so the computed muzzle
-// drifted from the real rendered barrel tip any time the arm/torso was actually tilted for
+// drifted from the real rendered barrel tip any time the arm/shoulder was actually tilted for
 // convergence. Non-pivoting callers (centerTorso/head, or anything that predates convergence
 // tilt) simply never pass a non-zero `tilt`, so they're unaffected.
 export function partMuzzle(part, x, y, angle, disp, tipOffset = 0, tilt = 0, pivotFrac = 0) {
@@ -445,7 +445,7 @@ export function mechMuzzleTipOffset(mech, loc, part) {
 // points. Two named distances, both playtest-tunable:
 export const CONVERGE_DIST = 450;     // px: convergence range when nothing is being aimed at.
 // #74: floor on the convergence distance so a point-blank enemy (dist → ~0) can't drag the
-// point onto the mech and rotate the arm/torso muzzles until they nearly cross — an absurd,
+// point onto the mech and rotate the arm/shoulder muzzles until they nearly cross — an absurd,
 // silly toe-in the playtester flagged. Below this floor the muzzles stay only gently toed.
 // Sanity-checked against the actual world-space muzzle geometry (part.x × ARENA_MECH_SCALE ×
 // ART_SCALE — see locomotion `_muzzle`): the widest muzzles are the arms, whose LATERAL

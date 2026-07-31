@@ -172,7 +172,7 @@ export const INTEGRITY_BARS = {
 // through LOCATIONS so it can only ever name locations the model actually tracks damage on
 // (#448: the four mount locations ARE the damage-tracked set and the kill condition — legs and
 // the cosmetic head/cockpit/centre torso are not tracked and must not appear here).
-export const INTEGRITY_ORDER = ['leftArm', 'leftTorso', 'rightTorso', 'rightArm']
+export const INTEGRITY_ORDER = ['leftArm', 'leftShoulder', 'rightShoulder', 'rightArm']
   .filter((loc) => LOCATIONS.includes(loc));
 
 // Where every bar in one player's integrity block goes. `anchorX` is the block's OUTER edge on

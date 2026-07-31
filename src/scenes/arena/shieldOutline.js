@@ -37,10 +37,10 @@ import { SHIELD_SHELL_SUFFIX } from '../../art/mechArt.js';
 export const SHIELD_COLOR = POWERUPS.shield.color;
 
 // The six mech part-sprite names on a mech view (locomotion.js `_makeMechView`) and the two on a
-// vehicle view (enemies.js `_makeVehicleView`). Read fresh each frame since mech torso/arm
+// vehicle view (enemies.js `_makeVehicleView`). Read fresh each frame since mech shoulder/arm
 // sprites pivot (position + origin both change as they cant toward weapon convergence) and both
 // hulls can swap texture through a walk cycle.
-export const SHIELD_MECH_PART_KEYS = ['hull', 'torL', 'torR', 'armL', 'armR', 'turret'];
+export const SHIELD_MECH_PART_KEYS = ['hull', 'shldL', 'shldR', 'armL', 'armR', 'turret'];
 export const SHIELD_VEHICLE_PART_KEYS = ['hull', 'turret'];
 
 // Which of a vehicle kind's sprites the outline should hug (#379). The default is both — for a
@@ -143,7 +143,7 @@ export function shieldAlphaCap(shield, pool) {
 // exist (mechArt.buildMechTextures bakes them for the player), so the shell hugs the mech's armor
 // plating and leaves the mounted guns + their muzzle glow poking out UNshielded. Weapons are baked
 // into each part texture, so this is the only clean cut — a filter on sprite keys would drop the
-// whole arm/torso body, not just the gun. A part with no `_shield` variant (the hull, every enemy)
+// whole arm/shoulder body, not just the gun. A part with no `_shield` variant (the hull, every enemy)
 // falls back to its real texture, so nothing else changes. The real→shield key mapping is stored on
 // the returned state so the per-frame driver keeps using the body-only texture (it never fights the
 // walk-cycle frame-follow, since the hull — the only part that swaps frames — has no variant).
@@ -181,7 +181,7 @@ export function makeShieldOutline(scene, view, {
     if (!real) continue;
     const shieldKey = resolveTex(real.texture.key);
     // #397 follow-up: the outline is anchored at its TEXTURE CENTRE (origin 0.5,0.5), never the
-    // real part's origin — a side-torso/arm real origin is the convergence PIVOT (a joint set
+    // real part's origin — a shoulder/arm real origin is the convergence PIVOT (a joint set
     // toward the part's REAR, PART_PIVOT in mechArt.js), and anchoring there threw the shell
     // forward off the nose. The per-frame driver positions this at the real part's texture-centre
     // so the two rasters stay perfectly registered.
@@ -224,7 +224,7 @@ function reposeOutlineSprites(sv, view, alpha) {
       : (sv.texMap?.[real.texture.key] ?? real.texture.key);
     if (o.texture.key !== desired) o.setTexture(desired);
     // Register the (centre-anchored) outline onto the real part's TEXTURE CENTRE, wherever the
-    // real part's own origin sits. The real side-torso/arm origin is its rear convergence joint,
+    // real part's own origin sits. The real shoulder/arm origin is its rear convergence joint,
     // so its position is that joint, not the part centre — walk the origin→centre offset out
     // through the part's display size and rotation so the two silhouettes stay perfectly aligned
     // while the shell still grows symmetrically about the centre (see makeShieldOutline). Hull and

@@ -4,7 +4,7 @@ import { poly } from '../mechPrims.js';
 // Tags mirror `plate()`'s own furniture split (mechPrims.js) even though this is a hand-rolled
 // shape: the outline+face is the `body`, the lit highlight wedge is the `rim`.
 export function draw(sg, d, lay, T, tag) {
-  const st = lay[d.side < 0 ? 'leftTorso' : 'rightTorso'];
+  const st = lay[d.side < 0 ? 'leftShoulder' : 'rightShoulder'];
   const ox = st.x + d.side * st.w * 0.4, fy = st.y + st.h * 0.08;
   const tipX = ox + d.side * st.w * 1.25, tipY = fy + st.h * 0.55;
   tag('body');

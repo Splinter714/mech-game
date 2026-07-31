@@ -3,10 +3,10 @@
 //   <key>_hull_0..N — legs (feet) + pelvis + skirts. The baked walk cycle (N = HULL_FRAMES
 //                     for enemies/garage, PLAYER_HULL_FRAMES for a player mech); this
 //                     sprite rotates to face the movement direction.
-//   <key>_turret    — side/center torsos + arms + head + weapon hardware. Rotates to
+//   <key>_turret    — centre torso + shoulders + arms + head + weapon hardware. Rotates to
 //                     face the aim (within the chassis' turret arc).
 // Both are drawn pointing "up" (north / -y) and centred. Because the turret is stacked
-// ON TOP of the hull, the torso naturally occludes the leg tops — that overhead
+// ON TOP of the hull, the body naturally occludes the leg tops — that overhead
 // occlusion is what sells the top-down read. Parts are drawn from the live Mech: a
 // destroyed location draws nothing (#419 — no leftover stump) and its weapons vanish.
 //
@@ -39,9 +39,10 @@ export { ART_SCALE, DESIGN };
 // Per-chassis SHAPE — proportion/stance multipliers on the baseline layout so each weight
 // class reads as a structurally different build (not one shape scaled), #24. All default
 // to 1 (the medium baseline); a chassis overrides via `art.shape`. `armSpread` widens BOTH
-// the shoulders (side torsos) and the arms; `legSpread`/`legDrop` set the stance.
+// the shoulders and the arms; `legSpread`/`legDrop` set the stance. (#586: the `shoulder` dial
+// was `sideTorso` — same number, renamed with the locations it sizes.)
 const DEFAULT_SHAPE = {
-  head: 1, torso: 1, sideTorso: 1,
+  head: 1, torso: 1, shoulder: 1,
   armW: 1, armH: 1, armSpread: 1,
   legW: 1, legH: 1, legSpread: 1, legDrop: 1,
   // Positional offsets (fraction of bodyLen, -y = forward) that rearrange the layout, not
@@ -50,17 +51,17 @@ const DEFAULT_SHAPE = {
 };
 const shapeOf = (mech) => ({ ...DEFAULT_SHAPE, ...(mech.chassis.art.shape || {}) });
 
-// Off-centre weapon mounts (arms + side torsos) are drawn into their OWN textures (not baked
+// Off-centre weapon mounts (arms + shoulders) are drawn into their OWN textures (not baked
 // into the static turret) so the scene can pivot each one at its joint toward the weapon-
 // convergence point (#: shots from off-centre mounts angle inward; the art now angles with
 // them). The PIVOT is the joint as a fraction of the part's height BEHIND the part centre
 // (−y is forward, so the rear is +y) — the part swings its muzzle (front) inward around it.
-// Arms are articulated limbs, so a big shoulder pivot reads naturally; side torsos are RIGID
-// shoulder armour, so they cant only SLIGHTLY (their weapons are less off-centre, so their
+// Arms are articulated limbs, so a big shoulder pivot reads naturally; the shoulders themselves
+// are RIGID armour, so they cant only SLIGHTLY (their weapons are less off-centre, so their
 // convergence angle is smaller anyway) and pivot nearer their own centre so the small rotation
 // doesn't slide the plate out from under the centre torso.
 export const ARM_LOCATIONS = ['leftArm', 'rightArm'];
-export const SIDE_TORSO_LOCATIONS = ['leftTorso', 'rightTorso'];
+export const SHOULDER_LOCATIONS = ['leftShoulder', 'rightShoulder'];
 
 // ── Walk-cycle sampling (#435) ────────────────────────────────────────────────────────────
 // The gait is BAKED: the legs' fore/aft swing is drawn into N hull textures and the scene
@@ -89,11 +90,11 @@ export function strideDir(frame, frames = HULL_FRAMES) {
   return -Math.sin((frame / frames) * Math.PI * 2);
 }
 // Every location that gets its own pivoting texture (drawn in this back-to-front order).
-export const PIVOT_LOCATIONS = [...SIDE_TORSO_LOCATIONS, ...ARM_LOCATIONS];
+export const PIVOT_LOCATIONS = [...SHOULDER_LOCATIONS, ...ARM_LOCATIONS];
 // Exported (not just a local const) so shared.js's muzzle geometry (`partMuzzle`'s `pivotFrac`)
 // can share the SAME joint fraction the sprite itself pivots around (#233 follow-up) — if this
 // ever gets retuned for visual reasons, the muzzle math moves with it instead of drifting.
-export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftTorso: 0.30, rightTorso: 0.30 };
+export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftShoulder: 0.30, rightShoulder: 0.30 };
 
 // #433 (re-architecture): texture-key suffix for a weapon-carrying part's GLOW-ONLY overlay — the
 // weapon's muzzle glow ALONE (glowDot/glowBar colour layers), on an otherwise-transparent canvas of
@@ -153,13 +154,13 @@ export function mechLayout(mech) {
   const a = mech.chassis.art;
   const L = a.bodyLen, W = a.bodyWid;
   const sh = shapeOf(mech);
-  const shoulder = W * 0.42 * sh.armSpread;   // side-torso x; arms sit just outboard
+  const shoulderX = W * 0.42 * sh.armSpread;  // shoulder x; arms sit just outboard
   return {
     head:        { x: 0,                       y: -L * 0.24 + L * sh.headDy, w: W * 0.34 * sh.head,      h: L * 0.22 * sh.head },
     cockpit:     { x: 0,                       y: -L * 0.27 + L * sh.headDy, w: W * 0.18 * sh.head,      h: L * 0.10 * sh.head },
     centerTorso: { x: 0,                       y: -L * 0.05,           w: W * 0.50 * sh.torso,     h: L * 0.44 },
-    leftTorso:   { x: -shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
-    rightTorso:  { x:  shoulder,               y: -L * 0.03,           w: W * 0.30 * sh.sideTorso, h: L * 0.38 },
+    leftShoulder:  { x: -shoulderX,             y: -L * 0.03,           w: W * 0.30 * sh.shoulder,  h: L * 0.38 },
+    rightShoulder: { x:  shoulderX,             y: -L * 0.03,           w: W * 0.30 * sh.shoulder,  h: L * 0.38 },
     leftArm:     { x: -W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
     rightArm:    { x:  W * 0.72 * sh.armSpread, y: -L * 0.08 + L * sh.armDy, w: W * 0.22 * sh.armW,   h: L * 0.46 * sh.armH },
     // #482: `legDrop` is the leg's front/back OFFSET from the centre-torso centre (−0.05·L),
@@ -172,10 +173,10 @@ export function mechLayout(mech) {
 }
 
 // One mount location's weapon hardware: a shape per mounted weapon, spread across the part,
-// by category. Shared by the turret (torso/head mounts) and the arm textures (arm mounts).
+// by category. Shared by the turret (centre-torso/head mounts) and the shoulder + arm textures.
 function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   if (mech.isPartDestroyed(loc)) return;
-  // #545 (art dissect tool): every call site below (drawArm, drawSideTorso, drawTurret's dead
+  // #545 (art dissect tool): every call site below (drawArm, drawShoulder, drawTurret's dead
   // centre/head loop) is baking a texture that carries NOTHING else tagged 'weapons', so this one
   // tag is enough to isolate "just the guns" within whichever part is currently being drawn —
   // no per-weapon sub-tag needed to answer the question the dissector exists for.
@@ -238,30 +239,30 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
-// One side torso (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
+// One shoulder (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
 // so the scene can cant it slightly toward convergence. Drawn at the same design coords as
-// when it lived in the turret, so a straight (tilt-0) side torso renders identically. The
-// shoulder PAULDRON (heavy chassis) is drawn HERE too, so it stays glued to the side torso as
+// when it lived in the turret, so a straight (tilt-0) shoulder renders identically. The
+// PAULDRON (heavy chassis) is drawn HERE too, so it stays glued to the shoulder as
 // it cants; other decor (mast/vane/stack/spine) stays on the body. `stump` if destroyed.
-// #401: same treatment as drawArm above — clean plate = armored, and once this torso's armor
+// #401: same treatment as drawArm above — clean plate = armored, and once this shoulder's armor
 // is stripped (even though it's still alive) a jagged panel tears off to bare its internals
 // via `exposedInternals`, instead of the old brackets-on-top overlay. Player-only since #472.
 // `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
 // body-only raster for the player's shield shell (see drawArm's note).
 // `muzzleOff` (#433): see drawArm — the muzzle-glow-OMITTED bake (transparent where the glow would
 // be; the player's sole part state; the colour lives in the separate glow overlay).
-function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
+function drawShoulder(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
   // #419: a fully-destroyed location draws NOTHING — no charred stump, no leftover piece.
   if (mech.isPartDestroyed(loc)) return;
   // #545: tags follow this function's own section comments — plate/vent as one visual unit
-  // (the torso shell itself, armor state included), the pauldron as its own decor piece (it
-  // rides on this texture specifically so it cants with the torso, per the header comment
+  // (the shoulder shell itself, armor state included), the pauldron as its own decor piece (it
+  // rides on this texture specifically so it cants with the shoulder, per the header comment
   // above), and the mounted weapons last.
   sg.layer('plate');
-  // Live-chat follow-up: player color removed from side torsos entirely (head-only marker
+  // Live-chat follow-up: player color removed from the shoulders entirely (head-only marker
   // now) — rim: T.baseRim opts out of the accent, keeping the back-edge placement.
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back', rim: T.baseRim, tag: 'plate' });
   sg.layer('plate.vent');
@@ -289,21 +290,21 @@ function drawPartGlow(sg, mech, loc, T) {
   sg.glowOnly = false;
 }
 
-// Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftTorso, > 0 → rightTorso),
-// so it rides on the same pivoting texture as its side torso. The other decor kinds stay on
+// Draw the shoulder pauldron(s) that belong to `loc` (side < 0 → leftShoulder, > 0 → rightShoulder),
+// so it rides on the same pivoting texture as its shoulder. The other decor kinds stay on
 // the body (see drawDecor's `skip`).
 function drawPauldronFor(sg, mech, lay, loc, T) {
-  const side = loc === 'leftTorso' ? -1 : 1;
+  const side = loc === 'leftShoulder' ? -1 : 1;
   for (const d of mech.chassis.art.decor || []) {
     // #585: same tagging path as drawDecor, but under this texture's own 'pauldron' prefix rather
-    // than 'decor.pauldron' — the pauldron is the one decor kind that lives on the side-torso
+    // than 'decor.pauldron' — the pauldron is the one decor kind that lives on the shoulder
     // texture (so it cants with it), and the prefix has to match where it actually landed.
     if (d.kind === 'pauldron' && d.side === side) drawDecorPiece(sg, DECOR_ART.pauldron, d, lay, T, 'pauldron');
   }
 }
 
-// The body: centre torso + head + spine decor + centre/head weapons. NOT the arms or side
-// torsos — those are separate pivoting textures (drawArm / drawSideTorso), drawn under this
+// The body: centre torso + head + spine decor + centre/head weapons. NOT the arms or the
+// shoulders — those are separate pivoting textures (drawArm / drawShoulder), drawn under this
 // body sprite so it occludes their inner edges (the top-down read). Drawn facing up; weapons
 // point forward (-y).
 // `noWeapons` (#397 follow-up): the body — centre torso, head, spine decor, reactor glow — WITHOUT
@@ -352,7 +353,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // reactor spine carries the powerup/player status colour. Enemies & garage preview keep the fixed
   // reactor purple.
   const ventCol = statusSpot ? { halo: T.housing, core: T.housing, hot: T.housing } : REACTOR;
-  sg.layer('centerTorso.vent');   // same word the side torso's own recessed slot uses
+  sg.layer('centerTorso.vent');   // same word the shoulder's own recessed slot uses
   glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
   glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
 
@@ -372,13 +373,13 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   if (!statusSpot) glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
 
   // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
-  // are drawn on the side-torso textures instead (so they cant with the side torso), so skip
+  // are drawn on the shoulder textures instead (so they cant with the shoulder), so skip
   // them here.
   sg.layer('decor');
   drawDecor(sg, mech, lay, T, { skip: ['pauldron'] });
 
-  // Weapon hardware for the centre/head mounts only — the ARM and SIDE-TORSO mounts are drawn
-  // in their own pivoting textures (drawArm / drawSideTorso), so skip them here.
+  // Weapon hardware for the centre/head mounts only — the ARM and SHOULDER mounts are drawn
+  // in their own pivoting textures (drawArm / drawShoulder), so skip them here.
   if (!noWeapons) {
     for (const loc of MOUNT_LOCATIONS) {
       if (PIVOT_LOCATIONS.includes(loc)) continue;
@@ -516,15 +517,15 @@ export function buildMechTextures(scene, key, mech, opts) {
   }
   gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
     (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot));
-  // One texture per side torso + arm — the scene pivots each toward the weapon-convergence
-  // point (side torsos subtly, arms more; see partSpriteTransform).
+  // One texture per shoulder + arm — the scene pivots each toward the weapon-convergence
+  // point (shoulders subtly, arms more; see partSpriteTransform).
   // #433 (re-architecture): the PLAYER bakes each weapon-carrying part MUZZLE-OFF (dark glow) as its
   // SOLE state — the coloured muzzle glow now lives in a separate glow-only overlay (below) that the
   // reload blink toggles, so this base texture NEVER swaps (the shield outline can't re-derive a wrong
   // shell mid-blink). Enemies bake muzzleOff=false: glow straight into the part, no overlay, no blink.
-  for (const loc of SIDE_TORSO_LOCATIONS) {
+  for (const loc of SHOULDER_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawSideTorso(scaledGraphics(g), mech, loc, T, false, isPlayer));
+      (g) => drawShoulder(scaledGraphics(g), mech, loc, T, false, isPlayer));
   }
   for (const loc of ARM_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
@@ -555,8 +556,8 @@ export function buildMechTextures(scene, key, mech, opts) {
       }
     }
     shell(`${key}_turret${SHIELD_SHELL_SUFFIX}`, (sg) => drawTurret(sg, mech, T, opts?.statusSpot, true));
-    for (const loc of SIDE_TORSO_LOCATIONS) {
-      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawSideTorso(sg, mech, loc, T, true));
+    for (const loc of SHOULDER_LOCATIONS) {
+      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawShoulder(sg, mech, loc, T, true));
     }
     for (const loc of ARM_LOCATIONS) {
       shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawArm(sg, mech, loc, T, true));
@@ -623,8 +624,8 @@ export function reskinMech(scene, key, mech, opts) {
 // thick") — two changes:
 //
 // 1. CLOAK_FILL_ALPHA_MULT is RETIRED (was 0.55 → 0.92 in the fourth pass, now effectively 1 — see
-//    below). Raising a part's own baked fill alpha could only ever shrink the leg/torso bleed-
-//    through, never remove it: the mech view stacks hull/torsos/arms/turret as SIBLING sprites in
+//    below). Raising a part's own baked fill alpha could only ever shrink the leg/body bleed-
+//    through, never remove it: the mech view stacks hull/shoulders/arms/turret as SIBLING sprites in
 //    one container (mechView.js `makeMechParts`), each independently alpha-blended under a SECOND,
 //    container-level CLOAK_ALPHA (abilities.js) — a translucent container multiplies its own alpha
 //    into every child as it draws them, which lets whatever's behind a sibling (in local z-order)
