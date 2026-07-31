@@ -218,17 +218,37 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   // `rimThickness` (default 1): a multiplier on the rim band's own height, so one caller (the
   // head's player-color marker) can read as slightly thicker without changing every plate's
   // shared geometry.
+  // `rimGlow` (live-chat ask, 2026-07-31): "head plate rim — give it a slight forward glow and
+  // soften its edges very slightly also." Opt-in, because the head is the ONE part still carrying
+  // the player accent (every other plate passes `rim: T.baseRim` to opt out) and this is meant to
+  // make that single marker read as LIT rather than as a painted stripe. Two effects, both built
+  // from plain translucent bands rather than `glowDot`'s radial stack, because a rim is a long
+  // thin edge — a circular bloom would pool at its centre and leave the ends dark:
+  //   • forward glow — wider, fainter bands pushed OUTWARD from the plate (away from its centre,
+  //     so this follows `rimSide` and works on a back rim too, should anything ever want one).
+  //   • softened edges — a slightly taller/wider low-alpha pad UNDER the crisp core band, so the
+  //     rim's own boundary feathers instead of cutting hard. "Very slightly": the core band is
+  //     still drawn at full alpha and unchanged size, so the rim doesn't lose its definition.
+  // Deliberately NOT wrapped in `emissive()`. That flag is the muzzle-glow gate — it would strip
+  // this from the base part bake and move it into the weapon glow overlay, which the reload blink
+  // toggles. The head marker is not a muzzle and must not blink with ammo.
   const rimH = h * 0.15 * (opts.rimThickness ?? 1);
+  const back = opts.rimSide === 'back';
+  const rimY = back ? cy + h / 2 - h * 0.08 : cy - h / 2 + h * 0.085;
+  const aoY  = back ? cy - h / 2 + h * 0.085 : cy + h / 2 - h * 0.08;
+  const rimW = w - 2 * inset;
+  const rimCol = opts.rim ?? T.rim;
   sub('rim');
-  if (opts.rimSide === 'back') {
-    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, rimH, opts.rim ?? T.rim);
-    sub('ao');
-    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.13, T.ao, 0.5);
-  } else {
-    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, rimH, opts.rim ?? T.rim);
-    sub('ao');
-    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
+  if (opts.rimGlow) {
+    const out = back ? 1 : -1;   // "forward" = outward from the plate's centre
+    rectC(sg, cx, rimY + out * rimH * 0.75, rimW * 0.88, rimH * 1.5, rimCol, 0.10);  // outer bloom
+    rectC(sg, cx, rimY + out * rimH * 0.38, rimW * 0.96, rimH * 1.2,  rimCol, 0.17);  // inner bloom
+    rectC(sg, cx, rimY, rimW + rimH * 0.5, rimH * 1.5, rimCol, 0.20);                 // feathered edge
+    rectC(sg, cx, rimY, rimW + rimH * 0.2, rimH * 1.2, rimCol, 0.34);
   }
+  rectC(sg, cx, rimY, rimW, rimH, rimCol);
+  sub('ao');
+  rectC(sg, cx, aoY, rimW, h * 0.13, T.ao, 0.5);
   if (opts.seam !== false) { sub('seam'); rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7); }
 }
 

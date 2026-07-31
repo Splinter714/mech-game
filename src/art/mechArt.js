@@ -364,7 +364,10 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // Live-chat follow-up: the head is now the ONLY place player color shows (every other part
   // opts out via rim: T.baseRim) — thickened slightly (rimThickness) so it reads clearly as
   // the one identifying marker left on the mech.
-  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false, rimThickness: 1.6, tag: 'head.plate' });
+  // `rimGlow` (live-chat ask): a slight forward bloom + very slightly softened edges on that rim,
+  // so the one remaining identity marker reads as lit rather than as a painted stripe.
+  plate(sg, T, hd.x, hd.y, hd.w, hd.h,
+        { fill: T.faceMid, seam: false, rimThickness: 1.6, rimGlow: true, tag: 'head.plate' });
   // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
   // no purple head light. Players (statusSpot supplied) get no optic glow; enemies & garage preview
   // keep the fixed reactor-purple optic.
