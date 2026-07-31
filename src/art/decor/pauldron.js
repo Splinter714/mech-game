@@ -8,7 +8,12 @@ export function draw(sg, d, lay, T, tag = () => {}) {
   const cx = st.x + d.side * st.w * 0.28, cy = st.y - st.h * 0.36;
   // The prefix is threaded in, so `plate()`'s own opt-in furniture tags (body/rim/ao) nest under
   // whichever call site is drawing this — 'pauldron.plate.*' on the shoulder texture.
-  plate(sg, T, cx, cy, w, h, { fill: T.faceDk, chamfer: Math.min(w, h) * 0.34, seam: false, tag: tag('plate') });
+  // Live-chat ask (2026-07-31): head-only accent — see mast.js for the full note. This plate()
+  // call took the accented `T.rim` by default, which is what painted the blue bars across the
+  // Colossus' shoulders in the art preview; `rim: T.baseRim` opts it out the same way every
+  // non-head plate() caller in mechArt.js already does.
+  plate(sg, T, cx, cy, w, h,
+        { fill: T.faceDk, chamfer: Math.min(w, h) * 0.34, seam: false, rim: T.baseRim, tag: tag('plate') });
   tag('vent');   // same word the shoulder's own recessed slot uses
   rectC(sg, cx, cy, w * 0.5, h * 0.18, T.recess);
 }
