@@ -233,6 +233,9 @@ function swarmRack(sg, T, bx, frontY, s, n, cap, partW, partH) {
       rectC(sg, cxx, cyy, w * 0.24, collarH * 0.13, n.halo, 0.5);
       rectC(sg, cxx, cyy, w * 0.16, collarH * 0.09, n.core, 1);
     });
+    // Live-chat ask: same prominent glowDot treatment as Streak Pod / Cluster Salvo / Plasma
+    // Coater, layered on top of each cell instead of just the flat halo/core rects.
+    glowDot(sg, cxx, cyy, collarH * 0.08, n);
   }
 }
 
