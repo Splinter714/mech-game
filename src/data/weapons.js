@@ -371,20 +371,27 @@ export const WEAPONS = {
     // proper per-part purple "coating" outline (scenes/arena/shieldOutline.js's `updateDotOutline`,
     // reusing the shield glow's own duplicate-sprite technique) — see `_drawStatusEffects`.
     // 2026-07-31 LOB REWORK (live chat ask): "a lob of maybe 3 blobs" — reworked from a single
-    // straight-line bolt into a 3-blob arcing lob, following Proximity Mines' (timedCharge below)
-    // spread+arcing precedent, but a narrower fan and lower jitter befitting a ranged weapon rather
-    // than a close-range toss (spreadAngle 24 vs timedCharge's 55, spreadJitter 14 vs 18). Each blob
-    // still carries the weapon's full per-bolt damage/dot — landing more than one blob on the same
-    // target is a real (and now genuinely possible) escalation over the old single-bolt weapon;
-    // tune live. Also gained `splash` (see data/delivery.js's field doc, and the general splash
-    // damage fix landed the same day in projectiles.js `_splashDamageAt`) so a blob that lands near
-    // — not just ON — an enemy still catches it, dot included.
+    // straight-line bolt into a 3-blob arcing lob. First pass fired the 3 blobs as a simultaneous
+    // fixed fan (`pattern: 'spread'`); a same-day follow-up ("3 shots in series, not in parallel,
+    // and reduce their randomness") switched that to a `burst` — see the delivery block below for
+    // the mechanism. Each blob still carries the weapon's full per-bolt damage/dot — landing more
+    // than one blob on the same target is a real (and now genuinely possible) escalation over the
+    // old single-bolt weapon; tune live. Also gained `splash` (see data/delivery.js's field doc,
+    // and the general splash damage fix landed the same day in projectiles.js
+    // `_splashDamageAt`) so a blob that lands near — not just ON — an enemy still catches it, dot
+    // included.
     id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
     damage: 14, range: { min: 0, opt: 380, max: 560 },
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma',
-      pattern: 'spread', count: 3, spreadAngle: 24, arcBump: 0.9, spreadJitter: 14,
+      hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma', arcBump: 0.9,
+      // 2026-07-31 follow-up (live chat ask): "3 shots in series, not in parallel, and reduce
+      // their randomness" — switched off `pattern: 'spread'` (a simultaneous fixed fan + random
+      // jitter) onto `burst` instead (delivery.js's `d.burst && fan === 1` path): 3 rounds fired
+      // one after another, `interval` ms apart, at the SAME aim angle with no `burstScatter` — so
+      // no angular fan and no jitter at all, same mechanism Plasma Cannon's 5-bolt volley uses,
+      // minus its scatter. Tune-live number for the spacing.
+      count: 3, burst: { interval: 130 },
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
     },
