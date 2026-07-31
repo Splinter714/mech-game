@@ -221,14 +221,26 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   // `rimGlow` (live-chat ask, 2026-07-31): "head plate rim — give it a slight forward glow and
   // soften its edges very slightly also." Opt-in, because the head is the ONE part still carrying
   // the player accent (every other plate passes `rim: T.baseRim` to opt out) and this is meant to
-  // make that single marker read as LIT rather than as a painted stripe. Two effects, both built
-  // from plain translucent bands rather than `glowDot`'s radial stack, because a rim is a long
-  // thin edge — a circular bloom would pool at its centre and leave the ends dark:
-  //   • forward glow — wider, fainter bands pushed OUTWARD from the plate (away from its centre,
-  //     so this follows `rimSide` and works on a back rim too, should anything ever want one).
-  //   • softened edges — a slightly taller/wider low-alpha pad UNDER the crisp core band, so the
-  //     rim's own boundary feathers instead of cutting hard. "Very slightly": the core band is
-  //     still drawn at full alpha and unchanged size, so the rim doesn't lose its definition.
+  // make that single marker read as LIT rather than as a painted stripe. Built from stacked
+  // translucent bands rather than `glowDot`'s radial stack, because a rim is a long thin edge — a
+  // circular bloom would pool at its centre and leave the ends dark. Each band both GROWS (which
+  // feathers the rim's own boundary) and shifts OUTWARD from the plate centre (which is the
+  // forward glow), so one loop produces both halves of the ask; `out` follows `rimSide`, so a back
+  // rim would work too should anything ever want one.
+  //
+  // Follow-up ask: "make the pixel resolution of the glow MUCH softer / higher resolution." The
+  // first pass used FOUR hand-placed bands, which reads as four visible steps rather than a
+  // gradient. Now `RIM_GLOW_STEPS` thin bands with a LOW constant per-band alpha: the gradient is
+  // produced by ACCUMULATION, since inner regions are covered by more overlapping bands than outer
+  // ones — that's what makes the falloff continuous instead of banded, and it needs no per-band
+  // alpha curve. Total opacity at the core is `1-(1-a)^n`, so the two constants trade off against
+  // each other; raise the step count for smoothness, the alpha for intensity.
+  //
+  // Resolution note: this is drawn in DESIGN units and scaled up by ART_SCALE (see
+  // `scaledGraphics`), so a step of a fraction of a design unit still lands on real texture pixels
+  // — the super-sampling is exactly what buys the extra gradient resolution here. The bands are
+  // deliberately fractional-sized for that reason; don't round them to whole design units.
+  //
   // Deliberately NOT wrapped in `emissive()`. That flag is the muzzle-glow gate — it would strip
   // this from the base part bake and move it into the weapon glow overlay, which the reload blink
   // toggles. The head marker is not a muzzle and must not blink with ammo.
@@ -240,11 +252,15 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   const rimCol = opts.rim ?? T.rim;
   sub('rim');
   if (opts.rimGlow) {
-    const out = back ? 1 : -1;   // "forward" = outward from the plate's centre
-    rectC(sg, cx, rimY + out * rimH * 0.75, rimW * 0.88, rimH * 1.5, rimCol, 0.10);  // outer bloom
-    rectC(sg, cx, rimY + out * rimH * 0.38, rimW * 0.96, rimH * 1.2,  rimCol, 0.17);  // inner bloom
-    rectC(sg, cx, rimY, rimW + rimH * 0.5, rimH * 1.5, rimCol, 0.20);                 // feathered edge
-    rectC(sg, cx, rimY, rimW + rimH * 0.2, rimH * 1.2, rimCol, 0.34);
+    const out = back ? 1 : -1;          // "forward" = outward from the plate's centre
+    const RIM_GLOW_STEPS = 22;          // band count — smoothness
+    const RIM_GLOW_ALPHA = 0.035;       // per-band opacity — intensity (accumulates inward)
+    const RIM_GLOW_REACH = 2.6;         // how far the outermost band extends, in rim heights
+    for (let i = RIM_GLOW_STEPS; i >= 1; i--) {
+      const t = i / RIM_GLOW_STEPS;     // 1 = outermost/largest band
+      const grow = rimH * RIM_GLOW_REACH * t;
+      rectC(sg, cx, rimY + out * grow * 0.42, rimW + grow * 0.55, rimH + grow, rimCol, RIM_GLOW_ALPHA);
+    }
   }
   rectC(sg, cx, rimY, rimW, rimH, rimCol);
   sub('ao');
