@@ -385,15 +385,20 @@ export const WEAPONS = {
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma', arcBump: 0.9,
-      // 2026-07-31 follow-up (live chat ask): "3 shots in series, not in parallel, and reduce
-      // their randomness" — switched off `pattern: 'spread'` (a simultaneous fixed fan + random
-      // jitter) onto `burst` instead (delivery.js's `d.burst && fan === 1` path): 3 rounds fired
-      // one after another, `interval` ms apart. Tune-live number for the spacing.
-      // Same-day follow-up ("launch in a pattern where they'll land in a small triangle"):
-      // `burstFan` (new delivery.js field, same commit) puts a small FIXED, zero-randomness
-      // angular spread across those staggered shots — no `burstScatter` (that's random), no
-      // jitter, just 3 evenly-spaced points around the aim line that land as a small triangle.
-      count: 3, burst: { interval: 130 }, burstFan: true, spreadAngle: 16,
+      // 2026-07-31 series of live-chat follow-ups on the lob rework:
+      //  1. "3 shots in series, not in parallel, and reduce their randomness" — switched off
+      //     `pattern: 'spread'` (a simultaneous fixed fan + random jitter) onto `burst` instead
+      //     (delivery.js's `d.burst && fan === 1` path).
+      //  2. "launch in a pattern where they'll land in a small triangle" — `burstFan` (new
+      //     delivery.js field) puts a small FIXED, zero-randomness angular spread across the
+      //     burst's shots (no `burstScatter`, no jitter).
+      //  3. "instead of a multiplier, can we make it a fixed spread" — the triangle's DEPTH
+      //     (`distOffset`, delivery.js) is now an additive px offset, not a %-of-range multiplier.
+      //  4. "make them fire all at once instead of in series now" — reverted #1's stagger by
+      //     setting `burst.interval: 0` (delay 0 for all 3), while KEEPING `burstFan`'s angle+
+      //     depth triangle shaping, which only needs `d.burst` truthy, not a real delay between
+      //     shots. Net effect: 3 rounds launch simultaneously, landing in a small fixed triangle.
+      count: 3, burst: { interval: 0 }, burstFan: true, spreadAngle: 16,
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
     },
