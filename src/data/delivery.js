@@ -480,11 +480,19 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     // actually holds the scatter through the lock-tracking descent. Distinct from the weave stagger
     // above (tiny, alternating, cosmetic); a weapon could carry both, so they add.
     const scatterHalfCone = d.burstScatter ? (((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2 : 0;
+    // 2026-07-31 (Plasma Coater ask, "launch in a pattern where they'll land in a small
+    // triangle"): a `burstFan` weapon spreads its staggered shots across a small, FIXED,
+    // deterministic cone — the SAME centered-index fan math `pattern: 'spread'` uses (below),
+    // just applied to a burst's staggered shots instead of a simultaneous fan. Zero randomness,
+    // unlike `burstScatter` — n≥3 landing points at even angular spacing around the aim line
+    // reads as a small triangle (or wider polygon for a bigger n), not a random scatter.
+    const fanCone = d.burstFan ? ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180 : 0;
     const out = [];
     for (let i = 0; i < n; i++) {
       const scatter = scatterHalfCone ? (Math.random() * 2 - 1) * scatterHalfCone : 0;
       const stagger = staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0;
-      out.push(shot({ angleOffset: scatter + stagger, delay: i * d.burst.interval }));
+      const fanOffset = fanCone && n > 1 ? ((i - (n - 1) / 2) / (n - 1)) * fanCone : 0;
+      out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval }));
     }
     return { mode, shots: out };
   }

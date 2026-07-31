@@ -388,10 +388,12 @@ export const WEAPONS = {
       // 2026-07-31 follow-up (live chat ask): "3 shots in series, not in parallel, and reduce
       // their randomness" — switched off `pattern: 'spread'` (a simultaneous fixed fan + random
       // jitter) onto `burst` instead (delivery.js's `d.burst && fan === 1` path): 3 rounds fired
-      // one after another, `interval` ms apart, at the SAME aim angle with no `burstScatter` — so
-      // no angular fan and no jitter at all, same mechanism Plasma Cannon's 5-bolt volley uses,
-      // minus its scatter. Tune-live number for the spacing.
-      count: 3, burst: { interval: 130 },
+      // one after another, `interval` ms apart. Tune-live number for the spacing.
+      // Same-day follow-up ("launch in a pattern where they'll land in a small triangle"):
+      // `burstFan` (new delivery.js field, same commit) puts a small FIXED, zero-randomness
+      // angular spread across those staggered shots — no `burstScatter` (that's random), no
+      // jitter, just 3 evenly-spaced points around the aim line that land as a small triangle.
+      count: 3, burst: { interval: 130 }, burstFan: true, spreadAngle: 16,
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
     },
