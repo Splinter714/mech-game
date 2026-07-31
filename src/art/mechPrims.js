@@ -256,8 +256,8 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
     const out = back ? 1 : -1;          // "forward" = outward from the plate's centre
     const RIM_GLOW_STEPS = 22;          // band count — smoothness
     const RIM_GLOW_ALPHA = 0.035;       // per-band opacity — intensity (accumulates at the rim)
-    const RIM_GLOW_REACH = 2.6;         // how far the outermost band extends, in rim heights
-    const RIM_GLOW_WEDGE = 0.5;         // forward flare per rim height — the wedge's taper
+    const RIM_GLOW_REACH = 1.3;         // how far the outermost band extends, in rim heights
+    const RIM_GLOW_WEDGE = 0.28;        // forward flare per rim height — the wedge's taper
     // Each band is ANCHORED to the rim's BACK edge (the one nearer the plate centre) and extends
     // FORWARD from there — it never grows sideways or rearward. The first pass instead grew each
     // band in every direction and merely nudged it forward, which bloomed the glow out past both
