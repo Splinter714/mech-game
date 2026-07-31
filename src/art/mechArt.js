@@ -26,7 +26,7 @@ import { getWeapon } from '../data/weapons.js';
 import { luminanceGrey, cloakEdgeMask } from '../data/desaturate.js';
 import {
   DESIGN, themeFor, REACTOR, HALO, HALO_EDGE, poly, rectC, roundC, ellipseC, plateOutline, plate, glowBar,
-  exposedInternals, statusSpotBar, clipCornersToPlate,
+  exposedInternals, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
 import { drawDecor, DECOR_ART } from './decor/index.js';
@@ -195,7 +195,7 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   weaponIds.forEach((id, i) => {
     const wpn = getWeapon(id);
     const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s, p.w / Math.max(1, n));
+    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s, p.w / Math.max(1, n), p.h);
   });
   sg.glowSkip = prevSkip;
 }
@@ -235,14 +235,7 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // placement (rimSide: 'back') but with the theme's neutral rim tone, not the player's color.
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back', rim: T.baseRim, tag: 'plate' });
   if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
-  if (!noWeapons) {
-    drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
-    // Live-chat ask: "increase the z-order of the plate body outline above the weapon plate" —
-    // a wide mount (e.g. Plasma Coater's collar) can overhang the arm's own chamfered corner;
-    // repaint those corners on top so any overhang reads as cleanly clipped by the plate edge.
-    sg.layer('plate.cornerClip');
-    clipCornersToPlate(sg, T, p.x, p.y, p.w, p.h);
-  }
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // One side torso (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
@@ -276,11 +269,7 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
   sg.layer('pauldron');
   drawPauldronFor(sg, mech, lay, loc, T);
-  if (!noWeapons) {
-    drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
-    sg.layer('plate.cornerClip');
-    clipCornersToPlate(sg, T, p.x, p.y, p.w, p.h);
-  }
+  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // #433 (re-architecture): the GLOW-ONLY overlay raster for one weapon-carrying part — the mounted

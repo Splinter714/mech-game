@@ -117,11 +117,23 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // Round 5: "position towards front of arm is still wrong" — the width fix (round 4) made the
 // collar visibly wider without changing its vertical placement, and a quarter of the way down
 // still reads as too far from the front/firing edge now that it spans the full plate width.
-// Pulled it in closer to frontY.
-function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW) {
+// Pulled it in closer to frontY -- too close, it turned out (round 6 below).
+// Round 6: "corner clip is now an ugly black box, and also doesn't even clip at the right point;
+// can we instead have the body outline do the clipping itself?" — round 5's fixed offset put the
+// collar's TOP EDGE above frontY entirely (collarH/2 > the L*0.35 offset), so it wasn't just
+// overhanging the plate's diagonal corner cut, it was poking past the plate's front edge outright;
+// a follow-up "paint the corners over" hack was the wrong fix for that (repainting a solid wedge
+// on top just hid the symptom, badly). Fixed at the root instead: the collar's position is now
+// DERIVED from the plate's own chamfer geometry (`plateCut`, the same formula `plate()` itself
+// uses) plus half its own height, so its top edge always lands exactly where the plate's front
+// corners stop being chamfered — i.e. it can never enter the diagonal cut zone in the first
+// place. No masking needed; the plate's real outline shape is what constrains the placement.
+function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.29;
-  const collarH = L * 0.8, collarY = frontY + L * 0.35;   // close to the front/firing edge
+  const collarH = L * 0.8;
+  const plateChamfer = partH ? plateCut(T, w, partH) : 0;   // where the arm plate's own front corners stop cutting inward
+  const collarY = frontY + plateChamfer + collarH / 2 + 0.4;   // top edge clears that line, plus a hair of margin
   const collarChamfer = plateCut(T, w, collarH);
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
