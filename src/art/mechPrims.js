@@ -254,13 +254,27 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   if (opts.rimGlow) {
     const out = back ? 1 : -1;          // "forward" = outward from the plate's centre
     const RIM_GLOW_STEPS = 22;          // band count — smoothness
-    const RIM_GLOW_ALPHA = 0.035;       // per-band opacity — intensity (accumulates inward)
+    const RIM_GLOW_ALPHA = 0.035;       // per-band opacity — intensity (accumulates at the rim)
     const RIM_GLOW_REACH = 2.6;         // how far the outermost band extends, in rim heights
+    // Each band is ANCHORED to the rim's BACK edge (the one nearer the plate centre) and extends
+    // FORWARD from there — it never grows sideways or rearward. The first pass instead grew each
+    // band in every direction and merely nudged it forward, which bloomed the glow out past both
+    // ends of the rim and behind it, reading as a big rectangular block rather than light thrown
+    // forward off an edge ("the forward glow is perfect, the side and back glow are bad").
+    // Anchoring this way also means every band still covers the rim itself, so the accumulation is
+    // brightest AT the rim and falls off forward — which is the direction the gradient should run.
+    const backEdge = rimY - out * rimH / 2;
     for (let i = RIM_GLOW_STEPS; i >= 1; i--) {
-      const t = i / RIM_GLOW_STEPS;     // 1 = outermost/largest band
-      const grow = rimH * RIM_GLOW_REACH * t;
-      rectC(sg, cx, rimY + out * grow * 0.42, rimW + grow * 0.55, rimH + grow, rimCol, RIM_GLOW_ALPHA);
+      const bandH = rimH + rimH * RIM_GLOW_REACH * (i / RIM_GLOW_STEPS);
+      rectC(sg, cx, backEdge + out * bandH / 2, rimW, bandH, rimCol, RIM_GLOW_ALPHA);
     }
+    // Separately, the "very slightly soften the edges and corners" half: two faint pads a hair
+    // larger than the core band in EVERY direction. Deliberately tiny — a fraction of a design
+    // unit, so at ART_SCALE this is about half a texture pixel of feathering. This is the only
+    // thing that touches the rim's sides/ends, and it must stay at this scale; anything more and
+    // it becomes the side glow that was just removed.
+    rectC(sg, cx, rimY, rimW + rimH * 0.22, rimH * 1.22, rimCol, 0.16);
+    rectC(sg, cx, rimY, rimW + rimH * 0.10, rimH * 1.10, rimCol, 0.26);
   }
   rectC(sg, cx, rimY, rimW, rimH, rimCol);
   sub('ao');
