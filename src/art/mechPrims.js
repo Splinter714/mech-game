@@ -415,22 +415,31 @@ function mixToWhite(c, t) {
   return (m(r) << 16) | (m(g) << 8) | m(b);
 }
 
-// The same HUE at full brightness — every channel scaled up until the largest hits 255. Note this
-// is NOT `mixToWhite`, which washes toward white and therefore DESATURATES; this preserves the
-// channel ratios, so the result reads as the same colour, just at its most vivid.
+// Brighten a colour toward its most vivid form at the SAME hue — channels scaled together, so the
+// ratios (and therefore the hue) are preserved. Explicitly NOT `mixToWhite`, which washes toward
+// white and therefore DESATURATES: the opposite of what's wanted here.
 //
 // Why plate()'s rim bloom needs it (live-chat ask: "all of this bloom and softening should be the
 // same colour as the player colour"): the bloom already IS drawn in exactly the accent colour —
 // `themeFor` assigns `rim: opts.accent`, and the rim bloom uses that same value. But a band at
 // 0.035 alpha composited over a dark plate lands most of the way back toward the plate's own tone,
-// so it READS as a desaturated grey-blue next to the full-alpha core band. Painting the thin
-// layers at full chroma is what makes the composite land on the player's actual hue — matching the
-// colour on screen rather than merely in the source.
+// so it READS as a desaturated grey next to the full-alpha core band. Painting the thin layers
+// brighter is what makes the COMPOSITE land on the player's actual hue.
+//
+// The boost is weighted by the colour's OWN saturation, which matters because the garage colour
+// picker (data/mechColors.js) offers near-neutrals — CHARCOAL, ASH, WHITE, BRONZE. Scaling every
+// channel until the largest hit 255 (the obvious implementation, and the first one here) turned
+// CHARCOAL #3a3d42 into #e0ecff — a near-white pale blue, because a dark grey's tiny channel spread
+// gets multiplied up into a strong tint. Weighting by saturation leaves a neutral essentially
+// alone (it has no hue to preserve) while still giving a dark SATURATED pick like NAVY the large
+// push it needs to read as navy when thin.
 function fullChroma(c) {
   const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
-  const m = Math.max(r, g, b);
-  if (!m) return c;                       // pure black has no hue to preserve
-  const k = 255 / m, s = (v) => Math.min(255, Math.round(v * k));
+  const mx = Math.max(r, g, b);
+  if (!mx) return c;                          // pure black has no hue to preserve
+  const sat = (mx - Math.min(r, g, b)) / mx;  // 0 = neutral grey, 1 = fully saturated
+  const k = 1 + (255 / mx - 1) * sat;         // full push only for saturated hues
+  const s = (v) => Math.min(255, Math.round(v * k));
   return (s(r) << 16) | (s(g) << 8) | s(b);
 }
 
