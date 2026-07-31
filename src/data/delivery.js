@@ -576,7 +576,12 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
   return {
     x, y, angle, speed,
     vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-    kind: projectileKind(weapon), color: CATEGORIES[weapon.category]?.color ?? 0xffffff,
+    kind: projectileKind(weapon),
+    // `delivery.projectileColor` (opt-in) lets one weapon read as a distinct color from its
+    // category's shared neon — Plasma Coater's purple vs every other energy weapon's cyan, for
+    // instance — without touching CATEGORIES itself (which every other energy weapon still
+    // reads for its own mount glow/HUD tile color).
+    color: d.projectileColor ?? CATEGORIES[weapon.category]?.color ?? 0xffffff,
     weaponId: weapon.id,
     damage: weapon.damage, splash: d.splash || 0, range: weapon.range, scale: d.scale || 1,
     dist: 0, maxDist, arc: d.path === 'arcing', ground: d.groundFire || null,

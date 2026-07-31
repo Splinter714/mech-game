@@ -287,7 +287,17 @@ export const CombatMixin = {
     this._lastBurst = { x, y, t: now };
     this._burst(x, y, 3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
 
-    if (kind === 'missile' || splash > 0) {
+    // Plasma Coater ask: "impact blast color to purple themed." `kind === 'plasma'`'s own
+    // splatter branch below already uses the passed `color` correctly, but never gets reached
+    // for this weapon — its `splash: 40` trips the generic missile/splash fireball check first
+    // (hardcoded orange, ignores `color` entirely). This is exactly the mismatch flagged for a
+    // proper audit issue (impact colors vs. the actual projectile color, general case); scoped
+    // narrowly to just this weapon for now rather than reordering the shared branch below, which
+    // would also silently repaint every other splash-carrying plasma weapon's impact.
+    if (weaponId === 'plasmaCoater') {
+      this._burst(x, y, 4, 18, color, 0.6, 240, false);
+      this._burst(x, y, 3, 14, color, 0.9, 220, true);
+    } else if (kind === 'missile' || splash > 0) {
       const r = Math.max(10, splash);
       this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
       this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.9, 300, true);   // shock ring

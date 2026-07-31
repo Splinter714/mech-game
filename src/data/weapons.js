@@ -371,34 +371,27 @@ export const WEAPONS = {
     // proper per-part purple "coating" outline (scenes/arena/shieldOutline.js's `updateDotOutline`,
     // reusing the shield glow's own duplicate-sprite technique) — see `_drawStatusEffects`.
     // 2026-07-31 LOB REWORK (live chat ask): "a lob of maybe 3 blobs" — reworked from a single
-    // straight-line bolt into a 3-blob arcing lob. First pass fired the 3 blobs as a simultaneous
-    // fixed fan (`pattern: 'spread'`); a same-day follow-up ("3 shots in series, not in parallel,
-    // and reduce their randomness") switched that to a `burst` — see the delivery block below for
-    // the mechanism. Each blob still carries the weapon's full per-bolt damage/dot — landing more
-    // than one blob on the same target is a real (and now genuinely possible) escalation over the
+    // straight-line bolt into a 3-blob arcing lob, fired as a simultaneous fixed fan
+    // (`pattern: 'spread'`). Several same-day iterations (series-fire, a fixed triangle landing
+    // pattern via a `burst`+`burstFan` combo) were tried and playtested, then explicitly walked
+    // back ("nevermind on plasma coater triangle, let's just do a three blob arc like you had a
+    // long time ago") — back to this original simple spread. `burstFan`/`distOffset` stay in
+    // delivery.js as general infrastructure in case a future weapon wants that shape; this one
+    // just doesn't use them any more. Each blob still carries the weapon's full per-bolt
+    // damage/dot — landing more than one blob on the same target is a real escalation over the
     // old single-bolt weapon; tune live. Also gained `splash` (see data/delivery.js's field doc,
     // and the general splash damage fix landed the same day in projectiles.js
     // `_splashDamageAt`) so a blob that lands near — not just ON — an enemy still catches it, dot
-    // included.
+    // included. `projectileColor`: a purple-themed round (matching the DoT coating's own violet,
+    // shieldOutline.js's PLASMA_COAT_COLOR) instead of the shared 'energy' category cyan every
+    // other energy weapon uses — see makeProjectile's opt-in override, data/delivery.js.
     id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
     damage: 14, range: { min: 0, opt: 380, max: 560 },
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma', arcBump: 0.9,
-      // 2026-07-31 series of live-chat follow-ups on the lob rework:
-      //  1. "3 shots in series, not in parallel, and reduce their randomness" — switched off
-      //     `pattern: 'spread'` (a simultaneous fixed fan + random jitter) onto `burst` instead
-      //     (delivery.js's `d.burst && fan === 1` path).
-      //  2. "launch in a pattern where they'll land in a small triangle" — `burstFan` (new
-      //     delivery.js field) puts a small FIXED, zero-randomness angular spread across the
-      //     burst's shots (no `burstScatter`, no jitter).
-      //  3. "instead of a multiplier, can we make it a fixed spread" — the triangle's DEPTH
-      //     (`distOffset`, delivery.js) is now an additive px offset, not a %-of-range multiplier.
-      //  4. "make them fire all at once instead of in series now" — reverted #1's stagger by
-      //     setting `burst.interval: 0` (delay 0 for all 3), while KEEPING `burstFan`'s angle+
-      //     depth triangle shaping, which only needs `d.burst` truthy, not a real delay between
-      //     shots. Net effect: 3 rounds launch simultaneously, landing in a small fixed triangle.
-      count: 3, burst: { interval: 0 }, burstFan: true, spreadAngle: 16,
+      pattern: 'spread', count: 3, spreadAngle: 24, spreadJitter: 14,
+      projectileColor: 0xa04dff,
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
     },
