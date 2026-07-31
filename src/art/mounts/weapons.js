@@ -119,26 +119,34 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // still reads as too far from the front/firing edge now that it spans the full plate width.
 // Pulled it in closer to frontY -- too close, it turned out (round 6 below).
 // Round 6: "corner clip is now an ugly black box, and also doesn't even clip at the right point;
-// can we instead have the body outline do the clipping itself?" — round 5's fixed offset put the
-// collar's TOP EDGE above frontY entirely (collarH/2 > the L*0.35 offset), so it wasn't just
-// overhanging the plate's diagonal corner cut, it was poking past the plate's front edge outright;
-// a follow-up "paint the corners over" hack was the wrong fix for that (repainting a solid wedge
-// on top just hid the symptom, badly). Fixed at the root instead: the collar's position is now
-// DERIVED from the plate's own chamfer geometry (`plateCut`, the same formula `plate()` itself
-// uses) plus half its own height, so its top edge always lands exactly where the plate's front
-// corners stop being chamfered — i.e. it can never enter the diagonal cut zone in the first
-// place. No masking needed; the plate's real outline shape is what constrains the placement.
+// can we instead have the body outline do the clipping itself?" — a "paint the corners over"
+// hack was the wrong fix; tried dropping the collar down far enough to clear the plate's chamfer
+// zone entirely instead, which just moved the problem ("weapon plate is in the wrong spot") —
+// dropping the WHOLE collar down to clear the corners loses the "flush with the plate body
+// outline" placement from round 4.
+// Round 7: "scoot it to be flush with the plate body outline" — fixed at the actual root this
+// time: the collar's TOP edge now sits exactly AT frontY (touching the plate's own front edge,
+// zero gap) and its top-left/top-right corners are cut with the arm plate's OWN chamfer amount
+// (`plateChamfer`, not an independently-computed one) — i.e. the collar's top corner points
+// coincide exactly with the plate's own front-corner chamfer points. That's what makes it
+// genuinely flush AND non-overhanging at the same time: same edge, same corner cut, literally
+// inscribed in the plate's own silhouette at the top. Only the bottom corners (deep inside the
+// plate, no overhang risk) get their own more pronounced taper for visual distinction.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.29;
   const collarH = L * 0.8;
-  const plateChamfer = partH ? plateCut(T, w, partH) : 0;   // where the arm plate's own front corners stop cutting inward
-  const collarY = frontY + plateChamfer + collarH / 2 + 0.4;   // top edge clears that line, plus a hair of margin
-  const collarChamfer = plateCut(T, w, collarH);
+  const topC = partH ? plateCut(T, w, partH) : 0;   // arm plate's own front-corner chamfer amount
+  const botC = plateCut(T, w, collarH);
+  const y0 = frontY, y1 = frontY + collarH, x0 = bx - w / 2, x1 = bx + w / 2;
+  const collarY = (y0 + y1) / 2;
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
   sg.layer('weapons.plasmaCoater.collar');
-  poly(sg, plateOutline(T, bx, collarY, w, collarH, collarChamfer), T.deep);   // chamfered collar, corners cut like the arm's own plate
+  poly(sg, [
+    [x0 + topC, y0], [x1 - topC, y0], [x1, y0 + topC], [x1, y1 - botC],
+    [x1 - botC, y1], [x0 + botC, y1], [x0, y1 - botC], [x0, y0 + topC],
+  ], T.deep);
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
   // tips read as a triangle, not a shallow arc.
