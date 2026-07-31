@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, plateOutline, plateCut, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -107,15 +107,18 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // + "wrong vertical spot" — pulled the size back down and moved it to roughly a quarter of the
 // way down the arm (nearer the front/firing end) instead of the exact middle. Round 4: "the arm
 // plate body has an outline; we want the weapon mount spot to be just flush with that plate body
-// outline" — instead of a hand-picked constant width sitting inset with gaps on both sides, size
-// the collar off the arm's OWN plate width (`partW`, threaded down from drawWeaponsAt/
-// drawWeaponMount — see mechArt.js/mounts/index.js), so its edges land flush against the plate's
-// own outline stroke rather than floating as a separate narrower box.
+// outline" — first pass inset the collar 1.2 units inside the plate's own face width (meant to
+// clear the plate's outline STROKE, but that read as "still not flush" + "wrong proportions").
+// Fixed properly: the collar now spans the plate's full face width with ZERO inset (its edges
+// land exactly on the plate's own edge, since the plate's thin outline stroke is drawn just
+// outside its face anyway — see mechPrims.js `plate()`), and its chamfer is computed with the
+// arm plate's own `plateCut()` formula instead of an ad hoc fraction, so the corner cut matches
+// the plate's proportions instead of looking like a mismatched shape dropped on top of it.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = (partW ?? 5.4 * s) - 1.2, tubeR = 0.8 * s, off = w * 0.29;
+  const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.29;
   const collarH = L * 0.8, collarY = frontY + L * 0.75;   // ~quarter of the way down the arm
-  const collarChamfer = Math.min(w, collarH) * 0.3;
+  const collarChamfer = plateCut(T, w, collarH);
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
   sg.layer('weapons.plasmaCoater.collar');
