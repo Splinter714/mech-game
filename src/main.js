@@ -50,7 +50,24 @@ const config = {
   // for the only camera that renders mechs, a few lines after this config turned it off. Setting
   // `roundPixels` here is therefore necessary but not sufficient: any `startFollow` must pass
   // false too. See arena/mechPartSnap.test.js, which measures the cost and guards that call site.
-  antialias: false,
+  // #455 kept `antialias: false` (nearest-neighbour texture filtering) on the "don't blur my art"
+  // reasoning inherited from `pixelArt: true`. Live-chat ask (2026-07-31) revisits that, and the
+  // arithmetic says nearest is the wrong filter for THIS art:
+  //   • A mech part bakes at DESIGN(64) × ART_SCALE(4) = a 256px texture, and draws at
+  //     ARENA_MECH_SCALE(0.34) under a camera zoom of dpr × GAMEPLAY_ZOOM(1.3). So it lands on
+  //     ~113 device px at DPR 1 and ~226 at DPR 2 — i.e. the art is always MINIFIED, by up to
+  //     ~2.3×. Nearest-neighbour minification throws away whichever texels it doesn't land on.
+  //   • The parts also ROTATE continuously (turret slew, per-part convergence tilt), so which
+  //     texels get dropped changes every frame. That is what reads as crawling/shimmering edges.
+  //   • And this is not hand-authored pixel art whose exact texels are the artwork — it is smooth
+  //     procedural geometry deliberately super-sampled 4× so it could be filtered down. Nearest
+  //     was discarding the very samples ART_SCALE exists to produce.
+  // `antialiasGL` stays false: that flag is MSAA on the WebGL context, which antialiases GEOMETRY
+  // edges. Everything here is textured quads, so it would cost fill rate and change nothing.
+  // If edges still shimmer under motion, the next lever is mipmapping (`mipmapFilter`) — bilinear
+  // alone samples only 4 texels, which is a partial fix at >2× minification. Mech parts are 256px
+  // (power-of-two, so eligible); other textures would need checking first.
+  antialias: true,
   antialiasGL: false,
   roundPixels: false,
   scale: {
