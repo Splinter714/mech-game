@@ -134,7 +134,7 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // plate, no overhang risk) get their own more pronounced taper for visual distinction.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = partW ?? 5.4 * s, tubeR = 0.8 * s, off = w * 0.22;   // live-chat ask: tubes scooted closer together
+  const w = partW ?? 5.4 * s, tubeR = 1.15 * s, off = w * 0.22;   // live-chat ask: bigger tubes/purple glow
   const collarH = L * 0.8;
   const topC = partH ? plateCut(T, w, partH) : 0;   // arm plate's own front-corner chamfer amount
   const botC = plateCut(T, w, collarH);
