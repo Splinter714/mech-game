@@ -29,9 +29,18 @@ export { WEAPON_MOUNT_ART };
 // transparent; `sg.glowOnly` on the overlay keeps only them), not by darkening the colour here. Every
 // coloured muzzle layer is flagged emissive (glowDot/glowBar, or wrapped in `emissive()`), so those
 // gates capture EXACTLY the glow and base + overlay recombine to the original inline look per weapon.
-export function drawWeaponMount(sg, T, weaponId, catId, bx, frontY, s) {
+// `partW` (design units, optional): the mount's owning part's own width — e.g. the arm plate's
+// `p.w` — so a bespoke mount fn that wants to sit FLUSH with the part's own plate outline (rather
+// than a fixed hand-tuned size) can size itself off the real geometry instead of a guessed
+// constant. Trailing/optional so every existing draw fn (which ignores extra args) is unaffected.
+export function drawWeaponMount(sg, T, weaponId, catId, bx, frontY, s, partW) {
   const n = neonFor(catId);
   const cap = frontY + CENTER - 2;            // keep the muzzle inside the canvas
   const drawFn = WEAPON_MOUNT_ART[weaponId] ?? MOUNT_ART[catId] ?? MOUNT_ART.energy;
-  drawFn(sg, T, bx, frontY, s, n, cap);
+  // Live-chat ask: expand the art-dissect tool's drill-down to individual mount pieces (not just
+  // the whole 'weapons' blob), so screenshot feedback can reference a specific sub-piece by name.
+  // Tagging by weaponId here (nested under drawWeaponsAt's 'weapons' tag) makes every mount its
+  // own drillable panel; bespoke mount fns (e.g. plasmaCoater below) tag further within it.
+  sg.layer(`weapons.${weaponId}`);
+  drawFn(sg, T, bx, frontY, s, n, cap, partW);
 }

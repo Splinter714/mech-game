@@ -277,10 +277,13 @@ function render() {
       else if (g===name) drawOp(ctx, o);
     }
 
-    // label + border
+    // label + border — trim to the segment past the current drill depth so a deeply-nested tag
+    // (e.g. 'weapons.plasmaCoater.collar') reads as just 'collar' once you've drilled in, instead
+    // of repeating the whole dotted path on every panel.
+    const shortName = !isAll && !isCoded && part && name.startsWith(part + '.') ? name.slice(part.length + 1) : name;
     ctx.fillStyle  = isCoded || isAll ? '#cfd3da' : colorOf(name);
     ctx.font       = '11px monospace';
-    ctx.fillText(drillable ? name + ' ▸' : name, 5, ch - lh/2 + 4);
+    ctx.fillText(drillable ? shortName + ' ▸' : shortName, 5, ch - lh/2 + 4);
     ctx.strokeStyle = drillable ? colorOf(name) : '#3a3d45';
     ctx.lineWidth   = drillable ? 1.5 : 1;
     ctx.strokeRect(0.5, 0.5, cw-1, ch-1);

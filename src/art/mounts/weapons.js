@@ -105,12 +105,20 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 // way instead of reading as a separate floating box. Round 3, after ANOTHER screenshot (now
 // dead-centered on the arm and spanning nearly its full width): "too big / dominates the arm"
 // + "wrong vertical spot" — pulled the size back down and moved it to roughly a quarter of the
-// way down the arm (nearer the front/firing end) instead of the exact middle.
-function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
+// way down the arm (nearer the front/firing end) instead of the exact middle. Round 4: "the arm
+// plate body has an outline; we want the weapon mount spot to be just flush with that plate body
+// outline" — instead of a hand-picked constant width sitting inset with gaps on both sides, size
+// the collar off the arm's OWN plate width (`partW`, threaded down from drawWeaponsAt/
+// drawWeaponMount — see mechArt.js/mounts/index.js), so its edges land flush against the plate's
+// own outline stroke rather than floating as a separate narrower box.
+function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = 5.4 * s, tubeR = 0.8 * s, off = 1.55 * s;
+  const w = (partW ?? 5.4 * s) - 1.2, tubeR = 0.8 * s, off = w * 0.29;
   const collarH = L * 0.8, collarY = frontY + L * 0.75;   // ~quarter of the way down the arm
   const collarChamfer = Math.min(w, collarH) * 0.3;
+  // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
+  // drill into each piece separately when giving placement/sizing feedback from a screenshot.
+  sg.layer('weapons.plasmaCoater.collar');
   poly(sg, plateOutline(T, bx, collarY, w, collarH, collarChamfer), T.deep);   // chamfered collar, corners cut like the arm's own plate
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
@@ -118,6 +126,7 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
   const tubes = [
     [-off, collarY + collarH * 0.28], [0, collarY - collarH * 0.32], [off, collarY + collarH * 0.28],
   ];
+  sg.layer('weapons.plasmaCoater.tubes');
   for (const [dx, ty] of tubes) {
     const tx = bx + dx;
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened

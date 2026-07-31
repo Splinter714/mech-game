@@ -195,6 +195,12 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   const fill = opts.fill ?? T.face;
   const c = opts.chamfer ?? plateCut(T, w, h);
   const shape = (ww, hh, cc) => plateOutline(T, cx, cy, ww, hh, cc);
+  // Live-chat ask: expand the art-dissect tool's drill-down into a plate's own sub-pieces
+  // (body vs. the rim/AO/seam furniture), not just whichever whole-part tag the caller set
+  // before calling in (e.g. drawArm's 'plate'). Opt-in via `opts.tag` so existing callers that
+  // don't pass one are unaffected — everything still lands under the caller's own tag.
+  const sub = (name) => { if (opts.tag) sg.layer(`${opts.tag}.${name}`); };
+  sub('body');
   if (T.legibilityHalo) {
     const e = HALO_EDGE_W;
     poly(sg, shape(w + 2.6 + e * 2, h + 2.6 + e * 2, c + 0.8 + e), HALO_EDGE);   // #421
@@ -213,14 +219,17 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   // head's player-color marker) can read as slightly thicker without changing every plate's
   // shared geometry.
   const rimH = h * 0.15 * (opts.rimThickness ?? 1);
+  sub('rim');
   if (opts.rimSide === 'back') {
     rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, rimH, opts.rim ?? T.rim);
+    sub('ao');
     rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.13, T.ao, 0.5);
   } else {
     rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, rimH, opts.rim ?? T.rim);
+    sub('ao');
     rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
   }
-  if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7);
+  if (opts.seam !== false) { sub('seam'); rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7); }
 }
 
 // The faceted plate's surface detail. Everything here runs on a DIAGONAL, which is the whole point:

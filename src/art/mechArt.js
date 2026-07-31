@@ -195,7 +195,7 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
   weaponIds.forEach((id, i) => {
     const wpn = getWeapon(id);
     const bx = p.x + (i - (n - 1) / 2) * (p.w / Math.max(1, n));
-    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s);
+    drawWeaponMount(sg, T, id, wpn?.category ?? 'energy', bx, front, s, p.w / Math.max(1, n));
   });
   sg.glowSkip = prevSkip;
 }
@@ -233,8 +233,8 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // Live-chat follow-up: player color removed from arms entirely (head-only marker now) —
   // rim: T.baseRim explicitly opts out of the accent, keeping the geometric back-edge
   // placement (rimSide: 'back') but with the theme's neutral rim tone, not the player's color.
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back', rim: T.baseRim });
-  if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back', rim: T.baseRim, tag: 'plate' });
+  if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
@@ -263,9 +263,10 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   sg.layer('plate');
   // Live-chat follow-up: player color removed from side torsos entirely (head-only marker
   // now) — rim: T.baseRim opts out of the accent, keeping the back-edge placement.
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back', rim: T.baseRim });
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back', rim: T.baseRim, tag: 'plate' });
+  sg.layer('plate.vent');
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
-  if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
+  if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
   sg.layer('pauldron');
   drawPauldronFor(sg, mech, lay, loc, T);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
