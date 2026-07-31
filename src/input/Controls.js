@@ -253,6 +253,14 @@ export class Controls {
     // edge-detecting each ability's press exactly like dash/reload above.
     this._padAbilityDown = {}; this._kbAbilityDown = {};
     for (const slot of ABILITY_SLOTS) { this._padAbilityDown[slot] = false; this._kbAbilityDown[slot] = false; }
+    // Playtest bug: clicking "Deploy" (MissionSelectScene) also fired the left-mouse weapon the
+    // instant ArenaScene's own Controls spun up, because leftButtonDown()/rightButtonDown() below
+    // are read raw every frame with no edge detection — a mouse button still down from the SAME
+    // physical click that triggered Deploy read as "player wants to fire" on the very first frame
+    // of the new scene. Same failure class PadEdges already guards against for gamepad buttons,
+    // just never applied to the mouse fire path. `null` = not yet observed; a button already held
+    // the first time it's checked is suppressed until it's been seen released at least once.
+    this._mouseFireSuppressed = { leftArm: null, rightArm: null };
 
     // #346: on-screen sticks. Only wired up when the device can actually produce touches;
     // even then, `mode` doesn't become 'touch' until a real touch pointer arrives, so a
@@ -305,6 +313,15 @@ export class Controls {
 
   _viewW() { return this.scene.cameras?.main?.width ?? this.scene.scale?.width ?? 0; }
   _viewH() { return this.scene.cameras?.main?.height ?? this.scene.scale?.height ?? 0; }
+
+  // See `_mouseFireSuppressed`'s constructor comment. Returns whether `key`'s mouse button
+  // should count as a live fire trigger this frame.
+  _armedMouseFire(key, down) {
+    const s = this._mouseFireSuppressed;
+    if (s[key] == null) s[key] = down;         // first-ever poll: seed baseline, don't fire yet
+    else if (s[key] && !down) s[key] = false;   // seen released — armed for real from now on
+    return down && !s[key];
+  }
 
   // #348: THIS player's pad, by index — player 1 reads pad 0, player 2 pad 1.
   pad() {
@@ -426,8 +443,8 @@ export class Controls {
       };
     } else {
       fire = {
-        rightArm:    p.rightButtonDown(),
-        leftArm:     p.leftButtonDown(),
+        rightArm:    this._armedMouseFire('rightArm', p.rightButtonDown()),
+        leftArm:     this._armedMouseFire('leftArm', p.leftButtonDown()),
         rightTorso:  k.E.isDown,
         leftTorso:   k.Q.isDown,
       };
