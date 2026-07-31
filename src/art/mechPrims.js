@@ -199,8 +199,18 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   poly(sg, shape(w, h, c), fill);
   if (T.faceted) return facetFurniture(sg, T, cx, cy, w, h, c, opts);
   const inset = c;
-  rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
-  rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
+  // Player-color accent ask (2026-07-31): `rimSide: 'back'` puts the highlight band (which
+  // becomes the player's accent color, see `withAccent`) on the REAR edge (cy + h/2) instead of
+  // the default front/leading edge (cy - h/2) — used for torso/arm plates so the accent reads
+  // from behind the mech; omitted (default front) keeps every existing caller, head included,
+  // unchanged.
+  if (opts.rimSide === 'back') {
+    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
+    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.13, T.ao, 0.5);
+  } else {
+    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
+    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
+  }
   if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7);
 }
 

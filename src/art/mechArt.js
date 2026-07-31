@@ -230,7 +230,8 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // included) vs. whatever's mounted on it — which is exactly the boundary drawArm's own
   // comments above already draw.
   sg.layer('plate');
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid });
+  // Live-chat ask: player-color accent moved to the BACK edge for arms (rimSide: 'back').
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back' });
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
@@ -258,7 +259,8 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // rides on this texture specifically so it cants with the torso, per the header comment
   // above), and the mounted weapons last.
   sg.layer('plate');
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face });
+  // Live-chat ask: player-color accent moved to the BACK edge for torsos (rimSide: 'back').
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back' });
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   sg.layer('pauldron');
@@ -312,7 +314,8 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // exactly the boundaries the dissect tool needs, so they're what get tagged, in order.
   sg.layer('centerTorso');
   const ct = lay.centerTorso;
-  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
+  // Live-chat ask: player-color accent moved to the BACK edge for torsos (rimSide: 'back').
+  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false, rimSide: 'back' });
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
   // stacked blobs on the chest, the single most "bubbly" read on the mech. Pass 2: the inset takes
   // the theme's own plate outline, so on an enemy it's a faceted wedge echoing the chest plate
