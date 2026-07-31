@@ -230,8 +230,10 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // included) vs. whatever's mounted on it — which is exactly the boundary drawArm's own
   // comments above already draw.
   sg.layer('plate');
-  // Live-chat ask: player-color accent moved to the BACK edge for arms (rimSide: 'back').
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back' });
+  // Live-chat follow-up: player color removed from arms entirely (head-only marker now) —
+  // rim: T.baseRim explicitly opts out of the accent, keeping the geometric back-edge
+  // placement (rimSide: 'back') but with the theme's neutral rim tone, not the player's color.
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back', rim: T.baseRim });
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
@@ -259,8 +261,9 @@ function drawSideTorso(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // rides on this texture specifically so it cants with the torso, per the header comment
   // above), and the mounted weapons last.
   sg.layer('plate');
-  // Live-chat ask: player-color accent moved to the BACK edge for torsos (rimSide: 'back').
-  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back' });
+  // Live-chat follow-up: player color removed from side torsos entirely (head-only marker
+  // now) — rim: T.baseRim opts out of the accent, keeping the back-edge placement.
+  plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.face, rimSide: 'back', rim: T.baseRim });
   rectC(sg, p.x, p.y + p.h * 0.16, p.w * 0.6, p.h * 0.12, T.recess);   // #446: enemies get it too now
   if (T.armorArt && !mech.hasArmor(loc)) exposedInternals(sg, T, p.x, p.y, p.w, p.h);
   sg.layer('pauldron');
@@ -314,9 +317,9 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // exactly the boundaries the dissect tool needs, so they're what get tagged, in order.
   sg.layer('centerTorso');
   const ct = lay.centerTorso;
-  // Live-chat follow-up: center torso reverted back to the default front placement (only the
-  // side torsos and arms keep rimSide: 'back').
-  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
+  // Live-chat follow-up: player color removed from the center torso too (head-only marker now)
+  // — front placement (unchanged), just the neutral rim tone instead of the accent.
+  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false, rim: T.baseRim });
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
   // stacked blobs on the chest, the single most "bubbly" read on the mech. Pass 2: the inset takes
   // the theme's own plate outline, so on an enemy it's a faceted wedge echoing the chest plate
@@ -344,7 +347,10 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // draws intact, never a stump/charred cockpit.
   sg.layer('head');
   const hd = lay.head;
-  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false });
+  // Live-chat follow-up: the head is now the ONLY place player color shows (every other part
+  // opts out via rim: T.baseRim) — thickened slightly (rimThickness) so it reads clearly as
+  // the one identifying marker left on the mech.
+  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false, rimThickness: 1.6 });
   // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
   // no purple head light. Players (statusSpot supplied) get no optic glow; enemies & garage preview
   // keep the fixed reactor-purple optic.
@@ -387,7 +393,8 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   // #545: tags follow this function's own section comments (pelvis / each leg / the hip
   // skirts below) — the natural read of "the various small bits" a walk-cycle hull is made of.
   sg.layer('pelvis');
-  plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false });
+  // Live-chat follow-up: player color removed here too (head-only marker now).
+  plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false, rim: T.baseRim });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
     sg.layer(loc);   // 'leftLeg' / 'rightLeg' — thruster wash+core, plate, toe cap, ankle, grime
@@ -395,7 +402,9 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     const fy = p.y + dir * shift;
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
-    plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.rim, seam: false });
+    // Live-chat follow-up: player color removed from legs too (head-only marker now) —
+    // rim: T.baseRim was T.rim (the accent) before.
+    plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.baseRim, seam: false });
     // #446: the enemy used to skip all three (a bare glossy pod for a leg). They're mechanical
     // detail, not a player-theme flourish, so both factions get them now.
     rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);            // toe cap (forward)
@@ -449,9 +458,11 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     poly(sg, skirt(0.01), T.outline);
     poly(sg, skirt(0), T.faceMid);
     // Rim highlight spans the plate's top edge, so it stretches with it.
+    // Live-chat follow-up: player color removed from the hip skirts too (head-only marker now)
+    // — T.baseRim was T.rim (the accent) before.
     const rimMid = (SKIRT_INNER + skirtOuterTop) / 2;
     rectC(sg, dx * a.bodyWid * rimMid, a.bodyLen * (legFrac - 0.07),
-      a.bodyWid * (skirtOuterTop - SKIRT_INNER) * 0.88, Math.max(0.8, 0.6 * s), T.rim);
+      a.bodyWid * (skirtOuterTop - SKIRT_INNER) * 0.88, Math.max(0.8, 0.6 * s), T.baseRim ?? T.rim);
   }
 }
 

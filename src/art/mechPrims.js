@@ -63,10 +63,15 @@ export const FACET_CUT = 0.26;
 // the body/shadow tones, the reactor purple and every weapon-category neon are untouched, so a
 // loadout still reads exactly as it did. `accent` omitted/null returns the base theme object
 // itself, unchanged and uncloned — which is what player 1 and every enemy get.
+// Live-chat ask (2026-07-31): player-color should show on the HEAD only, not every part —
+// `baseRim`/`baseRimHi` carry the theme's ORIGINAL (non-accented) rim tones through onto the
+// returned object even when an accent is active, so a non-head plate() call can explicitly opt
+// out of the accent (`rim: T.baseRim`) instead of picking it up from the now-recoloured
+// `T.rim` default.
 export const themeFor = (opts) => {
   const base = THEMES[opts?.theme] ?? THEMES.player;
   if (!opts?.accent) return base;
-  return { ...base, rim: opts.accent, rimHi: opts.accent };
+  return { ...base, rim: opts.accent, rimHi: opts.accent, baseRim: base.rim, baseRimHi: base.rimHi };
 };
 
 // The mech's own power glow (not a weapon).
@@ -204,11 +209,15 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   // the default front/leading edge (cy - h/2) — used for torso/arm plates so the accent reads
   // from behind the mech; omitted (default front) keeps every existing caller, head included,
   // unchanged.
+  // `rimThickness` (default 1): a multiplier on the rim band's own height, so one caller (the
+  // head's player-color marker) can read as slightly thicker without changing every plate's
+  // shared geometry.
+  const rimH = h * 0.15 * (opts.rimThickness ?? 1);
   if (opts.rimSide === 'back') {
-    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
+    rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, rimH, opts.rim ?? T.rim);
     rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.13, T.ao, 0.5);
   } else {
-    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, h * 0.15, opts.rim ?? T.rim);
+    rectC(sg, cx, cy - h / 2 + h * 0.085, w - 2 * inset, rimH, opts.rim ?? T.rim);
     rectC(sg, cx, cy + h / 2 - h * 0.08, w - 2 * inset, h * 0.13, T.ao, 0.5);
   }
   if (opts.seam !== false) rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7);
