@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, plate, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -59,6 +59,27 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
             [bx + w * 0.5, frontY - L * 0.6], [bx - w * 0.5, frontY - L * 0.6]], T.faceDk);  // flared cup
   emissive(sg, () => ellipseC(sg, bx, frontY - L, w * 1.5, w * 0.8, n.halo, 0.4)); // plasma pool
   glowDot(sg, bx, frontY - L, 2.8 * s, n);                          // fat plasma ball
+}
+
+// Plasma Coater — FIRST DRAFT of a new mount style for lobbed weapons (live-chat ask,
+// 2026-07-31): "I want it to feel like the weapon is mounted more on top (the plate facing the
+// player) of the mech arm or torso, instead of on the 'front' of it." Every other mount here
+// is a barrel/emitter that projects FORWARD off `frontY` (the limb's own front edge) — a long
+// thin silhouette read mostly by its LENGTH. This one is a short, WIDE armored plate (reusing
+// `plate()`, the same chamfered-panel primitive the body's own armor uses) sitting close to and
+// mostly overlapping the limb's front edge rather than jutting past it — a hatch/deck panel
+// bolted flush to the surface, not a gun barrel sticking out. A small glowing launch vent near
+// its leading edge marks where the lobbed blobs actually leave from. Unverified live (this
+// session's environment can't render WebGL) — a starting shape for Jackson to look at and
+// iterate on, not a finished design.
+function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
+  const w = 6.2 * s, h = Math.min(4.4 * s, cap - frontY > 0 ? cap - frontY : 4.4 * s);
+  // Centered just PAST the front edge (small +y offset — into the limb's own body) rather than
+  // the usual `frontY - h/2` (fully forward of it), so most of the plate reads as sitting ON
+  // the limb's surface instead of floating ahead of it.
+  const cy = frontY + h * 0.12;
+  plate(sg, T, bx, cy, w, h);
+  emissive(sg, () => glowDot(sg, bx, frontY - h * 0.08, 2.4 * s, n));   // launch vent, right at the leading edge
 }
 
 // Flamethrower — a stubby fuel-tank body with a flared FLAME NOZZLE at the tip and a pilot
@@ -164,7 +185,7 @@ function boxFrame(sg, T, bx, cy, w, h) {
 
 export const WEAPON_MOUNT_ART = {
   // energy
-  pulseLaser, beamLaser, railLance, plasmaCannon, flamethrower,
+  pulseLaser, beamLaser, railLance, plasmaCannon, plasmaCoater, flamethrower,
   // ballistic
   autocannon, machineGun, shotgun, napalm,
   // missile
