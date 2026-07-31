@@ -95,15 +95,23 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
 // generally for every weapon; applied directly here since Jackson's already looking at this one.)
 const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge: 0xc98cff };
 
+// Live-chat ask: "the weapons position for a lobbed/mounted weapon like plasma coater should
+// sit within the outline of the plate on the body segment." The previous footprint (w: 6.6*s,
+// tube span ~6.5*s) landed almost exactly AT an arm's own plate width (30 * 0.22 ≈ 6.6 design
+// units at a medium chassis's s=1, mechArt.js's leftArm/rightArm layout) — zero margin, before
+// even accounting for the plate's own chamfered corners cutting further in. Shrunk the whole
+// assembly to comfortably clear that (the tighter of this weapon's two possible mount
+// locations, arm vs. side torso), and the front tube's tip now sits exactly AT frontY instead
+// of a hair past it — nothing pokes outside the body plate's own silhouette any more.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = 6.6 * s, tubeR = 1.05 * s, off = 2.2 * s;
+  const w = 5.2 * s, tubeR = 0.85 * s, off = 1.65 * s;
   // Low mounting collar, centred just behind the front edge — on the limb, not ahead of it.
   rectC(sg, bx, frontY + L * 0.18, w, L * 0.85, T.deep);
-  // Triangle cluster: the back pair sit well behind the front edge; the front tube's tip barely
-  // reaches the edge itself (never past it) — a real depth gap between the two, so 3 clearly
+  // Triangle cluster: the back pair sit well behind the front edge; the front tube's tip sits
+  // exactly AT the edge (never past it) — a real depth gap between the two, so 3 clearly
   // non-collinear points instead of a shallow arc.
-  const tubes = [[-off, frontY + L * 0.32], [0, frontY - L * 0.02], [off, frontY + L * 0.32]];
+  const tubes = [[-off, frontY + L * 0.32], [0, frontY], [off, frontY + L * 0.32]];
   for (const [dx, ty] of tubes) {
     const tx = bx + dx;
     ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened

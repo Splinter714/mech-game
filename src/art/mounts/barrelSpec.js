@@ -23,13 +23,12 @@ export const BARREL_SPECS = {
   railLance:     { len: 15,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
   // 2026-07-31: "move the mount further back" -- a short len vs. the barrel weapons above.
-  // Round 2 ("pull the whole muzzle thing back onto the mech section, not on front of it"):
-  // frac dropped from 0.78 to 0.02 -- the front (centre) tube's tip now barely reaches the
-  // limb's own front edge rather than projecting out past it, matching the draw fn's new
-  // frontY - L*0.02 tip position (weapons.js). The two back tubes sit further behind still, but
+  // Round 3 ("sit within the outline of the plate"): frac dropped to 0 -- the front (centre)
+  // tube's tip now sits exactly AT the limb's own front edge, matching the draw fn's
+  // frontY (weapons.js), never past it. The two back tubes sit further behind still, but
   // weaponMuzzleTip only reports one point, and the frontmost tube is the right one to spawn
   // shots from.
-  plasmaCoater:  { len: 5,   frac: 0.02 },
+  plasmaCoater:  { len: 5,   frac: 0 },
   flamethrower:  { len: 7,   frac: 1 },
   // bespoke ballistic
   autocannon:    { len: 12,  frac: 1 },
