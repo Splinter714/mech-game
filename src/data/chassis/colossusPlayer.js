@@ -15,28 +15,22 @@
 // Jackson's own words: "same stats, just different art cosmetically." Only `id`/`name`/`art`
 // differ from MEDIUM_PLAYER_CONFIG; everything else is spread through so the two can never drift
 // on the things meant to match.
+// 2026-07-31 live-chat: same change as strikerPlayer.js — see its header for the full reasoning.
+// Jackson pointed at the ART PREVIEW's "PLAYER BUILD — heavy" cell and wanted THAT silhouette
+// back; that cell renders the player theme on the `heavy` chassis, so it is heavy.js's own
+// geometry, not the approximation this file had been carrying (bodyLen 52 vs 46, and a stance
+// widened to 1.2 where heavy plants at 0.86). Now takes `HEAVY_CONFIG.art` wholesale, legs
+// included ("match the preview exactly"), so the preview cell and the player's Colossus are the
+// same geometry by construction.
+//
+// STATS still come from MEDIUM_PLAYER_CONFIG and are untouched — heavy.js's own heavier/slower
+// stat block is deliberately NOT taken. Cosmetic-only, as confirmed again here.
 import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
+import { HEAVY_CONFIG } from './heavy.js';
 
 export const COLOSSUS_PLAYER_CONFIG = {
   ...MEDIUM_PLAYER_CONFIG,
   id: 'colossusPlayer',
   name: 'Colossus',
-  art: {
-    ...MEDIUM_PLAYER_CONFIG.art,
-    bodyLen: 52, bodyWid: 44, accent: 0x9a6ad6,
-    // A bulkier, heavily-plated bruiser silhouette, not just a bigger Trooper: a broader
-    // head/torso sunk back, thick low-slung arms, a wide planted stance. `legSpread`/
-    // `legW`/`legH`/`legDrop` still build on the player's own #438 leg tuning (inherited
-    // above) rather than reverting to DEFAULT_SHAPE.
-    shape: {
-      ...MEDIUM_PLAYER_CONFIG.art.shape,
-      head: 1.15, torso: 1.22, shoulder: 1.25,
-      armW: 1.4, armH: 0.75, armSpread: 0.85,
-      legW: 1.35, legSpread: 1.2, legH: 1.15,
-      headDy: 0.05, armDy: 0.08,
-    },
-    // Shoulder pauldrons + rear exhaust stacks, same bruiser vocabulary as heavy.js — a
-    // Colossus reads as an immovable siege platform, not a re-skinned Trooper.
-    decor: [{ kind: 'pauldron', side: -1 }, { kind: 'pauldron', side: 1 }, { kind: 'stack', side: -1 }, { kind: 'stack', side: 1 }],
-  },
+  art: { ...HEAVY_CONFIG.art },
 };

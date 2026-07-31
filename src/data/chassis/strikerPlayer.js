@@ -15,28 +15,29 @@
 // Jackson's own words: "same stats, just different art cosmetically." Only `id`/`name`/`art`
 // differ from MEDIUM_PLAYER_CONFIG; everything else is spread through so the two can never drift
 // on the things meant to match.
+// 2026-07-31 live-chat: Jackson pointed at the ART PREVIEW's "PLAYER BUILD — light" cell and said
+// he wanted THAT silhouette back. That cell renders the player theme on the `light` chassis, so
+// what he was looking at is light.js's own geometry — not the approximation of it that this file
+// had been carrying. The dials above were derived by hand and, layered over mediumPlayer's shape,
+// came out a size larger with the arms splayed wide and a very wide stance (bodyLen 34 vs 30,
+// armSpread 1.15 vs 0.8, legSpread 1.55 vs 1.02), which is exactly why it read as a milder Trooper
+// rather than the distinct recon silhouette. So this now takes `LIGHT_CONFIG.art` WHOLESALE
+// instead of re-deriving it: same body size, same proportions, same decor — the preview cell and
+// the player's Striker are now the same geometry by construction and cannot drift.
+//
+// Asked whether to keep the player's own #438 leg tuning or take light's legs, Jackson chose
+// light's ("match the preview exactly"), which is what the wholesale spread gives — the narrow
+// light-footed stance rather than mediumPlayer's planted one.
+//
+// STATS still come from MEDIUM_PLAYER_CONFIG and are untouched (movement, totalArmor, totalHp).
+// Jackson confirmed again here that this stays cosmetic-only — light.js's own lighter/faster stat
+// block is deliberately NOT taken, only its art.
 import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
+import { LIGHT_CONFIG } from './light.js';
 
 export const STRIKER_PLAYER_CONFIG = {
   ...MEDIUM_PLAYER_CONFIG,
   id: 'strikerPlayer',
   name: 'Striker',
-  art: {
-    ...MEDIUM_PLAYER_CONFIG.art,
-    bodyLen: 34, bodyWid: 26, accent: 0x49e88f,
-    // A leaner, more angular recon-lean silhouette, not just a smaller Trooper: a
-    // narrower head/torso thrust forward, longer thin arms reaching further forward, a
-    // wider-set light-footed stance. `legSpread`/`legW`/`legH`/`legDrop` still build on the
-    // player's own #438 leg tuning (inherited above) rather than reverting to DEFAULT_SHAPE.
-    shape: {
-      ...MEDIUM_PLAYER_CONFIG.art.shape,
-      head: 0.8, torso: 0.88, shoulder: 0.85,
-      armW: 0.7, armH: 1.3, armSpread: 1.15,
-      legW: 0.78, legSpread: 1.55, legH: 1.3,
-      headDy: -0.05, armDy: -0.06,
-    },
-    // Sensor mast + swept-back vanes, same recon vocabulary as light.js — a Striker reads
-    // as a twitchy harasser, not a re-skinned Trooper.
-    decor: [{ kind: 'mast', side: -1 }, { kind: 'vane', side: -1 }, { kind: 'vane', side: 1 }],
-  },
+  art: { ...LIGHT_CONFIG.art },
 };
