@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, plateOutline, plateCut, glowDot, glowBar, emissive } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, weaponCollar, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -136,17 +136,10 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   const L = barrelLen('plasmaCoater', s, cap);
   const w = partW ?? 5.4 * s, tubeR = 1.15 * s, off = w * 0.22;   // live-chat ask: bigger tubes/purple glow
   const collarH = L * 0.8;
-  const topC = partH ? plateCut(T, w, partH) : 0;   // arm plate's own front-corner chamfer amount
-  const botC = plateCut(T, w, collarH);
-  const y0 = frontY, y1 = frontY + collarH, x0 = bx - w / 2, x1 = bx + w / 2;
-  const collarY = (y0 + y1) / 2;
   // Live-chat ask: sub-tag the collar plate vs. the tube cluster so the art-dissect tool can
   // drill into each piece separately when giving placement/sizing feedback from a screenshot.
   sg.layer('weapons.plasmaCoater.collar');
-  poly(sg, [
-    [x0 + topC, y0], [x1 - topC, y0], [x1, y0 + topC], [x1, y1 - botC],
-    [x1 - botC, y1], [x0 + botC, y1], [x0, y1 - botC], [x0, y0 + topC],
-  ], T.deep);
+  const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
   // tips read as a triangle, not a shallow arc. Live-chat asks: back pair scooted closer to the
@@ -219,49 +212,51 @@ function napalm(sg, T, bx, frontY, s, n, cap) {
 
 // ── MISSILE ─────────────────────────────────────────────────────────────────────────────
 
-// Swarm Rack — a TALL stacked launch rack: a 2×3 grid of glowing tubes in a boxy frame,
+// Live-chat ask: reuse Plasma Coater's flush mounting collar (`weaponCollar`, mechPrims.js) for
+// the missile category too, instead of each launcher projecting forward past the arm's own edge
+// (the old `boxFrame`/free-floating tube shapes) — same "mounted on the plate, not in front of
+// it" treatment, and it fixes the swarm rack's own previously-flagged bad placement for free
+// (it's now geometrically flush/non-overhanging by construction, like Plasma Coater).
+
+// Swarm Rack — a TALL stacked launch rack: a 2×3 grid of glowing tubes on the flush collar,
 // reading as a big all-at-once salvo.
-function swarmRack(sg, T, bx, frontY, s, n, cap) {
-  const w = 5.6 * s, h = barrelLen('swarmRack', s, cap), cy = frontY - h / 2;
-  boxFrame(sg, T, bx, cy, w, h);
+function swarmRack(sg, T, bx, frontY, s, n, cap, partW, partH) {
+  const w = partW ?? 5.6 * s, collarH = barrelLen('swarmRack', s, cap) * 0.8;
+  const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
+  const y0 = collarY - collarH / 2;
   for (const dx of [-1, 1]) for (const dy of [0, 1, 2]) {           // 2×3 launch cells
-    const cxx = bx + dx * w * 0.22, cyy = frontY - h * (0.2 + dy * 0.28);
+    const cxx = bx + dx * w * 0.22, cyy = y0 + collarH * (0.2 + dy * 0.28);
     emissive(sg, () => {
-      rectC(sg, cxx, cyy, w * 0.24, h * 0.13, n.halo, 0.5);
-      rectC(sg, cxx, cyy, w * 0.16, h * 0.09, n.core, 1);
+      rectC(sg, cxx, cyy, w * 0.24, collarH * 0.13, n.halo, 0.5);
+      rectC(sg, cxx, cyy, w * 0.16, collarH * 0.09, n.core, 1);
     });
   }
 }
 
-// Streak Pod — a SLIM twin-tube pod: two long narrow tubes side by side, each with a bright
-// seeker glow at the tip. Reads as a precise pair of seekers, not a box.
-function streakPod(sg, T, bx, frontY, s, n, cap) {
-  const L = barrelLen('streakPod', s, cap), w = 1.9 * s, off = 1.7 * s;
+// Streak Pod — a SLIM twin-tube pod on the flush collar: two tubes side by side, each with a
+// bright seeker glow at the tip. Reads as a precise pair of seekers, not a box.
+function streakPod(sg, T, bx, frontY, s, n, cap, partW, partH) {
+  const w = partW ?? 5.4 * s, collarH = barrelLen('streakPod', s, cap) * 0.8;
+  const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
+  const off = w * 0.22;
   for (const dx of [-1, 1]) {
-    roundC(sg, bx + dx * off, frontY - L / 2, w, L, T.faceDk, w * 0.5);   // #446: no bubbly variant
-    glowDot(sg, bx + dx * off, frontY - L + 0.4, 1.5 * s, n);       // seeker eye
+    roundC(sg, bx + dx * off, collarY, w * 0.24, collarH * 0.7, T.faceDk, w * 0.12);   // #446: no bubbly variant
+    glowDot(sg, bx + dx * off, collarY - collarH * 0.24, 1.5 * s, n);       // seeker eye
   }
-  rectC(sg, bx, frontY - L * 0.2, (off * 2 + w), 2 * s, T.deep);    // yoke tying the tubes
+  rectC(sg, bx, collarY + collarH * 0.16, (off * 2 + w * 0.24), collarH * 0.14, T.deep);   // yoke tying the tubes
 }
 
-// Cluster Salvo — a single FAT dumbfire tube: one wide short launch barrel with a cluster of
-// small warhead glints packed in the mouth. Reads as a tight clump, not a rack.
-function clusterRocket(sg, T, bx, frontY, s, n, cap) {
-  const L = barrelLen('clusterRocket', s, cap), w = 5 * s;
-  roundC(sg, bx, frontY - L / 2, w, L, T.faceDk, w * 0.3);          // fat tube (#446: one variant)
-  rectC(sg, bx, frontY - L * 0.85, w * 0.86, L * 0.14, T.deep);     // muzzle lip
+// Cluster Salvo — a single FAT dumbfire tube on the flush collar: one wide short launch barrel
+// with a cluster of small warhead glints packed in the mouth. Reads as a tight clump, not a rack.
+function clusterRocket(sg, T, bx, frontY, s, n, cap, partW, partH) {
+  const w = partW ?? 5.4 * s, collarH = barrelLen('clusterRocket', s, cap) * 0.8;
+  const collarY = weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH);
+  roundC(sg, bx, collarY, w * 0.7, collarH * 0.7, T.faceDk, w * 0.2);   // fat tube (#446: one variant)
+  rectC(sg, bx, collarY - collarH * 0.28, w * 0.6, collarH * 0.14, T.deep);     // muzzle lip
   for (const dx of [-1, 1]) for (const dy of [-1, 1]) {             // packed cluster of warheads
-    glowDot(sg, bx + dx * w * 0.2, frontY - L * (0.86 + dy * 0.06), 0.9 * s, n);
+    glowDot(sg, bx + dx * w * 0.14, collarY - collarH * (0.28 + dy * 0.06), 0.9 * s, n);
   }
-  glowDot(sg, bx, frontY - L * 0.86, 1.0 * s, n);
-}
-
-// A theme-aware boxy launcher frame (shared by the rack). Chamfered for the player, faceted for
-// the enemy — mirrors the generic missile box. (#446 dropped the bubbly ellipse, then pass 2
-// dropped the rounded-rect fallback.)
-function boxFrame(sg, T, bx, cy, w, h) {
-  poly(sg, plateOutline(T, bx, cy, w + 1, h + 1, 1), T.outline);
-  poly(sg, plateOutline(T, bx, cy, w, h, 1), T.faceDk);
+  glowDot(sg, bx, collarY - collarH * 0.28, 1.0 * s, n);
 }
 
 export const WEAPON_MOUNT_ART = {

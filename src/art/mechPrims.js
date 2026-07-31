@@ -232,6 +232,25 @@ export function plate(sg, T, cx, cy, w, h, opts = {}) {
   if (opts.seam !== false) { sub('seam'); rectC(sg, cx, cy + h * 0.05, w * 0.58, Math.max(0.8, h * 0.04), T.grime, 0.7); }
 }
 
+// Live-chat ask: the flush mounting collar built for Plasma Coater (drawn ON the plate rather
+// than projecting past its edge), generalized so any mount can reuse the exact same shape. Its
+// top edge sits exactly at `frontY` (zero gap) and its top corners are cut with the arm/torso
+// plate's OWN chamfer amount (`partH` -> `plateCut(T, w, partH)`) rather than an independently
+// computed one — so the top corners literally coincide with the plate's own front-corner chamfer
+// points: flush AND non-overhanging by construction, regardless of theme or plate size. Bottom
+// corners (always deep inside the plate, no overhang risk) get their own more pronounced taper.
+// Returns the collar's vertical center so the caller can place its own detail (tubes, cells,
+// glow) relative to it.
+export function weaponCollar(sg, T, bx, frontY, w, collarH, partW, partH) {
+  const topC = partH ? plateCut(T, w, partH) : 0;
+  const botC = plateCut(T, w, collarH);
+  const y0 = frontY, y1 = frontY + collarH, x0 = bx - w / 2, x1 = bx + w / 2;
+  poly(sg, [
+    [x0 + topC, y0], [x1 - topC, y0], [x1, y0 + topC], [x1, y1 - botC],
+    [x1 - botC, y1], [x0 + botC, y1], [x0, y1 - botC], [x0, y0 + topC],
+  ], T.deep);
+  return (y0 + y1) / 2;
+}
 
 // The faceted plate's surface detail. Everything here runs on a DIAGONAL, which is the whole point:
 // the previous pass kept the player's orthogonal bands on a near-rectangular plate, and horizontal
