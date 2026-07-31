@@ -314,8 +314,9 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // exactly the boundaries the dissect tool needs, so they're what get tagged, in order.
   sg.layer('centerTorso');
   const ct = lay.centerTorso;
-  // Live-chat ask: player-color accent moved to the BACK edge for torsos (rimSide: 'back').
-  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false, rimSide: 'back' });
+  // Live-chat follow-up: center torso reverted back to the default front placement (only the
+  // side torsos and arms keep rimSide: 'back').
+  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false });
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
   // stacked blobs on the chest, the single most "bubbly" read on the mech. Pass 2: the inset takes
   // the theme's own plate outline, so on an enemy it's a faceted wedge echoing the chest plate
