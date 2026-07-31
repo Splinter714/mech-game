@@ -22,14 +22,13 @@ export const BARREL_SPECS = {
   beamLaser:     { len: 13,  frac: 1 },
   railLance:     { len: 15,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
-  // 2026-07-31: "move the mount further back" -- a short len vs. the barrel weapons above.
-  // Round 4 (after seeing an actual screenshot: "it can be wider, it just needs scooted down"):
-  // len bumped 5 -> 9 so the down-shift has real effect, and frac is NEGATIVE now -- the front
-  // (centre) tube's tip sits BEHIND frontY (well into the limb), not ahead of it, matching the
-  // draw fn's `collarY - collarH*0.32` position (weapons.js) which nets out to frontY + L*0.678.
+  // 2026-07-31: iterated live against actual screenshots (see weapons.js's plasmaCoater
+  // header for the full round-by-round history). frac stays NEGATIVE -- the front (centre)
+  // tube's tip sits BEHIND frontY (into the limb), not ahead of it, matching the draw fn's
+  // `collarY - collarH*0.32` position, which nets out to frontY + L*0.494 at the current len.
   // weaponMuzzleTip only reports one point, and the frontmost tube is still the right one to
   // spawn shots from.
-  plasmaCoater:  { len: 9,   frac: -0.678 },
+  plasmaCoater:  { len: 6,   frac: -0.494 },
   flamethrower:  { len: 7,   frac: 1 },
   // bespoke ballistic
   autocannon:    { len: 12,  frac: 1 },

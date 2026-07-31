@@ -97,25 +97,24 @@ const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge
 
 // Live-chat ask, round 1: "the weapons position for a lobbed/mounted weapon like plasma coater
 // should sit within the outline of the plate on the body segment" — shrunk to avoid overhanging
-// an arm's own plate width. Round 2, after Jackson actually saw a screenshot (the mount was
-// sitting right at the arm's very top edge, its own square corners floating past the arm's
-// chamfer into the background): "it can be wider, it just needs scooted down, and also allow
-// the corners to be cut off by the arm outline." So: width is back up (no longer worried about
-// overhang), the whole cluster moved substantially further down into the arm's body (bigger L,
-// bigger down-offset), and the collar is now drawn with the SAME chamfered-plate shape
-// (`plateOutline`) the arm's own plate uses instead of a plain rectangle — so where it's wider
-// than the arm, its corners taper the same way the arm's do, reading as belonging to the same
-// silhouette rather than a separate floating box (a true pixel clip to the arm's exact outline
-// isn't cheap to do here; matching its corner language is the practical equivalent).
+// an arm's own plate width. Round 2, after a screenshot (the mount sat right at the arm's very
+// top edge, its own square corners floating past the arm's chamfer into the background): "it
+// can be wider, it just needs scooted down, and also allow the corners to be cut off by the arm
+// outline" — widened it, moved it well down the arm, and switched the collar to the SAME
+// chamfered-plate shape (`plateOutline`) the arm's own plate uses so its corners taper the same
+// way instead of reading as a separate floating box. Round 3, after ANOTHER screenshot (now
+// dead-centered on the arm and spanning nearly its full width): "too big / dominates the arm"
+// + "wrong vertical spot" — pulled the size back down and moved it to roughly a quarter of the
+// way down the arm (nearer the front/firing end) instead of the exact middle.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
   const L = barrelLen('plasmaCoater', s, cap);
-  const w = 7.6 * s, tubeR = 1.0 * s, off = 2.0 * s;
-  const collarH = L * 0.85, collarY = frontY + L * 0.95;   // "scooted down" — well into the arm now
+  const w = 5.4 * s, tubeR = 0.8 * s, off = 1.55 * s;
+  const collarH = L * 0.8, collarY = frontY + L * 0.75;   // ~quarter of the way down the arm
   const collarChamfer = Math.min(w, collarH) * 0.3;
   poly(sg, plateOutline(T, bx, collarY, w, collarH, collarChamfer), T.deep);   // chamfered collar, corners cut like the arm's own plate
-  // Triangle cluster, anchored to the new lower collarY: the back pair sit further down still,
-  // the front tube noticeably closer to the collar's own leading edge — a real depth gap so the
-  // 3 tips read as a triangle, not a shallow arc.
+  // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
+  // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
+  // tips read as a triangle, not a shallow arc.
   const tubes = [
     [-off, collarY + collarH * 0.28], [0, collarY - collarH * 0.32], [off, collarY + collarH * 0.28],
   ];
