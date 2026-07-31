@@ -10,6 +10,7 @@ import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcH
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
 import { LOS_REFRESH_MS } from './world.js';
+import { updateDotOutline } from './shieldOutline.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -451,6 +452,9 @@ export const ProjectilesMixin = {
           const dmg = Math.max(1, Math.round(p.damage * this._rangeFactor(p.range, p.dist)));
           if (enemyShot) this._damagePlayerAt(dmg, hitPlayer, { enemyKind: p._statKind ?? null, weaponId: p.weaponId, shotId: p._statShotId ?? null, spawnerKind: p._spawnerKind ?? null, dot: p.dot });   // #560: symmetric DoT
           else if (hitEnemy) this._damageEnemyAt(hitEnemy, p.x, p.y, dmg, p.color, false, { weaponId: p.weaponId, pullId: p.pullId ?? null, dot: p.dot });
+          // 2026-07-31: a round carrying `p.splash` also does a REAL multi-target blast against
+          // everyone else in radius (plus destructible terrain) — see `_splashDamageAt` below.
+          if (p.splash > 0) this._splashDamageAt(p, enemyShot, hitPlayer, hitEnemy);
         }
         // #317: an ARCING round (missile/mortar) locked onto a destructible hex lobs OVER cover by
         // design — it never runs the in-flight wall test at all — so it used to land on a targeted
@@ -517,17 +521,72 @@ export const ProjectilesMixin = {
         }
       }
     }
-    // #536: the cloud also chews through destructible SOFT-COVER hexes it passes over, the same
-    // way a napalm ground patch's periodic tick does (`_updateFirePatches` below) — indiscriminate,
-    // no owner check, since the cloud doesn't care who it belongs to any more than fire does.
-    // This does not spend the #538 tendril budget — that's scoped to enemy/player connections.
-    for (const h of hexesWithinPixelRadius(p.x, p.y, radius)) {
-      const k = axialKey(h.q, h.r);
-      if (!this.coverHp.has(k)) continue;
-      const c = hexToPixel(h.q, h.r);
-      this._damageBuildingAt(c.x, c.y, amount);
+    // #536: the cloud also chews through destructible terrain it passes over, the same way a
+    // napalm ground patch's periodic tick does (`_updateFirePatches` below) — indiscriminate, no
+    // owner check, since the cloud doesn't care who it belongs to any more than fire does. 2026-07-31:
+    // widened from soft-cover-only to any standing destructible hex (buildings too — see
+    // `_destructibleHexesInRadius`), matching the live chat ask that Caustic Lobber's cloud should
+    // damage structures, not just cover. This does not spend the #538 tendril budget — that's
+    // scoped to enemy/player connections.
+    for (const hex of this._destructibleHexesInRadius(p.x, p.y, radius)) {
+      this._damageBuildingAt(hex.x, hex.y, amount);
     }
     if (maxTendrils != null && p.tendrilCount >= maxTendrils) p._tendrilsExhausted = true;
+  },
+
+  // 2026-07-31: every standing destructible hex (a solid `buildingHp` outpost OR a `coverHp` soft-
+  // cover tile — `_destructibleStandingAt`, world.js) within `radius` px of a point, as pixel-space
+  // impact points ready for `_damageBuildingAt`. Shared by Caustic Lobber's travelAoe tick above and
+  // the general splash-damage pass below, so the two don't duplicate the hex-radius geometry.
+  // `excludeKey` skips one hex (the round's own locked target hex, if any) so a round that already
+  // damaged that hex through the dedicated targeted-hex impact rule (`_updateProjectiles`, #317)
+  // doesn't also double-hit it here.
+  _destructibleHexesInRadius(x, y, radius, excludeKey = null) {
+    const out = [];
+    for (const h of hexesWithinPixelRadius(x, y, radius)) {
+      const k = axialKey(h.q, h.r);
+      if (k === excludeKey || !this._destructibleStandingAt?.(k)) continue;
+      const c = hexToPixel(h.q, h.r);
+      out.push({ key: k, x: c.x, y: c.y });
+    }
+    return out;
+  },
+
+  // 2026-07-31: the general splash-damage fix. `p.splash` used to only widen the hit-tolerance
+  // window and size the impact FX — the round's ACTUAL damage only ever landed on the one locked
+  // `hitEnemy`/`hitPlayer`, despite plasmaCannon/napalm already declaring `splash` as if it hit a
+  // real area. This is the honest fix: a real multi-target blast (data/aoe.js `damageInRadius`,
+  // the same primitive `_detonateFuse`'s real fuse blast already uses) against everyone else in
+  // radius, excluding whoever already took the direct hit above (so they're not double-damaged),
+  // plus any destructible terrain caught in the same radius. Same owner/friendly-fire branching
+  // every other AoE pass in this file already uses (co-op friendly fire ON, never the shooter).
+  // Carries the round's `dot` (if any) through to every splash-damaged target too — Plasma Coater's
+  // burn should catch everyone in the splash, not just the direct hit.
+  //
+  // BALANCE NOTE: this generic fix also changes plasmaCannon's and napalm's real behavior for the
+  // first time — both already carry `delivery.splash` and describe themselves as splashing in their
+  // own comments, but neither actually damaged a second target before this. Flagged for a playtest
+  // balance pass; if either reads as over-buffed the narrower fix is to gate this to an explicit
+  // opt-in flag (e.g. `delivery.realSplash`) scoped to just plasmaCoater/causticLobber.
+  _splashDamageAt(p, enemyShot, directPlayer, directEnemy) {
+    const radius = p.splash;
+    if (enemyShot) {
+      const players = livePlayersOf(this).filter((pl) => pl !== directPlayer);
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, players)) {
+        this._damagePlayerAt(hit.amount, hit.target, { weaponId: p.weaponId, dot: p.dot });
+      }
+    } else {
+      const enemies = this.enemies.filter((e) => !e.mech.isDestroyed() && e !== directEnemy);
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, enemies)) {
+        this._damageEnemyAt(hit.target, hit.target.x, hit.target.y, hit.amount, p.color, false, { weaponId: p.weaponId, dot: p.dot });
+      }
+      for (const hit of damageInRadius(p.x, p.y, radius, p.damage, otherLivePlayers(this, p.shooter))) {
+        this._damagePlayerAt(hit.amount, hit.target, { weaponId: p.weaponId, dot: p.dot });
+      }
+    }
+    for (const hex of this._destructibleHexesInRadius(p.x, p.y, radius, p.targetHexKey)) {
+      this._damageBuildingAt(hex.x, hex.y, p.damage, { flame: isFlameKind(p.kind) });
+    }
   },
 
   // #492 playtest follow-up: a brief bolt from a travelAoe round (Caustic Lobber, currently the
@@ -835,20 +894,25 @@ export const ProjectilesMixin = {
   // Drawn into `projFx` after `_updateProjectiles` has already run this frame (status effects
   // tick in `_updateEnemies`, earlier in ArenaScene.update, so this always reads THIS frame's
   // live set).
-  _drawStatusEffects() {
-    const g = this.projFx;
-    const now = this.time.now;
+  // 2026-07-31: reworked from a floating green pulse-circle-at-centre-point into a per-part purple
+  // "coating" outline that hugs the mech's own body, reusing the shield outline's technique
+  // (shieldOutline.js's `updateDotOutline` — see its header note for the full rationale). Runs for
+  // BOTH enemies (as before) and, since #560 made DoT symmetric, every live PLAYER too — an
+  // enemy's plasma weapon can burn a player, and they deserve the same readout an enemy gets.
+  // `delta` (ms, same value every other per-frame outline driver in the game takes) drives the
+  // pulse; the outline set itself is built lazily per unit (`_ensureEnemyDotVisual`/
+  // `_ensureDotVisualFor`) the first frame it's actually needed, mirroring the shield outline's
+  // own perf story.
+  _drawStatusEffects(delta) {
+    const isBurning = (mech) => (mech?.statusEffects || []).some((s) => s.kind === 'plasmaBurn');
     for (const e of this.enemies) {
       if (e.mech.isDestroyed()) continue;
-      const effects = e.mech.statusEffects || [];
-      if (!effects.some((s) => s.kind === 'plasmaBurn')) continue;
-      const pulse = 0.5 + 0.5 * Math.sin(now / 110);
-      g.fillStyle(0x39ff6a, 0.16 + pulse * 0.12).fillCircle(e.x, e.y, 30 + pulse * 5);
-      for (let i = 0; i < 3; i++) {
-        const a = now / 240 + (i * Math.PI * 2) / 3;
-        const r = 18 + Math.sin(now / 90 + i) * 6;
-        g.fillStyle(0x9dff5a, 0.9).fillCircle(e.x + Math.cos(a) * r, e.y + Math.sin(a) * r, 2.4);
-      }
+      const sv = this._ensureEnemyDotVisual(e);
+      updateDotOutline(sv, e.view, isBurning(e.mech), delta);
+    }
+    for (const player of livePlayersOf(this)) {
+      const sv = this._ensureDotVisualFor(player);
+      updateDotOutline(sv, player.view ?? this.playerView, isBurning(player.mech), delta);
     }
   },
 

@@ -205,6 +205,40 @@ export function makeShieldOutline(scene, view, {
 // is empty — see the perf note in the header; powerups.test.js locks this in.
 // Part keys come from the outline set itself, so this never needs to know which body type it's
 // driving.
+// ── Shared per-frame geometry repose (2026-07-31) ────────────────────────────────────────────
+// Factored out of `updateShieldOutline` so the plasma-burn "coating" outline below (same
+// duplicate-sprite technique, different colour, different alpha driver — a DoT has no "HP" to
+// read a fraction from) can reuse the exact same sprite-follows-its-real-part geometry rather
+// than duplicating it. The only thing that differs between the two effects is what computes
+// `alpha` each frame; the loop that walks every outline sprite onto its real part's live
+// texture/position/rotation is identical either way.
+function reposeOutlineSprites(sv, view, alpha) {
+  for (const key of Object.keys(sv.outlines)) {
+    const real = view[key];
+    const o = sv.outlines[key];
+    // #397: follow the real part's texture, but keep the body-only `_shield` variant for any part
+    // that has one (the player's weapon-carrying parts). Parts with no mapping (hull frames, every
+    // enemy) resolve straight back to the real key, so this is a no-op for them.
+    const desired = sv.resolveTex
+      ? sv.resolveTex(real.texture.key)
+      : (sv.texMap?.[real.texture.key] ?? real.texture.key);
+    if (o.texture.key !== desired) o.setTexture(desired);
+    // Register the (centre-anchored) outline onto the real part's TEXTURE CENTRE, wherever the
+    // real part's own origin sits. The real side-torso/arm origin is its rear convergence joint,
+    // so its position is that joint, not the part centre — walk the origin→centre offset out
+    // through the part's display size and rotation so the two silhouettes stay perfectly aligned
+    // while the shell still grows symmetrically about the centre (see makeShieldOutline). Hull and
+    // turret keep origin 0.5,0.5, so their offset is zero and this reduces to the real position.
+    const ex = (0.5 - (real.originX ?? 0.5)) * (real.displayWidth || 0);
+    const ey = (0.5 - (real.originY ?? 0.5)) * (real.displayHeight || 0);
+    const rot = real.rotation || 0;
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    o.setPosition(real.x + cos * ex - sin * ey, real.y + sin * ex + cos * ey);
+    o.rotation = real.rotation;
+    o.setAlpha(alpha);
+  }
+}
+
 export function updateShieldOutline(sv, view, shield, delta) {
   if (!sv) return;
   // #381: the pool and cap include the temporary shield, so the alpha ("how much is left") reads
@@ -227,30 +261,47 @@ export function updateShieldOutline(sv, view, shield, delta) {
   // is applied here because this driver rewrites alpha every frame (a tween on the sprite's own
   // alpha would simply be overwritten).
   const lit = alpha + (1 - alpha) * Math.max(0, Math.min(1, sv.flash || 0));
-  for (const key of keys) {
-    const real = view[key];
-    const o = sv.outlines[key];
-    // #397: follow the real part's texture, but keep the body-only `_shield` variant for any part
-    // that has one (the player's weapon-carrying parts). Parts with no mapping (hull frames, every
-    // enemy) resolve straight back to the real key, so this is a no-op for them.
-    const desired = sv.resolveTex
-      ? sv.resolveTex(real.texture.key)
-      : (sv.texMap?.[real.texture.key] ?? real.texture.key);
-    if (o.texture.key !== desired) o.setTexture(desired);
-    // Register the (centre-anchored) outline onto the real part's TEXTURE CENTRE, wherever the
-    // real part's own origin sits. The real side-torso/arm origin is its rear convergence joint,
-    // so its position is that joint, not the part centre — walk the origin→centre offset out
-    // through the part's display size and rotation so the two silhouettes stay perfectly aligned
-    // while the shell still grows symmetrically about the centre (see makeShieldOutline). Hull and
-    // turret keep origin 0.5,0.5, so their offset is zero and this reduces to the real position.
-    const ex = (0.5 - (real.originX ?? 0.5)) * (real.displayWidth || 0);
-    const ey = (0.5 - (real.originY ?? 0.5)) * (real.displayHeight || 0);
-    const rot = real.rotation || 0;
-    const cos = Math.cos(rot), sin = Math.sin(rot);
-    o.setPosition(real.x + cos * ex - sin * ey, real.y + sin * ex + cos * ey);
-    o.rotation = real.rotation;
-    o.setAlpha(lit);
+  reposeOutlineSprites(sv, view, lit);
+}
+
+// ── Plasma-burn "coating" outline (2026-07-31 live chat ask) ────────────────────────────────
+// Jackson: the plasmaBurn DoT's visual should read as a COATING on the mech itself, "more like
+// the way shields are visualized, but a different color, like purple" — rather than the old
+// floating pulsing circle at the unit's centre point (`_drawStatusEffects`, projectiles.js).
+// Reuses `makeShieldOutline`'s sprite-construction (it already takes `color`/`blend`/`dilated`/
+// `bodyOnly` as plain parameters, so no changes were needed there) and the geometry factored out
+// above; only the ALPHA driver differs, since a DoT has no "HP fraction" the way a shield pool
+// does — it's simply present or not, so the outline pulses steadily for as long as the effect is
+// on the target, rather than fading with remaining duration (duration ticks down in fixed-size
+// steps via refresh-not-stack, so an ebbing alpha would be misleading — "10% duration left" is
+// not a real per-frame quantity worth animating toward).
+export const PLASMA_COAT_COLOR = 0xa04dff;   // distinct violet — clearly not shield-blue (0x2fa8ff)
+
+const DOT_ALPHA_MIN = 0.32;
+const DOT_ALPHA_MAX = 0.8;
+const DOT_PULSE_HZ = 0.0026;   // faster than the shield's ambient 0.0025 hum — reads as "actively burning"
+
+// Opacity for this frame while a DoT coating is active — a steady pulse, no HP/duration fraction
+// to read from (see header note above). `t` is accumulated ms since the coating last turned on.
+export function dotOutlineAlpha(t) {
+  const pulse = 0.5 + 0.5 * Math.sin(t * DOT_PULSE_HZ * Math.PI * 2);
+  return DOT_ALPHA_MIN + (DOT_ALPHA_MAX - DOT_ALPHA_MIN) * pulse;
+}
+
+// Per-frame upkeep for ONE unit's plasma-coating outline — same show/hide-on-edge + early-exit-
+// when-inactive shape as `updateShieldOutline`, just driven by a plain `active` boolean (is
+// `plasmaBurn` currently in this unit's `statusEffects`?) instead of a shield pool.
+export function updateDotOutline(sv, view, active, delta) {
+  if (!sv) return;
+  const keys = Object.keys(sv.outlines);
+  if (active !== sv.active) {
+    for (const key of keys) sv.outlines[key].setVisible(active);
+    sv.active = active;
+    if (!active) sv.t = 0;
   }
+  if (!active) return;
+  sv.t += delta;
+  reposeOutlineSprites(sv, view, dotOutlineAlpha(sv.t));
 }
 
 // How long the absorbed-hit opacity pop takes to settle back to the strength-driven alpha.

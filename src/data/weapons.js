@@ -50,7 +50,12 @@
 //     homingTurnRadius   px — the turn radius a homing round corners within (default 64)
 //     weakSeekTurnRate   rad/s — a weakSeek round's steering-bias strength (default 0.8)
 //     weakSeekRadius     px — how far a weakSeek round "notices" targets (default 260)
-//   splash    blast radius in px (plasma/explosive)
+//   splash    blast radius in px (plasma/explosive). 2026-07-31: a landed hit carrying `splash`
+//             now does a REAL multi-target blast, not just an impact-FX/hit-tolerance radius — see
+//             projectiles.js `_splashDamageAt` (data/aoe.js `damageInRadius`, the same primitive
+//             `fuse` below already used). Every other splash-carrying weapon in this table
+//             (plasmaCannon, napalm) picks up real splash damage for the first time as a side
+//             effect of this fix — see that function's header comment for the balance callout.
 //   groundFire { radius, dps, duration } — leaves a burning patch on impact (napalm)
 //   travelAoe { radius, dps, tickMs? } — #492: the round damages everything in radius
 //             CONTINUOUSLY WHILE IN FLIGHT (not just on impact/landing, unlike groundFire
@@ -352,24 +357,35 @@ export const WEAPONS = {
     // conversation about whether flamethrower should have been an exception.
     delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
   }),
-  plasmaCoater: w({   // #489: heavier single-shot bolt that COATS the enemy — most of its damage
-    // is the burn, not the hit. Deliberately NOT a stream/burst weapon (unlike plasmaLance) — a
-    // repeat hit only REFRESHES the burn (owner decision, no stacking), so a rapid-fire cadence
-    // would make the DoT nearly pointless to land twice; this fires slowly enough that landing a
-    // second hit to refresh the burn before it expires is a real, deliberate choice.
-    // Direct-hit DPS = damage / cycleTime(s): 14/1.4 = 10.0 dps — low on purpose. The burn adds
-    // 5 dps for 4s per landed hit (up to 20 bonus damage), refreshed rather than stacked on a
-    // second hit within that window.
+  plasmaCoater: w({   // #489: heavier bolt that COATS the enemy — most of its damage is the burn,
+    // not the hit. Deliberately NOT a stream/burst weapon (unlike plasmaLance) — a repeat hit only
+    // REFRESHES the burn (owner decision, no stacking), so a rapid-fire cadence would make the DoT
+    // nearly pointless to land twice; this fires slowly enough that landing a second hit to refresh
+    // the burn before it expires is a real, deliberate choice.
+    // Direct-hit DPS (per blob) = damage / cycleTime(s): 14/1.4 = 10.0 dps — low on purpose. The
+    // burn adds 5 dps for 4s per landed hit (up to 20 bonus damage), refreshed rather than stacked
+    // on a second hit within that window.
     // Playtest follow-up (2026-07-25): the DoT itself was already real (Mech.tickStatusEffects
-    // routes every tick through applyDamage, covered by Mech.test.js) — what was missing was any
-    // visible sign it was happening. A coated enemy now flickers a green plasma glow for as long
-    // as the burn is active (scenes/arena/projectiles.js `_drawStatusEffects`), so the tick and
-    // the visual confirm each other.
+    // routes every tick through applyDamage) — what was missing was any visible sign it was
+    // happening. #489 gave a coated unit a floating green pulse; 2026-07-31 replaced that with a
+    // proper per-part purple "coating" outline (scenes/arena/shieldOutline.js's `updateDotOutline`,
+    // reusing the shield glow's own duplicate-sprite technique) — see `_drawStatusEffects`.
+    // 2026-07-31 LOB REWORK (live chat ask): "a lob of maybe 3 blobs" — reworked from a single
+    // straight-line bolt into a 3-blob arcing lob, following Proximity Mines' (timedCharge below)
+    // spread+arcing precedent, but a narrower fan and lower jitter befitting a ranged weapon rather
+    // than a close-range toss (spreadAngle 24 vs timedCharge's 55, spreadJitter 14 vs 18). Each blob
+    // still carries the weapon's full per-bolt damage/dot — landing more than one blob on the same
+    // target is a real (and now genuinely possible) escalation over the old single-bolt weapon;
+    // tune live. Also gained `splash` (see data/delivery.js's field doc, and the general splash
+    // damage fix landed the same day in projectiles.js `_splashDamageAt`) so a blob that lands near
+    // — not just ON — an enemy still catches it, dot included.
     id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
     damage: 14, range: { min: 0, opt: 380, max: 560 },
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
-      hit: 'projectile', path: 'straight', velocity: 460, kind: 'plasma',
+      hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma',
+      pattern: 'spread', count: 3, spreadAngle: 24, arcBump: 0.9, spreadJitter: 14,
+      splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
     },
   }),

@@ -33,7 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
-  SHIELD_PLAYER_BLEND,
+  SHIELD_PLAYER_BLEND, PLASMA_COAT_COLOR,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -94,6 +94,29 @@ export const PowerupsMixin = {
       dilated: true,
     });
     return player.shieldVisual;
+  },
+
+  // 2026-07-31: the player-side half of the plasma-burn "coating" outline (see
+  // shieldOutline.js's `updateDotOutline` header note, and enemies.js's `_ensureEnemyDotVisual`
+  // for the enemy-side mirror) — since #560 made DoT symmetric, an enemy's plasma weapon can burn
+  // a player too, and the player deserves the same purple coating readout an enemy gets. Same
+  // lazy-build-on-first-use shape as the enemy side (no per-kind config to gate on for a player);
+  // reuses the exact same body-only/dilated shell construction as the player's own shield outline
+  // above, just recoloured, so the coating hugs the mech's armor plating the same way.
+  _ensureDotVisualFor(player) {
+    if (!player) return null;
+    if (player.dotVisual) return player.dotVisual;
+    const view = player.view ?? this.playerView;
+    if (!view) return null;
+    player.dotVisual = makeShieldOutline(this, view, {
+      keys: SHIELD_MECH_PART_KEYS,
+      scale: ARENA_MECH_SCALE,
+      color: PLASMA_COAT_COLOR,
+      blend: SHIELD_PLAYER_BLEND,
+      bodyOnly: true,
+      dilated: true,
+    });
+    return player.dotVisual;
   },
 
   // #246: per-frame outline upkeep — called once from `_updatePowerups` below (same cadence as

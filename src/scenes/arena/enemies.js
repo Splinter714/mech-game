@@ -61,6 +61,7 @@ import { tickUnstick, unstickBend, bendHeading } from '../../data/groundUnstick.
 // too (50) but is now armor-only, so it no longer wears this outline.
 import {
   SHIELD_MECH_PART_KEYS, shieldPartKeys, makeShieldOutline, updateShieldOutline,
+  PLASMA_COAT_COLOR,
 } from './shieldOutline.js';
 import { shieldPresent } from '../../data/shield.js';
 
@@ -309,6 +310,23 @@ export const EnemiesMixin = {
   _initEnemyShieldVisual(e, keys, scale) {
     if (!shieldPresent(e.mech?.shield)) return;
     e.shieldVisual = makeShieldOutline(this, e.view, { keys, scale });
+  },
+
+  // 2026-07-31: the plasma-burn "coating" outline (see shieldOutline.js's `updateDotOutline`
+  // header note) — same per-part shell technique as the shield outline above, in purple, driven
+  // by DoT presence rather than a shield pool. UNLIKE the shield outline, this is NOT gated on any
+  // per-kind config: any enemy (mech-kind or vehicle-kind — HpBody has carried statusEffects since
+  // #536) can be hit with Plasma Coater's burn, so there is no "does this kind ever need one" data
+  // flag to gate on the way `shieldPresent` gates the shield. Built lazily instead — the first
+  // frame THIS enemy is actually burning (`_drawStatusEffects`, projectiles.js) — so an enemy that
+  // never gets coated in a given run never pays the per-frame repose cost for a visual it never
+  // shows, exactly the performance shape #302's shield outline established for its own gate.
+  _ensureEnemyDotVisual(e) {
+    if (e.dotVisual) return e.dotVisual;
+    const keys = e.kind === 'mech' ? SHIELD_MECH_PART_KEYS : shieldPartKeys(e.kindDef);
+    const scale = e.kind === 'mech' ? ARENA_MECH_SCALE : vehicleScale(e.kindDef);
+    e.dotVisual = makeShieldOutline(this, e.view, { keys, scale, color: PLASMA_COAT_COLOR });
+    return e.dotVisual;
   },
 
   // Per-frame upkeep for one enemy's outline: no-op unless this unit has one at all. The

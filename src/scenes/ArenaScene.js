@@ -416,7 +416,7 @@ export default class ArenaScene extends Phaser.Scene {
 
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
-    this._drawStatusEffects();            // #489: coated-in-plasma glow, after this frame's ticks
+    this._drawStatusEffects(delta);       // #489/2026-07-31: purple plasma-coating outline, after this frame's ticks
     // #525: `_updateFirePatches` clears+redraws `groundFx` (the low ground-decal layer) once per
     // frame; `_updateHazards` now draws planted mines/pull fields into that SAME layer (below every
     // unit — see DEPTH.GROUND_FX), so it must run AFTER the clear or its drawing would be wiped the
