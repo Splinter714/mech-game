@@ -149,10 +149,10 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH) {
   ], T.deep);
   // Triangle cluster, anchored to the new collarY: the back pair sit further down still, the
   // front tube noticeably closer to the collar's own leading edge — a real depth gap so the 3
-  // tips read as a triangle, not a shallow arc. Live-chat ask: back pair scooted closer to the
-  // front tube (shrunk the depth gap).
+  // tips read as a triangle, not a shallow arc. Live-chat asks: back pair scooted closer to the
+  // front tube (shrunk the depth gap), then the front tube pulled closer to the back pair too.
   const tubes = [
-    [-off, collarY + collarH * 0.16], [0, collarY - collarH * 0.32], [off, collarY + collarH * 0.16],
+    [-off, collarY + collarH * 0.16], [0, collarY - collarH * 0.16], [off, collarY + collarH * 0.16],
   ];
   sg.layer('weapons.plasmaCoater.tubes');
   for (const [dx, ty] of tubes) {
