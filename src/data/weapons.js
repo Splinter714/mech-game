@@ -390,7 +390,9 @@ export const WEAPONS = {
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 460, kind: 'plasma', arcBump: 0.9,
-      pattern: 'spread', count: 3, spreadAngle: 24, spreadJitter: 14,
+      // No spreadJitter: playtest ask was "the spread/arc should be consistent, not
+      // randomized" -- 3 shots at a fixed 24° fan, same 3 angles every pull.
+      pattern: 'spread', count: 3, spreadAngle: 24,
       projectileColor: 0xa04dff,
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },

@@ -295,8 +295,14 @@ export const CombatMixin = {
     // narrowly to just this weapon for now rather than reordering the shared branch below, which
     // would also silently repaint every other splash-carrying plasma weapon's impact.
     if (weaponId === 'plasmaCoater') {
-      this._burst(x, y, 4, 18, color, 0.6, 240, false);
-      this._burst(x, y, 3, 14, color, 0.9, 220, true);
+      // Playtest ask: "the splash visual should match the splash application radius" — scale
+      // with the real `splash` value (40px) instead of the fixed 4/18-ish numbers the generic
+      // plasma splatter below uses (tuned back when plasma splash didn't do anything visually
+      // distinct from a direct hit). Mirrors the missile branch's `r = Math.max(10, splash)`
+      // scaling convention, just softer/rounder to keep the "splatter" character.
+      const r = Math.max(10, splash);
+      this._burst(x, y, r * 0.28, r * 1.05, color, 0.6, 240, false);
+      this._burst(x, y, r * 0.2, r * 0.85, color, 0.9, 220, true);
     } else if (kind === 'missile' || splash > 0) {
       const r = Math.max(10, splash);
       this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
