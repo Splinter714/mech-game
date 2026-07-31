@@ -277,8 +277,11 @@ export function updateShieldOutline(sv, view, shield, delta) {
 // not a real per-frame quantity worth animating toward).
 export const PLASMA_COAT_COLOR = 0xa04dff;   // distinct violet — clearly not shield-blue (0x2fa8ff)
 
-const DOT_ALPHA_MIN = 0.32;
-const DOT_ALPHA_MAX = 0.8;
+// Playtest follow-up (2026-07-31): "I like the purple flashing, but maybe make the overall
+// intensity of the purple stronger" — both ends of the pulse raised (0.32→0.5, 0.8→1.0, i.e. it
+// now hits fully opaque at the peak instead of stopping short).
+const DOT_ALPHA_MIN = 0.5;
+const DOT_ALPHA_MAX = 1.0;
 const DOT_PULSE_HZ = 0.0026;   // faster than the shield's ambient 0.0025 hum — reads as "actively burning"
 
 // Opacity for this frame while a DoT coating is active — a steady pulse, no HP/duration fraction
@@ -302,6 +305,45 @@ export function updateDotOutline(sv, view, active, delta) {
   if (!active) return;
   sv.t += delta;
   reposeOutlineSprites(sv, view, dotOutlineAlpha(sv.t));
+}
+
+// Playtest follow-up (2026-07-31): "a very mild flashing hue over the whole art in addition to
+// the outline" — a light tint wash on the mech's own REAL part sprites (not the outline shells),
+// so the whole mech reads as tinged purple while burning, not just its silhouette edge. Deliberately
+// MILD: both stops are close to white (a straight RGB lerp is fine here — the range is narrow
+// enough that HSL's muddy-midpoint problem, see healthReadout.js STRUCTURE_RAMP, never comes up),
+// pulsing in sync with the outline's own alpha cadence so the two read as one effect breathing
+// together, not two competing animations.
+const DOT_TINT_LO = 0xe9d8ff;   // near-white, the faintest hint of lavender
+const DOT_TINT_HI = 0xc48bff;   // still mild — nowhere near PLASMA_COAT_COLOR's full saturation
+
+function lerpTint(lo, hi, t) {
+  const lr = (lo >> 16) & 255, lg = (lo >> 8) & 255, lb = lo & 255;
+  const hr = (hi >> 16) & 255, hg = (hi >> 8) & 255, hb = hi & 255;
+  const r = Math.round(lr + (hr - lr) * t), g = Math.round(lg + (hg - lg) * t), b = Math.round(lb + (hb - lb) * t);
+  return (r << 16) | (g << 8) | b;
+}
+
+// Uses the SAME pulse phase as `dotOutlineAlpha` (t is shared on `sv`) so the tint and the
+// outline crest together.
+export function dotTintColor(t) {
+  const pulse = 0.5 + 0.5 * Math.sin(t * DOT_PULSE_HZ * Math.PI * 2);
+  return lerpTint(DOT_TINT_LO, DOT_TINT_HI, pulse);
+}
+
+// Per-frame upkeep for the whole-art tint. Reuses `sv.outlines`' own keys (the parts that
+// actually exist on this view — same set `updateDotOutline` already drives) so it never needs a
+// separate part-key list threaded in. `sv.t` is shared with `updateDotOutline` — call this AFTER
+// that each frame so `t` has already advanced.
+export function updateDotTint(sv, view, active) {
+  if (!sv) return;
+  const keys = Object.keys(sv.outlines);
+  if (!active) {
+    for (const key of keys) view[key]?.clearTint();
+    return;
+  }
+  const color = dotTintColor(sv.t);
+  for (const key of keys) view[key]?.setTint(color);
 }
 
 // How long the absorbed-hit opacity pop takes to settle back to the strength-driven alpha.

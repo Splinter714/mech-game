@@ -10,7 +10,7 @@ import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcH
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
 import { isSoftCover } from '../../data/terrain.js';
 import { LOS_REFRESH_MS } from './world.js';
-import { updateDotOutline } from './shieldOutline.js';
+import { updateDotOutline, updateDotTint } from './shieldOutline.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -908,11 +908,16 @@ export const ProjectilesMixin = {
     for (const e of this.enemies) {
       if (e.mech.isDestroyed()) continue;
       const sv = this._ensureEnemyDotVisual(e);
-      updateDotOutline(sv, e.view, isBurning(e.mech), delta);
+      const burning = isBurning(e.mech);
+      updateDotOutline(sv, e.view, burning, delta);
+      updateDotTint(sv, e.view, burning);
     }
     for (const player of livePlayersOf(this)) {
       const sv = this._ensureDotVisualFor(player);
-      updateDotOutline(sv, player.view ?? this.playerView, isBurning(player.mech), delta);
+      const view = player.view ?? this.playerView;
+      const burning = isBurning(player.mech);
+      updateDotOutline(sv, view, burning, delta);
+      updateDotTint(sv, view, burning);
     }
   },
 
