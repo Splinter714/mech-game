@@ -29,7 +29,7 @@ import {
   exposedInternals, statusSpotBar,
 } from './mechPrims.js';
 import { drawWeaponMount } from './mounts/index.js';
-import { drawDecor, DECOR_ART } from './decor/index.js';
+import { drawDecor, drawDecorPiece, DECOR_ART } from './decor/index.js';
 
 // The low-level primitives + palettes live in ./mechPrims.js; the per-category weapon-mount
 // art in ./mounts/ and the per-kind chassis decor in ./decor/ (registries). This file keeps
@@ -295,7 +295,10 @@ function drawPartGlow(sg, mech, loc, T) {
 function drawPauldronFor(sg, mech, lay, loc, T) {
   const side = loc === 'leftTorso' ? -1 : 1;
   for (const d of mech.chassis.art.decor || []) {
-    if (d.kind === 'pauldron' && d.side === side) DECOR_ART.pauldron(sg, d, lay, T);
+    // #585: same tagging path as drawDecor, but under this texture's own 'pauldron' prefix rather
+    // than 'decor.pauldron' — the pauldron is the one decor kind that lives on the side-torso
+    // texture (so it cants with it), and the prefix has to match where it actually landed.
+    if (d.kind === 'pauldron' && d.side === side) drawDecorPiece(sg, DECOR_ART.pauldron, d, lay, T, 'pauldron');
   }
 }
 
@@ -316,16 +319,23 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // stump.
   // #545: this function's own section comments (centre torso / head / decor / weapons) are
   // exactly the boundaries the dissect tool needs, so they're what get tagged, in order.
+  // #585: each of those was still ONE flat blob — a chest plate, its core inset, the reactor
+  // housing, the status spine and two vents all landed on the single 'centerTorso' tag, so the
+  // tool could isolate "the torso" but nothing inside it. Sub-tagged per named piece below, with
+  // `plate()`'s own opt-in `tag` reused (rather than hand-rolled body/rim/ao equivalents) wherever
+  // a body part draws a real plate — so a plate reads the same way everywhere on the mech.
   sg.layer('centerTorso');
   const ct = lay.centerTorso;
   // Live-chat follow-up: player color removed from the center torso too (head-only marker now)
   // — front placement (unchanged), just the neutral rim tone instead of the accent.
-  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false, rim: T.baseRim });
+  plate(sg, T, ct.x, ct.y, ct.w, ct.h, { fill: T.face, chamfer: Math.min(ct.w, ct.h) * 0.26, seam: false, rim: T.baseRim, tag: 'centerTorso.plate' });
+  sg.layer('centerTorso.core');
   // #446: the enemy's core inset was a plain ellipse and its reactor housing a second one — two
   // stacked blobs on the chest, the single most "bubbly" read on the mech. Pass 2: the inset takes
   // the theme's own plate outline, so on an enemy it's a faceted wedge echoing the chest plate
   // around it rather than a rounded rect sitting inside an angular one.
   poly(sg, plateOutline(T, ct.x, ct.y, ct.w * 0.64, ct.h * 0.78, Math.min(ct.w, ct.h) * 0.2), T.faceMid);
+  sg.layer('centerTorso.housing');
   rectC(sg, ct.x, ct.y, ct.w * 0.36, ct.h * 0.84, T.housing);                           // reactor housing
   // #400/#404: the reactor spine doubles as the POWERUP SPOT for player mechs. When the caller
   // hands in a `statusSpot` colour list (arena players only) it renders that instead of the fixed
@@ -333,6 +343,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // same in single-player and co-op (#404 reserved this spot for powerups; player identity moved
   // entirely onto the rim accent + ground ring). Enemies & the garage preview pass nothing and
   // keep the original reactor purple.
+  sg.layer('centerTorso.spine');
   if (statusSpot) statusSpotBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, statusSpot);
   else glowBar(sg, ct.x, ct.y, ct.w * 0.14, ct.h * 0.74, REACTOR);                      // reactor spine
   // The two vents flanking the spine complete the reactor cluster. #400 follow-up: for player mechs
@@ -341,6 +352,7 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // reactor spine carries the powerup/player status colour. Enemies & garage preview keep the fixed
   // reactor purple.
   const ventCol = statusSpot ? { halo: T.housing, core: T.housing, hot: T.housing } : REACTOR;
+  sg.layer('centerTorso.vent');   // same word the side torso's own recessed slot uses
   glowBar(sg, ct.x, ct.y - ct.h * 0.22, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
   glowBar(sg, ct.x, ct.y + ct.h * 0.18, ct.w * 0.32, ct.h * 0.07, ventCol);             // vent
 
@@ -351,11 +363,12 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   // Live-chat follow-up: the head is now the ONLY place player color shows (every other part
   // opts out via rim: T.baseRim) — thickened slightly (rimThickness) so it reads clearly as
   // the one identifying marker left on the mech.
-  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false, rimThickness: 1.6 });
+  plate(sg, T, hd.x, hd.y, hd.w, hd.h, { fill: T.faceMid, seam: false, rimThickness: 1.6, tag: 'head.plate' });
   // #400 follow-up: the head cockpit optic no longer glows purple on PLAYER mechs — Jackson wanted
   // no purple head light. Players (statusSpot supplied) get no optic glow; enemies & garage preview
   // keep the fixed reactor-purple optic.
   const cp = lay.cockpit;
+  sg.layer('head.optic');
   if (!statusSpot) glowBar(sg, cp.x, cp.y, cp.w, cp.h * 0.7, REACTOR);
 
   // Structural decor (mast / vane / exhaust stacks) under the weapons. The shoulder PAULDRONS
@@ -395,21 +408,28 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   // skirts below) — the natural read of "the various small bits" a walk-cycle hull is made of.
   sg.layer('pelvis');
   // Live-chat follow-up: player color removed here too (head-only marker now).
-  plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false, rim: T.baseRim });
+  plate(sg, T, 0, a.bodyLen * (legFrac - 0.05), a.bodyWid * 0.5, a.bodyLen * 0.13, { fill: T.deep, seam: false, rim: T.baseRim, tag: 'pelvis.plate' });
 
   for (const [loc, dir] of [['leftLeg', lDir], ['rightLeg', rDir]]) {
-    sg.layer(loc);   // 'leftLeg' / 'rightLeg' — thruster wash+core, plate, toe cap, ankle, grime
+    // #585: the inline note here already listed this leg's pieces ("thruster wash+core, plate, toe
+    // cap, ankle, grime"), which is exactly the sub-tag list the dissect tool wanted — so it's
+    // now literally the tags rather than a comment describing an untagged blob.
+    sg.layer(loc);   // 'leftLeg' / 'rightLeg'
     const p = lay[loc];   // legs are animation-only now — never destroyed
     const fy = p.y + dir * shift;
+    sg.layer(`${loc}.thruster`);
     ellipseC(sg, p.x, fy + p.h * 0.4, p.w * 1.1, p.h * 0.3, REACTOR.halo, 0.4);   // thruster wash
     ellipseC(sg, p.x, fy + p.h * 0.42, p.w * 0.5, p.h * 0.16, REACTOR.core, 0.8); // thruster core
     // Live-chat follow-up: player color removed from legs too (head-only marker now) —
     // rim: T.baseRim was T.rim (the accent) before.
-    plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.baseRim, seam: false });
+    plate(sg, T, p.x, fy, p.w, p.h, { fill: T.lower, rim: T.baseRim, seam: false, tag: `${loc}.plate` });
     // #446: the enemy used to skip all three (a bare glossy pod for a leg). They're mechanical
     // detail, not a player-theme flourish, so both factions get them now.
+    sg.layer(`${loc}.toeCap`);
     rectC(sg, p.x, fy - p.h * 0.4, p.w * 0.86, p.h * 0.16, T.faceMid);            // toe cap (forward)
+    sg.layer(`${loc}.ankle`);
     rectC(sg, p.x, fy - p.h * 0.46, p.w * 0.5, p.h * 0.1, T.joint);               // ankle actuator
+    sg.layer(`${loc}.grime`);
     rectC(sg, p.x + p.w * 0.38, fy + p.h * 0.05, Math.max(0.8, 0.6 * s), p.h * 0.5, T.grime, 0.7);
   }
 
@@ -429,7 +449,8 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
   const skirtOuterTop = Math.max(SKIRT_INNER + 0.06, legOuter - SKIRT_INSET);
   const skirtOuterBot = Math.max(SKIRT_INNER + 0.03, skirtOuterTop - SKIRT_TUCK);
   for (const dx of [-1, 1]) {
-    sg.layer(dx < 0 ? 'leftSkirt' : 'rightSkirt');
+    const skirtTag = dx < 0 ? 'leftSkirt' : 'rightSkirt';
+    sg.layer(skirtTag);
     // #446: the enemy's hip used to be a stack of four ellipses (a shoulder-of-ham blob over each
     // leg). Both factions now use the angular tucked skirt below — the silhouette that actually
     // reads as plating.
@@ -452,6 +473,10 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     // halo already sits exactly on SKIRT_INNER, that edge is buried under the torso where no
     // contrast ring can be seen anyway, and letting it cross would put right-hand geometry on the
     // left plate.
+    // #585: the skirt is a hand-rolled plate, so it takes `plate()`'s OWN furniture words rather
+    // than inventing new ones — the halo/outline/face stack is the `body` (exactly what plate's
+    // own `sub('body')` covers), the top-edge highlight is the `rim`.
+    sg.layer(`${skirtTag}.body`);
     if (T.legibilityHalo) {
       poly(sg, skirt(0.034).map(([x, y]) => [dx * Math.max(0, x * dx), y]), HALO_EDGE);
     }
@@ -462,6 +487,7 @@ function drawHull(sg, mech, frame, T, frames = HULL_FRAMES) {
     // Live-chat follow-up: player color removed from the hip skirts too (head-only marker now)
     // — T.baseRim was T.rim (the accent) before.
     const rimMid = (SKIRT_INNER + skirtOuterTop) / 2;
+    sg.layer(`${skirtTag}.rim`);
     rectC(sg, dx * a.bodyWid * rimMid, a.bodyLen * (legFrac - 0.07),
       a.bodyWid * (skirtOuterTop - SKIRT_INNER) * 0.88, Math.max(0.8, 0.6 * s), T.baseRim ?? T.rim);
   }

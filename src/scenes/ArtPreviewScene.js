@@ -13,7 +13,7 @@ import { mulberry32 } from '../data/rng.js';
 import { Mech } from '../data/Mech.js';
 import {
   buildMechTextures, buildVehicleTextures, ART_SCALE, mountIconKey, itemFxKey,
-  HULL_FRAMES, PIVOT_LOCATIONS,
+  HULL_FRAMES,
 } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
@@ -407,11 +407,12 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // check `_wireScroll` already tracks (`this._moved`) — without it, dragging the gallery to
     // scroll would dissect whatever cell the drag happened to release over.
     // #546: a cell can name either a single texture (`dissectKey`, a plain string) or several
-    // candidate textures (`dissectKeys`, a `{ label: textureKey }` map) when its art is baked
-    // as more than one texture — a mech (hull/turret/leftArm/rightArm/leftTorso/rightTorso) or
-    // a weapon (its mount icon AND its projectile/fx art). Either shape reaches
-    // `__dissect.show()` unchanged; the overlay itself decides whether that's a single view or
-    // a target-picker (dissectOverlay.js's `state.targets`).
+    // candidate textures (`dissectKeys`, a `{ label: target }` map) when its art is baked as more
+    // than one texture — a mech (its anatomical segments, see `_mechCell`) or a weapon (its mount
+    // icon AND its projectile/fx art). Either shape reaches `__dissect.show()` unchanged; the
+    // overlay decides whether that's a single view or a clickable drill-down root (#585).
+    // `dissectRoot` names the breadcrumb's first segment for the map case, where there's no single
+    // texture key to use — the overlay falls back to a common-prefix guess without it.
     if (import.meta.env.DEV && (cell.dissectKey || cell.dissectKeys)) {
       bg.setInteractive({ useHandCursor: true });
       bg.on('pointerdown', () => { this._pressedCell = bg; });
@@ -419,7 +420,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
         const pressedHere = this._pressedCell === bg;
         this._pressedCell = null;
         if (!pressedHere || this._moved) return;
-        globalThis.__dissect?.show(cell.dissectKeys ?? cell.dissectKey);
+        globalThis.__dissect?.show(cell.dissectKeys ?? cell.dissectKey, null, cell.dissectRoot ?? null);
       });
     }
 
@@ -754,20 +755,46 @@ export default class ArtPreviewScene extends Phaser.Scene {
   _mechCell(label, key, mech, { frame = 0, animate = false, ink = null, factor = null } = {}) {
     // #546: a mech bakes SIX separate textures under this one `key` prefix (hull per walk
     // frame, turret, both side torsos, both arms — see mechArt.js's buildMechTextures), each
-    // carrying its own `.layer()` tags. #545 could only ever open the turret; now every baked
-    // texture is offered as its own named target (`dissectKeys`), and dissectOverlay.js grows
-    // a picker row so a click can reach any of them, not just whichever one this cell defaults
-    // to opening. `frame`'s own hull texture stands in for the hull entry — every walk frame
-    // carries identical `.layer()` tags (only the leg geometry animates), so any one frame's
-    // tags are representative of the whole walk cycle.
+    // carrying its own `.layer()` tags. #545 could only ever open the turret; #546 offered every
+    // baked texture as a named target so a picker row could reach any of them.
+    //
+    // #585 replaced the picker with a clickable drill-down root, and re-cut the targets along
+    // ANATOMY instead of along texture boundaries. `turret` and `hull` are how the sprite is SPLIT
+    // FOR INDEPENDENT AIMING, not body parts — live-chat ask: "the 'turret' isn't really a
+    // thing… that terminology doesn't make any sense to me. maybe do head and torso, then change
+    // the left and right torsos to left and right shoulders." So the turret texture is served as
+    // `head` + `torso`, the hull texture as its five own pieces, and the side-torso textures are
+    // presented as SHOULDERS. This renaming is DISPLAY-ONLY, confined to this map: the location ids
+    // (`leftTorso`/`rightTorso`, data/anatomy.js) and texture keys are untouched.
+    //
+    // Map ORDER is the panel order — top-to-bottom anatomy. `z` is the separate paint order for
+    // the assembled `= overlaid` panel, matching the real draw order (preview.js `poseMechInto`:
+    // hull, then the pivoting parts, then the body on top) so the composite reads as the mech
+    // standing rather than legs painted over its chest.
+    // `frame`'s own hull texture stands in for the hull pieces — every walk frame carries identical
+    // `.layer()` tags (only the leg geometry animates), so any one frame's tags are representative.
+    const turretKey = `${key}_turret`, hullKey = `${key}_hull_${frame}`;
     const dissectKeys = {};
-    const offer = (name, texKey) => { if (this.textures.exists(texKey)) dissectKeys[name] = texKey; };
-    offer('turret', `${key}_turret`);
-    offer('hull', `${key}_hull_${frame}`);
-    for (const loc of PIVOT_LOCATIONS) offer(loc, `${key}_${loc}`);
+    const offer = (name, target) => { if (this.textures.exists(target.key)) dissectKeys[name] = target; };
+    // `tags: { source: '' }` absorbs the source tag into the segment name (so the head's own
+    // `head.plate.body` stays `head.plate.body`, not `head.head.plate.body`); a non-empty value
+    // keeps it as a sub-level, which is how the torso's structural decor stays distinguishable
+    // from the chest plate itself.
+    offer('head',  { key: turretKey, tags: { head: '' }, z: 10 });
+    offer('torso', { key: turretKey, tags: { centerTorso: '', decor: 'decor' }, z: 9 });
+    offer('leftShoulder',  { key: `${key}_leftTorso`,  z: 5 });
+    offer('rightShoulder', { key: `${key}_rightTorso`, z: 6 });
+    offer('leftArm',  { key: `${key}_leftArm`,  z: 7 });
+    offer('rightArm', { key: `${key}_rightArm`, z: 8 });
+    offer('pelvis',     { key: hullKey, tags: { pelvis: '' },     z: 0 });
+    offer('leftLeg',    { key: hullKey, tags: { leftLeg: '' },    z: 1 });
+    offer('rightLeg',   { key: hullKey, tags: { rightLeg: '' },   z: 2 });
+    offer('leftSkirt',  { key: hullKey, tags: { leftSkirt: '' },  z: 3 });
+    offer('rightSkirt', { key: hullKey, tags: { rightSkirt: '' }, z: 4 });
     return {
       label,
       dissectKeys,
+      dissectRoot: key,
       build: (holder, box) => {
         const u = ink ?? this._inkUnion(this._mechKeys(key));
         if (!u) return 'missing';
@@ -796,7 +823,12 @@ export default class ArtPreviewScene extends Phaser.Scene {
         // own part boundaries (art/projectileArt.js + art/projectiles/*.js). #545 only ever
         // pointed at the icon; the fx art — what Jackson actually asked to see the parts of — was
         // unreachable from here entirely.
+        // #585: these two DON'T share a coordinate space (the mount icon bakes on the mech's
+        // 64-unit design canvas, the fx still on its own smaller one) and aren't the same subject
+        // anyway, so the overlay fits each root panel to its own bounds and skips the composite
+        // panels here — unlike a mech, where every segment composites into one standing figure.
         dissectKeys: { mount: mountIconKey(id), fx: itemFxKey(id) },
+        dissectRoot: id,
         build: (holder, box) => {
           // Two halves: the on-mech mount hardware (#457's muzzle lives on it) beside the
           // projectile/beam still (#458). Each fitted to its own inked bounds, so a stubby
