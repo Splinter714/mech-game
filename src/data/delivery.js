@@ -488,21 +488,26 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     // Angle alone isn't enough for a TRIANGLE, though — every shot flying to roughly the same
     // range still lands on a shallow arc that reads as a line, not a triangle, at typical
     // gameplay distances. Same-day follow-up ("two proximal and 1 distal"): the two flanking
-    // (angle-offset) shots also land at a SHORTER distance than the centre shot — `distMult`,
-    // consumed by firing.js `_spawnProjectile` as a multiplier on the resolved arc travel
-    // distance — so the centre shot overshoots past the two flankers instead of landing beside
-    // them, giving 3 genuinely non-collinear points (two near corners + one far apex). Zero
-    // randomness throughout, unlike `burstScatter`.
+    // (angle-offset) shots also land a fixed distance SHORTER than the centre shot, and the
+    // centre shot a fixed distance FARTHER — `distOffset` (px), consumed by firing.js
+    // `_spawnProjectile` as an ADDITIVE offset on the resolved arc travel distance (not a
+    // multiplier — Jackson: "instead of a multiplier, can we make it a fixed spread", so the
+    // triangle's depth stays a constant number of px regardless of how far the shot is flying,
+    // rather than scaling up at long range). `d.burstFanDepth` lets a weapon tune this depth;
+    // it defaults to matching the LEFT/RIGHT chord between the two flanking shots at the
+    // weapon's own optimal range, so the triangle reads as roughly equilateral rather than a
+    // stretched sliver in either direction. Zero randomness throughout, unlike `burstScatter`.
     const fanCone = d.burstFan ? ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180 : 0;
-    const PROXIMAL_MULT = 0.82, DISTAL_MULT = 1.18;
+    const flankChord = fanCone ? 2 * (weapon.range?.opt ?? 160) * Math.sin(fanCone / 2) : 0;
+    const halfDepth = (d.burstFanDepth ?? flankChord) / 2;
     const out = [];
     for (let i = 0; i < n; i++) {
       const scatter = scatterHalfCone ? (Math.random() * 2 - 1) * scatterHalfCone : 0;
       const stagger = staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0;
       const c = i - (n - 1) / 2;   // centred index: −…0…+
       const fanOffset = fanCone && n > 1 ? (c / (n - 1)) * fanCone : 0;
-      const distMult = fanCone ? (c === 0 ? DISTAL_MULT : PROXIMAL_MULT) : 1;
-      out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval, distMult }));
+      const distOffset = fanCone ? (c === 0 ? halfDepth : -halfDepth) : 0;
+      out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval, distOffset }));
     }
     return { mode, shots: out };
   }
@@ -510,8 +515,8 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
   return { mode, shots };
 }
 
-function shot({ delay = 0, angleOffset = 0, lateral = 0, distMult = 1 } = {}) {
-  return { delay, angleOffset, lateral, distMult };
+function shot({ delay = 0, angleOffset = 0, lateral = 0, distOffset = 0 } = {}) {
+  return { delay, angleOffset, lateral, distOffset };
 }
 
 // n rounds/beams fired at once in parallel lanes, centred on the aim line (no fan — every
