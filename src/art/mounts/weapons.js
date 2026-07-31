@@ -10,7 +10,7 @@
 //
 // A weapon WITHOUT an entry here falls back to its category shape (see ./index.js), so
 // adding a weapon never requires art. **Add a bespoke mount = one entry in WEAPON_MOUNT_ART.**
-import { barrel, rectC, roundC, ellipseC, poly, plate, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
+import { barrel, rectC, roundC, ellipseC, poly, plateOutline, glowDot, glowBar, emissive } from '../mechPrims.js';
 import { barrelLen } from './barrelSpec.js';
 
 // ── ENERGY ──────────────────────────────────────────────────────────────────────────────
@@ -61,25 +61,38 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap) {
   glowDot(sg, bx, frontY - L, 2.8 * s, n);                          // fat plasma ball
 }
 
-// Plasma Coater — FIRST DRAFT of a new mount style for lobbed weapons (live-chat ask,
-// 2026-07-31): "I want it to feel like the weapon is mounted more on top (the plate facing the
-// player) of the mech arm or torso, instead of on the 'front' of it." Every other mount here
-// is a barrel/emitter that projects FORWARD off `frontY` (the limb's own front edge) — a long
-// thin silhouette read mostly by its LENGTH. This one is a short, WIDE armored plate (reusing
-// `plate()`, the same chamfered-panel primitive the body's own armor uses) sitting close to and
-// mostly overlapping the limb's front edge rather than jutting past it — a hatch/deck panel
-// bolted flush to the surface, not a gun barrel sticking out. A small glowing launch vent near
-// its leading edge marks where the lobbed blobs actually leave from. Unverified live (this
-// session's environment can't render WebGL) — a starting shape for Jackson to look at and
-// iterate on, not a finished design.
+// Plasma Coater — new mount style for lobbed weapons (live-chat ask, 2026-07-31, iterated twice
+// same day). Original ask: "mounted more on top of the mech arm or torso, instead of on the
+// front of it." First draft was a single flat plate with one vent, positioned by hand outside
+// the barrelLen()/BARREL_SPECS system (#233 — "projectiles should originate from the tip of the
+// weapon muzzle art") — every OTHER mount here sizes its own geometry off `barrelLen(id, s,
+// cap)` so the reported muzzle tip (barrelSpec.js `weaponMuzzleTip`) always matches whatever
+// actually got drawn; skipping that meant this mount's own fired shots spawned from a point
+// that had nothing to do with its new art. Rebuilt on `barrelLen()` like every sibling mount.
+//
+// Follow-up (same day): "move the mount further back on its mech section" — a SHORT modeled
+// length (`BARREL_SPECS.plasmaCoater`, below) keeps the whole assembly close to the limb's own
+// front edge rather than projecting far forward. "Update to be like three tubes facing up
+// (towards viewer) and forward (towards enemy) with slight light inside tip of each tube" — three
+// short launch tubes on a low mounting collar, each drawn as a foreshortened ellipse (an
+// up-and-forward-angled tube mouth reads as an ellipse from top-down, not a flat circle) with a
+// soft inner glow. Matches the weapon's own 3-blob volley. Unverified live (this session's
+// environment can't render WebGL) — iterate from here.
 function plasmaCoater(sg, T, bx, frontY, s, n, cap) {
-  const w = 6.2 * s, h = Math.min(4.4 * s, cap - frontY > 0 ? cap - frontY : 4.4 * s);
-  // Centered just PAST the front edge (small +y offset — into the limb's own body) rather than
-  // the usual `frontY - h/2` (fully forward of it), so most of the plate reads as sitting ON
-  // the limb's surface instead of floating ahead of it.
-  const cy = frontY + h * 0.12;
-  plate(sg, T, bx, cy, w, h);
-  emissive(sg, () => glowDot(sg, bx, frontY - h * 0.08, 2.4 * s, n));   // launch vent, right at the leading edge
+  const L = barrelLen('plasmaCoater', s, cap);
+  const w = 6.4 * s, tubeR = 1.05 * s, off = 2.1 * s;
+  // Low mounting collar under the tubes, sat close to the front edge (short L keeps it "further
+  // back" rather than projecting out like a barrel).
+  rectC(sg, bx, frontY - L * 0.32, w, L * 0.85, T.deep);
+  // The three tube mouths: left/right pair a touch further back, centre one a touch further
+  // forward — a shallow arrowhead rather than a dead-flat row, still reading as one launcher.
+  const tubes = [[-off, frontY - L * 0.62], [0, frontY - L * 0.78], [off, frontY - L * 0.62]];
+  for (const [dx, ty] of tubes) {
+    const tx = bx + dx;
+    ellipseC(sg, tx, ty, tubeR * 2.1, tubeR * 1.15, T.faceDk);   // outer rim, foreshortened
+    ellipseC(sg, tx, ty, tubeR * 1.5, tubeR * 0.8, T.deep);      // bore
+    emissive(sg, () => glowDot(sg, tx, ty - tubeR * 0.08, tubeR * 0.55, n));   // slight light inside the tip
+  }
 }
 
 // Flamethrower — a stubby fuel-tank body with a flared FLAME NOZZLE at the tip and a pilot

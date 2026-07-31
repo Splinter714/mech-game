@@ -22,6 +22,12 @@ export const BARREL_SPECS = {
   beamLaser:     { len: 13,  frac: 1 },
   railLance:     { len: 15,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
+  // 2026-07-31: "move the mount further back" -- a short len vs. the barrel weapons above, so
+  // the whole 3-tube launcher sits close to the limb's own front edge. frac 0.78 matches the
+  // centre (frontmost) tube's own tip depth in the draw fn (weapons.js) -- the side tubes sit
+  // a touch further back, but weaponMuzzleTip only reports one point, and the frontmost tube is
+  // the right one to spawn shots from.
+  plasmaCoater:  { len: 5,   frac: 0.78 },
   flamethrower:  { len: 7,   frac: 1 },
   // bespoke ballistic
   autocannon:    { len: 12,  frac: 1 },
