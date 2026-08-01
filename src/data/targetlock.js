@@ -39,9 +39,22 @@ export const LOCK_RETICLE_LERP_RATE = 16; // 1/s
 // (plasma cannon, napalm — they fly a fixed arc off the turret facing and never needed a target to
 // begin with) — fires unconditionally on trigger, target or no target. Pure; used by both the fire
 // gate (firing.js) and its tests. `target` may be an enemy handle, a static point, or null.
-export function canFireWeapon(weapon, target) {
-  if (weapon.delivery?.guidance !== 'homing') return true;
-  return !!target;
+// Live-chat ask (2026-07-31): "both locking missile types should still be able to dumb-fire."
+// The two are Swarm Rack and Streak Pod — the only `guidance: 'homing'` weapons. This used to
+// return false for them with no lock, making the trigger a silent no-op, which #597 surfaced badly:
+// in the main base there is nothing to lock at all, so they read as dead buttons.
+//
+// Nothing else had to change for dumb-fire to work, because the projectile side already handled
+// it. `_spawnProjectile` sets `round.homing = (…) && !!seekTarget`, so a player round fired with
+// no lock is simply not homing — it integrates velocity and flies straight, exactly like any
+// dumbfire round. (The in-flight give-up path, `beginHomingGiveUp('targetLost')`, covers the other
+// case: a round that HAD a lock and lost it mid-flight coasts out of its turn.)
+//
+// Kept as a function rather than deleting the call site: this is still the one place that answers
+// "is anything about the lock stopping this weapon from firing?", and a future weapon that really
+// does require a lock has a seam to say so. Today the answer is always yes.
+export function canFireWeapon() {
+  return true;
 }
 
 // Ease the drawn reticle position toward `target` ({x, y}) over `dt` seconds instead of snapping

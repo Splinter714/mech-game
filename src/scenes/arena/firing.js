@@ -345,12 +345,12 @@ export const FiringMixin = {
   fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0, chargeConeDeg = 0 } = {}) {
     if (!this.scene.isActive()) return;
     if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
-    // #77, rework #252, #341: a tracking (homing) weapon with no target (i.e. convergence has
-    // nothing picked this frame) does not fire — no dumbfire fallback. The trigger pull is a no-op:
-    // nothing spawns, no ammo spent, no cooldown-worthy shot actually happened. `convergeTarget`
-    // (targeting.js `_updateLock`) is the one target concept — the same pick the reticle draws and
-    // homing rounds seek. See data/targetlock.js `canFireWeapon` for exactly which deliveries this
-    // gates (only guidance: 'homing' — direct-fire and dumbfire/arcing-lob weapons are unaffected).
+    // #77, rework #252, #341: a tracking (homing) weapon with no target USED to not fire at all —
+    // the trigger pull was a silent no-op. Live-chat ask (2026-07-31) reversed that: "both locking
+    // missile types should still be able to dumb-fire." So Swarm Rack and Streak Pod now fire
+    // unlocked and their rounds simply fly straight (`_spawnProjectile` only sets `homing` when
+    // there IS a seek target). `canFireWeapon` is retained as the seam that answers "is the lock
+    // stopping this shot?" — see data/targetlock.js — but today it always says no.
     if (!canFireWeapon(w.weapon, player.convergeTarget)) return;
     // #316 reverses #245/#257: there used to be a cover exemption here — when the player's
     // convergence pick was a FLYING enemy, the player's shot ignored terrain cover (mirroring
