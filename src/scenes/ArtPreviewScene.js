@@ -13,7 +13,7 @@ import { mulberry32 } from '../data/rng.js';
 import { Mech } from '../data/Mech.js';
 import {
   buildMechTextures, buildVehicleTextures, ART_SCALE, mountIconKey, itemFxKey,
-  HULL_FRAMES,
+  HULL_FRAMES, MUZZLE_GLOW_SUFFIX,
 } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 // #452 lifted the ink-fitting + mech-posing this scene pioneered into shared modules, so the HUD's
@@ -775,17 +775,34 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // `.layer()` tags (only the leg geometry animates), so any one frame's tags are representative.
     const turretKey = `${key}_turret`, hullKey = `${key}_hull_${frame}`;
     const dissectKeys = {};
-    const offer = (name, target) => { if (this.textures.exists(target.key)) dissectKeys[name] = target; };
+    // Offered only if at least one of its source textures actually baked — a multi-source segment
+    // (`keys`, see withGlow below) is still worth showing when only the part exists and its glow
+    // overlay doesn't, which is every enemy mech.
+    const offer = (name, target) => {
+      const srcs = target.keys ?? [target.key];
+      if (srcs.some((k) => this.textures.exists(k))) dissectKeys[name] = target;
+    };
     // `tags: { source: '' }` absorbs the source tag into the segment name (so the head's own
     // `head.plate.body` stays `head.plate.body`, not `head.head.plate.body`); a non-empty value
     // keeps it as a sub-level, which is how the torso's structural decor stays distinguishable
     // from the chest plate itself.
     offer('head',  { key: turretKey, tags: { head: '' }, z: 10 });
     offer('torso', { key: turretKey, tags: { centerTorso: '', decor: 'decor' }, z: 9 });
-    offer('leftShoulder',  { key: `${key}_leftShoulder`,  z: 5 });
-    offer('rightShoulder', { key: `${key}_rightShoulder`, z: 6 });
-    offer('leftArm',  { key: `${key}_leftArm`,  z: 7 });
-    offer('rightArm', { key: `${key}_rightArm`, z: 8 });
+    // The four weapon-carrying slots each draw from TWO textures: the part itself, plus its
+    // muzzle-glow overlay. Live-chat ask — "why doesn't the dissection tool show the glow on
+    // weapons? it should." A player part bakes with `sg.glowSkip` raised, which exists so the glow
+    // can be a separate sprite the reload blink toggles (#433) — and that same gate stops the glow
+    // draws before they reach the dissect capture recorder, so the part's ops genuinely contain no
+    // glow. Listing the overlay after the part reunites them exactly as the two sprites stack on
+    // screen: the part contributes `weapons.<id>.collar/barrel/muzzle`, the overlay contributes
+    // `weapons.<id>.color`. Purely a dissect-display change — the bake and the reload blink are
+    // untouched. An enemy mech bakes its glow into the part and has no overlay; the missing key is
+    // skipped, so it still shows exactly what it did before.
+    const withGlow = (loc, z) => ({ keys: [`${key}_${loc}`, `${key}_${loc}${MUZZLE_GLOW_SUFFIX}`], z });
+    offer('leftShoulder',  withGlow('leftShoulder',  5));
+    offer('rightShoulder', withGlow('rightShoulder', 6));
+    offer('leftArm',  withGlow('leftArm',  7));
+    offer('rightArm', withGlow('rightArm', 8));
     offer('pelvis',     { key: hullKey, tags: { pelvis: '' },     z: 0 });
     offer('leftLeg',    { key: hullKey, tags: { leftLeg: '' },    z: 1 });
     offer('rightLeg',   { key: hullKey, tags: { rightLeg: '' },   z: 2 });

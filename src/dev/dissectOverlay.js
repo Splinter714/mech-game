@@ -149,8 +149,15 @@ function idle() {
 // A readable breadcrumb root when the caller didn't name one: the longest common prefix of the
 // source texture keys (a mech's `mech1_turret`/`mech1_hull_0`/… → `mech1`). Falls back to a
 // neutral word when the keys have no meaningful shared stem — e.g. a weapon's `wmount_x`/`wfx_x`.
+// The texture key(s) one target spec draws from. `keys` (an array) is the multi-source form —
+// see `reassemble` for why a segment ever needs more than one.
+function sourceKeys(spec) {
+  if (typeof spec === 'string') return [spec];
+  return (Array.isArray(spec?.keys) ? spec.keys : [spec?.key]).filter(Boolean);
+}
+
 function rootNameFor(map) {
-  const keys = Object.values(map || {}).map((t) => (typeof t === 'string' ? t : t?.key)).filter(Boolean);
+  const keys = Object.values(map || {}).flatMap(sourceKeys).filter(Boolean);
   if (!keys.length) return 'all';
   let p = keys[0];
   for (const k of keys) { while (p && !k.startsWith(p)) p = p.slice(0, -1); }
@@ -190,22 +197,35 @@ function reassemble() {
   }
   const entries = Object.entries(src || {})
     .map(([label, t], i) => [label, typeof t === 'string' ? { key: t } : t, i])
-    .filter(([, spec]) => reg[spec?.key])
+    .filter(([, spec]) => sourceKeys(spec).some((k) => reg[k]))
     .sort((a, b) => (a[1].z ?? a[2]) - (b[1].z ?? b[2]));
   const ops = [];
   const sizes = new Set();
   for (const [label, spec] of entries) {
-    const d = reg[spec.key];
-    sizes.add(`${d.w}x${d.h}`);
-    if (!spec.tags) {
-      for (const o of d.ops) ops.push({ ...o, layer: `${label}.${o.layer}` });
-      continue;
-    }
-    for (const [tag, under] of Object.entries(spec.tags)) {
-      for (const o of d.ops) {
-        if (o.layer !== tag && !o.layer.startsWith(`${tag}.`)) continue;
-        const rest = o.layer === tag ? '' : o.layer.slice(tag.length + 1);
-        ops.push({ ...o, layer: [label, under, rest].filter(Boolean).join('.') });
+    // A segment may draw from SEVERAL textures (`keys`), merged under the one label in listed
+    // order — so later ones paint on top. Live-chat ask: "why doesn't the dissection tool show the
+    // glow on weapons? it should." It genuinely wasn't there to show, for two compounding reasons:
+    // a player part bakes with `sg.glowSkip` raised (#433), and that gate stops the glow draws
+    // before they ever reach the capture recorder — so the part's ops contain no glow at all — and
+    // the glow itself lives in a SEPARATE `_muzzleGlow` overlay texture that nothing here offered
+    // as a source. Listing the overlay after its part reunites them: the part contributes
+    // `weapons.<id>.collar/barrel/...` and the overlay contributes `weapons.<id>.color`, which is
+    // exactly how the two sprites stack on screen. Enemies bake their glow straight into the part
+    // and have no overlay, so their single key still works unchanged.
+    for (const key of sourceKeys(spec)) {
+      const d = reg[key];
+      if (!d) continue;                 // e.g. an enemy mech has no _muzzleGlow overlay
+      sizes.add(`${d.w}x${d.h}`);
+      if (!spec.tags) {
+        for (const o of d.ops) ops.push({ ...o, layer: `${label}.${o.layer}` });
+        continue;
+      }
+      for (const [tag, under] of Object.entries(spec.tags)) {
+        for (const o of d.ops) {
+          if (o.layer !== tag && !o.layer.startsWith(`${tag}.`)) continue;
+          const rest = o.layer === tag ? '' : o.layer.slice(tag.length + 1);
+          ops.push({ ...o, layer: [label, under, rest].filter(Boolean).join('.') });
+        }
       }
     }
   }
