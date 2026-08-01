@@ -9,7 +9,13 @@
 // every dial below can be retuned for enemies WITHOUT touching how the player's mech looks.
 export const LIGHT_CONFIG = {
   id: 'light',
-  name: 'Scout',
+  // #598: this file is now the ONE place an enemy chassis is named. It used to read 'Scout' while
+  // data/enemies.js separately called the same machine 'Light Mech', and nothing reconciled the
+  // two — a listing and the art preview showed the same mech under different names, which read as
+  // if a third set of chassis existed. Jackson's call: keep the weight-class vocabulary every
+  // enemy-facing surface already showed, drop Scout/Trooper/Bulwark entirely. `ENEMIES.light` no
+  // longer carries a `name`, so Mech.js's `data.name ?? chassis.name` fallback resolves here.
+  name: 'Light Mech',
   weightClass: 'light',
   // #299 balance pass (owner-set totals): 100 structure / 75 armor / 25 shield = 200 total.
   totalArmor: 75,

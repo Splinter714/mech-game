@@ -7,7 +7,7 @@
 // (#24, `art.shape` — see mechArt.js's `shapeOf`/`mechLayout`) postdates Striker/Colossus, so
 // this is that system applied to Striker for the first time: a lean, forward-leaning recon-
 // harasser silhouette echoing the Striker's original "fast, lightly-armored harasser... quicker
-// and twitchier than the medium Trooper" flavor and the Scout's own scout-silhouette vocabulary
+// and twitchier than the medium Trooper" flavor and the enemy light chassis' scout-silhouette vocabulary
 // (smaller head thrust forward, slim torso, long reaching arms, wide light stance, swept vanes)
 // — NOT a re-scaled Trooper.
 //
@@ -27,7 +27,7 @@
 // player's Striker "could not drift". That is now INVERTED — live-chat ask (2026-07-31): "can we
 // actually split out the enemy chassis as separate code to be tweaked separately from the player
 // chassis code?" The art below is an independent COPY of what enemy/light.js held at the moment
-// of the split, and the two are free to diverge: retuning the enemy Scout's silhouette will no
+// of the split, and the two are free to diverge: retuning the enemy light's silhouette will no
 // longer move the player's Striker, and the art-preview's "PLAYER BUILD — light" cell (which
 // still renders the enemy light chassis) is no longer a guarantee of what this looks like.
 //

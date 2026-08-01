@@ -17,7 +17,7 @@
 // override was the enemy medium's, spread in so the two "could never drift". Live-chat ask
 // (2026-07-31): "can we actually split out the enemy chassis as separate code to be tweaked
 // separately from the player chassis code?" — drift is now the POINT, so the spread is gone and
-// every value below is a literal this file owns. The inherited ones (name 'Trooper', weightClass
+// every value below is a literal this file owns. The inherited ones (the name, weightClass
 // 'medium', art bodyLen/bodyWid/accent, turretSlew/stepBob/footShake) were copied verbatim off
 // enemy/medium.js at the time of the split, so behaviour is byte-identical — but from here on,
 // editing enemy/medium.js has ZERO effect on the player, and vice versa.
@@ -29,8 +29,9 @@
 
 export const MEDIUM_PLAYER_CONFIG = {
   id: 'mediumPlayer',
-  // Shares the enemy medium's display name and weight class — but as its own copy now, not a
-  // spread. Rename the player's Trooper here without touching the Warden's chassis.
+  // #598: 'Trooper' is now the PLAYER's name alone. The enemy medium used to carry it too (a live
+  // duplicate that only stayed invisible because enemies surfaced under the ENEMIES table's
+  // separate 'Medium Mech'); enemy/medium.js is now plainly 'Medium Mech', so this is unambiguous.
   name: 'Trooper',
   weightClass: 'medium',
   // The player's REAL durability, stated honestly in one place (#324).

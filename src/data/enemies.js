@@ -30,12 +30,18 @@
 // NOTE the asymmetry that remains: enemy mechs rarely choose to break contact, so the long pause
 // mostly costs them the mid-fight trickle they used to get, while the player (who can disengage on
 // purpose) gets the real recharge tool.
+//
+// #598: entries carry NO `name`. They used to say Light/Medium/Heavy Mech while the chassis configs
+// separately said Scout/Trooper/Bulwark, with nothing reconciling the two — so the same machine
+// appeared under two names depending on which surface you looked at. The chassis config is now the
+// ONE naming layer (it took the Light/Medium/Heavy Mech wording, which is what every enemy-facing
+// surface already showed), and `Mech.js`'s `data.name ?? chassis.name` fallback carries it through
+// unchanged. An entry MAY still set `name` to override its chassis, if a one-off ever wants to.
 export const ENEMIES = {
   // Light Mech — fast, short-range guns; presses in (skirmisher role). Loadout rolled per spawn
   // from the light pool (data/enemyLoadout.js).
   light: {
     chassisId: 'light',
-    name: 'Light Mech',
     shield: { max: 25 }, // #382: shared pause/regen (see shield.js)
   },
 
@@ -43,7 +49,6 @@ export const ENEMIES = {
   // the medium pool.
   medium: {
     chassisId: 'medium',
-    name: 'Medium Mech',
     shield: { max: 50 }, // #382: shared pause/regen (see shield.js)
   },
 
@@ -52,7 +57,6 @@ export const ENEMIES = {
   // the heavy pool.
   heavy: {
     chassisId: 'heavy',
-    name: 'Heavy Mech',
     shield: { max: 75 }, // #382: shared pause/regen (see shield.js)
   },
 };

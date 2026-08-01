@@ -7,7 +7,8 @@
 // (`player/colossusPlayer.js`), so retuning the bruiser silhouette here is enemy-only.
 export const HEAVY_CONFIG = {
   id: 'heavy',
-  name: 'Bulwark',
+  // #598: one authoritative name per chassis, and it lives here — see enemy/light.js. Was 'Bulwark'.
+  name: 'Heavy Mech',
   weightClass: 'heavy',
   // #299 balance pass (owner-set totals): 200 structure / 225 armor / 75 shield = 500 total.
   totalArmor: 225,

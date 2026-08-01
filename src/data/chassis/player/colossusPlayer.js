@@ -7,9 +7,10 @@
 // silhouette system that followed (#24, `art.shape` — see mechArt.js's `shapeOf`/`mechLayout`)
 // postdates Striker/Colossus, so this is that system applied to Colossus for the first time: a
 // bulkier, heavily-plated assault silhouette echoing the original's "immovable object... enormous
-// armor... stand and bombard" flavor and the Bulwark's own bruiser-silhouette vocabulary (bigger
-// head sunk back, broad torso, thick low arms, a planted stance, shoulder pauldrons) — NOT a
-// re-scaled Trooper.
+// armor... stand and bombard" flavor and the enemy heavy chassis' bruiser-silhouette vocabulary
+// (bigger head sunk back, broad torso, thick low arms, a planted stance, shoulder pauldrons) —
+// NOT a re-scaled Trooper. (That enemy chassis was called 'Bulwark' when this was written; #598
+// collapsed the two competing name layers and it is now plainly 'Heavy Mech'.)
 //
 // 2026-07-31 live-chat: same change as strikerPlayer.js — see its header for the full reasoning.
 // Jackson pointed at the ART PREVIEW's "PLAYER BUILD — heavy" cell and wanted THAT silhouette
@@ -22,7 +23,7 @@
 // That is now INVERTED — live-chat ask (2026-07-31): "can we actually split out the enemy chassis
 // as separate code to be tweaked separately from the player chassis code?" The art below is an
 // independent COPY of what enemy/heavy.js held at the moment of the split, and the two are free
-// to diverge from here: retuning the enemy Bulwark no longer moves the player's Colossus, and the
+// to diverge from here: retuning the enemy heavy no longer moves the player's Colossus, and the
 // art-preview's "PLAYER BUILD — heavy" cell (which still renders the enemy heavy chassis) is no
 // longer a guarantee of what this looks like.
 //

@@ -6,7 +6,10 @@
 // own literals, so every number below is enemy-only and can move without touching the player.
 export const MEDIUM_CONFIG = {
   id: 'medium',
-  name: 'Trooper',
+  // #598: one authoritative name per chassis, and it lives here — see enemy/light.js for the full
+  // note. This was 'Trooper', which ALSO collided with player/mediumPlayer.js's 'Trooper'; that
+  // name now belongs solely to the player chassis.
+  name: 'Medium Mech',
   weightClass: 'medium',
   // #299 balance pass (owner-set totals): the ENEMY medium chassis (the Warden sniper) —
   // 150 structure / 150 armor / 50 shield = 350 total. The PLAYER's medium is a separate

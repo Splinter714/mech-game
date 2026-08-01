@@ -699,7 +699,11 @@ export default class ArtPreviewScene extends Phaser.Scene {
     this._group(on
       ? 'ENEMY MECHS (#446) — TRUE SCALE, shared with the vehicles above'
       : 'ENEMY MECHS (#446 — one shared scale, so chassis sizes compare)',
-    built.map((b) => this._mechCell(`${ENEMIES[b.id].name ?? b.id}\n${b.id}`, b.key, b.mech, {
+    // #598: label off the BUILT mech's name rather than `ENEMIES[id].name`. The ENEMIES table no
+    // longer names anything — the chassis config is the one naming layer — and `mech.name` is the
+    // same resolution every other surface goes through (`data.name ?? chassis.name`), so this cell
+    // can no longer disagree with the rest of the game about what a mech is called.
+    built.map((b) => this._mechCell(`${b.mech.name ?? b.id}\n${b.id}`, b.key, b.mech, {
       ink: enemyInk, factor: on ? MECH_SCALE_FACTOR : null,
     })));
   }
