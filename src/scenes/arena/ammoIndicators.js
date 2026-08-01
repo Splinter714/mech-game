@@ -21,14 +21,33 @@
 import { PIVOT_LOCATIONS } from '../../art/index.js';
 import { livePlayersOf } from './players.js';
 
+// Live-chat ask (2026-07-31): "I want a visual indicator for long cycle times that it's not ready
+// to fire yet, similar to reload; maybe have the color go away between long cycle times in the
+// same way it goes away during reload?" So the glow's meaning is now the single, uniform question
+// "can this slot fire right now?" — dark covers BOTH causes of not-ready (mid-reload, and still
+// cycling after a shot) instead of reload alone.
+//
+// Gated on the cycle being long enough to READ as a state rather than a flicker. Every discrete
+// weapon in the game cycles at 1100-2400ms and every continuous one resolves to a small stream
+// interval, so this threshold cleanly separates the two families with a wide margin either side —
+// it is not tuned to a specific weapon and shouldn't need to move when one is added. Below it, a
+// machine gun or flamethrower would strobe its own glow several times a second, which reads as a
+// rendering fault rather than as information.
+export const GLOW_COOLDOWN_MIN_MS = 500;
+
 // Should a weapon-carrying slot's glow overlay be VISIBLE this frame? Pure function of the
-// weapon's own state — no time/cadence input.
+// weapon's state plus this slot's live fire cooldown.
 //   - no weapon / offline (destroyed part) → hidden (no floating glow).
-//   - unlimited-ammo (`ammo == null`, melee) → always on (never reloads).
+//   - still cycling, and the cycle is long enough to see → hidden until it comes back up.
+//   - unlimited-ammo (`ammo == null`, melee) → otherwise always on (never reloads).
 //   - reloading → hidden for the whole reload.
 //   - otherwise (loaded, idle, or mid-magazine) → on.
-export function glowOverlayVisible(weapon) {
+// The cooldown check sits ABOVE the unlimited-ammo early-out deliberately: "ready to fire" is the
+// question being answered, and a melee weapon mid-swing isn't ready either — an unlimited magazine
+// only means it never RELOADS.
+export function glowOverlayVisible(weapon, cooldownMs = 0, intervalMs = 0) {
   if (!weapon || !weapon.online) return false;
+  if (intervalMs >= GLOW_COOLDOWN_MIN_MS && cooldownMs > 0) return false;
   if (weapon.ammo == null) return true;
   return !weapon.reloading;
 }
@@ -47,7 +66,14 @@ export const AmmoIndicatorsMixin = {
         if (!overlay) continue;
         // At most one weapon per skill slot (one item per location), so `find` is exact.
         const weapon = mech.weapons().find((w) => w.location === loc);
-        overlay.visible = glowOverlayVisible(weapon);
+        // The cycle cooldown is SCENE state (firing.js `player.fireCooldowns`, ticked down per
+        // frame), not model state, which is why it's read here and passed in rather than living on
+        // `mech.weapons()` alongside `reload`. `_fireInterval` resolves the same cadence the firing
+        // path itself gates on — powerup cycle buffs included — so a weapon sped up by Overclock
+        // stops going dark once its cycle drops under the readability threshold.
+        const cd = player.fireCooldowns?.[loc] ?? 0;
+        const interval = weapon?.weapon ? this._fireInterval(weapon.weapon) : 0;
+        overlay.visible = glowOverlayVisible(weapon, cd, interval);
       }
     }
   },
