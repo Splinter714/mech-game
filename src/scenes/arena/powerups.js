@@ -84,9 +84,11 @@ export const PowerupsMixin = {
       // #397: the player shell blends NORMAL, so the muzzle glow can't balloon it and it reads even
       // all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
       blend: SHIELD_PLAYER_BLEND,
-      // #397 follow-up: hug the BODY armor only — draw from the body-only `_shield` rasters so the
-      // guns and their muzzle glow poke out unshielded (see makeShieldOutline's `bodyOnly` note).
-      bodyOnly: true,
+      // Draw the duplicates from the player's baked `_shield` shell rasters (mechArt) rather than
+      // from the real part textures. 2026-07-31: those rasters now include the MOUNTED GUNS (muzzle
+      // glow excluded), so the mech's weapons are shelled along with its plating — this flag was
+      // called `bodyOnly` while they weren't; see makeShieldOutline's note for that history.
+      bakedShell: true,
       // #422: those `_shield` rasters are the body art DILATED by a constant distance at bake time
       // (mechArt.SHIELD_SHELL_PAD), so the shell is drawn at the mech's EXACT scale — no percentage
       // multiplier anywhere. That's what makes the margin identical on the wide arm-to-arm axis and
@@ -101,8 +103,8 @@ export const PowerupsMixin = {
   // for the enemy-side mirror) — since #560 made DoT symmetric, an enemy's plasma weapon can burn
   // a player too, and the player deserves the same purple coating readout an enemy gets. Same
   // lazy-build-on-first-use shape as the enemy side (no per-kind config to gate on for a player);
-  // reuses the exact same body-only/dilated shell construction as the player's own shield outline
-  // above, just recoloured, so the coating hugs the mech's armor plating the same way.
+  // reuses the exact same baked/dilated shell construction as the player's own shield outline
+  // above, just recoloured, so the coating hugs the mech the same way.
   _ensureDotVisualFor(player) {
     if (!player) return null;
     if (player.dotVisual) return player.dotVisual;
@@ -113,7 +115,7 @@ export const PowerupsMixin = {
       scale: ARENA_MECH_SCALE,
       color: PLASMA_COAT_COLOR,
       blend: SHIELD_PLAYER_BLEND,
-      bodyOnly: true,
+      bakedShell: true,
       dilated: true,
     });
     return player.dotVisual;
