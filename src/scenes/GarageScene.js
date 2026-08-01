@@ -503,7 +503,7 @@ export default class GarageScene extends Phaser.Scene {
 
   // ── Merged CHASSIS+COLOR tab (#532) ──────────────────────────────────────────────────────────
   // A plain clickable row per PLAYER_CHASSIS_IDS entry (mediumPlayer/strikerPlayer/colossusPlayer
-  // — cosmetic-only variants, identical stats, see data/chassis/*Player.js). Re-enables the
+  // — cosmetic-only variants, identical stats, see data/chassis/player/*.js). Re-enables the
   // chassis switcher that #248 (commit 7a3893a) disabled, scoped to just these three cosmetic
   // picks rather than the old light/medium/heavy weight-class switch.
   //

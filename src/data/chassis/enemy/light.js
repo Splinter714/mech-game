@@ -1,5 +1,12 @@
 // Light chassis (~35t): nimble and twitchy. High speed, fast turn, wide+fast turret
 // traverse, quick light footfalls — the scout/skirmisher feel.
+//
+// ENEMY-side chassis. Live-chat ask (2026-07-31): "can we actually split out the enemy chassis
+// as separate code to be tweaked separately from the player chassis code?" — so `chassis/enemy/`
+// and `chassis/player/` are now fully independent groups, six configs total (Jackson explicitly
+// declined a third shared group: "just decouple, 6 chassis not 9"). The player's Striker used to
+// take this file's `art` wholesale; it now owns its own copy (`player/strikerPlayer.js`), so
+// every dial below can be retuned for enemies WITHOUT touching how the player's mech looks.
 export const LIGHT_CONFIG = {
   id: 'light',
   name: 'Scout',

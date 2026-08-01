@@ -38,9 +38,16 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
     #586 renamed the two side locations `leftTorso`/`rightTorso` → `leftShoulder`/
     `rightShoulder` everywhere, ids and labels included (`centerTorso` is unrelated and
     kept its name); `rosters.js`'s `migrate` hook rewrites the old keys in existing saves.
-  - `chassis/` — weight classes (light/medium/heavy). `index.js` expands a short
-    config (`light.js` etc.) into per-location stats + movement tuning. **Add a chassis
-    = a new config + one registry entry.**
+  - `chassis/` — `index.js` expands a short config into per-location stats + movement
+    tuning. **Add a chassis = a new config + one registry entry.** The configs sit in
+    two **fully independent** groups (2026-07-31, owner's ask — "just decouple, 6
+    chassis not 9"): `enemy/{light,medium,heavy}.js` (the weight classes enemies ride)
+    and `player/{mediumPlayer,strikerPlayer,colossusPlayer}.js` (the Mech Lab's three).
+    The player three used to derive from the enemy three, so tweaking an enemy silently
+    tweaked the player; every value is now a literal its own file owns. The one
+    deliberate spread left is *inside* `player/` — Striker/Colossus take mediumPlayer's
+    stat block, differing only in `id`/`name`/`art` ("same stats, just different art").
+    Chassis **ids are persisted in saved builds** (`rosters.js`), so don't rename them.
   - `categories.js` + `weapons.js` — the two-axis weapon model: a Category (economy)
     plus a composable `delivery` profile (hitscan/projectile, velocity, straight/arcing,
     guidance, single/spread/stream). Each weapon has its own `ammoMax`/`ammoRegen`

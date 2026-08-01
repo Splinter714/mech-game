@@ -13,17 +13,26 @@
 // the registry keeps the codebase's standing rule intact ("adding a chassis is one config + one
 // entry, no model changes") and every consumer sees one consistent mech.
 //
-// Everything except the stat totals is MEDIUM_CONFIG verbatim (movement feel, art, name, weight
-// class), spread in so the two can never drift apart on the things that are meant to match. Only
-// `id` and the totals differ. The player's shield is configured separately at deploy time
-// (ArenaScene, `data/Mech.js`'s `PLAYER_SHIELD_CONFIG`) — that's the unconditional 100 in
-// 200/300/100. #496 briefly made it an equip choice through a since-removed core-slot system;
-// Jackson's follow-up call put it back as a fixed baseline every player mech always gets.
-import { MEDIUM_CONFIG } from './medium.js';
+// This file USED to be `{ ...MEDIUM_CONFIG, id, totals, art, movement }` — everything it didn't
+// override was the enemy medium's, spread in so the two "could never drift". Live-chat ask
+// (2026-07-31): "can we actually split out the enemy chassis as separate code to be tweaked
+// separately from the player chassis code?" — drift is now the POINT, so the spread is gone and
+// every value below is a literal this file owns. The inherited ones (name 'Trooper', weightClass
+// 'medium', art bodyLen/bodyWid/accent, turretSlew/stepBob/footShake) were copied verbatim off
+// enemy/medium.js at the time of the split, so behaviour is byte-identical — but from here on,
+// editing enemy/medium.js has ZERO effect on the player, and vice versa.
+//
+// The player's shield is configured separately at deploy time (ArenaScene, `data/Mech.js`'s
+// `PLAYER_SHIELD_CONFIG`) — that's the unconditional 100 in 200/300/100. #496 briefly made it an
+// equip choice through a since-removed core-slot system; Jackson's follow-up call put it back as
+// a fixed baseline every player mech always gets.
 
 export const MEDIUM_PLAYER_CONFIG = {
-  ...MEDIUM_CONFIG,
   id: 'mediumPlayer',
+  // Shares the enemy medium's display name and weight class — but as its own copy now, not a
+  // spread. Rename the player's Trooper here without touching the Warden's chassis.
+  name: 'Trooper',
+  weightClass: 'medium',
   // The player's REAL durability, stated honestly in one place (#324).
   //
   // #299 set these to 300 armor / 200 hp, but ArenaScene then applied a player-only
@@ -38,6 +47,10 @@ export const MEDIUM_PLAYER_CONFIG = {
   // Plus the unconditional 100-point shield, always applied at deploy.
   totalArmor: 2100,
   totalHp: 1400,
+  // Body size + accent are the enemy medium's original figures (bodyLen 38 / bodyWid 30 /
+  // 0xe8a13a), copied at the 2026-07-31 split rather than spread — the player's Trooper and the
+  // enemy Warden merely happen to share them now, and either may move alone.
+  //
   // #438: player-only leg proportions. First pass went SKINNIER (legW 1.0 → 0.72) and
   // WIDER-SET (legSpread 1.0 → 1.4); the playtest kept the wide stance but asked for the legs
   // "a bit thicker again, and longer forward also".
@@ -53,20 +66,22 @@ export const MEDIUM_PLAYER_CONFIG = {
   //                    form, ~0.18·L behind centre), so the legs trail slightly without the full
   //                    pre-#482 asymmetry the owner flagged.
   //
-  // Only the player's chassis gets this override; the enemy Warden still rides plain
-  // MEDIUM_CONFIG's art (no shape override = DEFAULT_SHAPE, legDrop 1 → the old +0.15·L), so its
-  // legs are unaffected.
-  art: { ...MEDIUM_CONFIG.art, shape: { legW: 0.90, legSpread: 1.4, legH: 1.5, legDrop: 0.45 } },
+  // A partial `shape`: the fields left out fall back to mechArt.js's DEFAULT_SHAPE, same as the
+  // enemy Warden (which declares no `shape` at all → the old legDrop 1 = +0.15·L).
+  art: {
+    bodyLen: 38, bodyWid: 30, accent: 0xe8a13a,
+    shape: { legW: 0.90, legSpread: 1.4, legH: 1.5, legDrop: 0.45 },
+  },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties
   // cadence to speed already — it advances the walk frames by `speed / maxSpeed` and plants a
-  // foot every `stepInterval` ms at full throttle. But the shared MEDIUM stepInterval (340) was
-  // tuned before #159 nearly DOUBLED maxSpeed (98 → 195), so at the mech's current top speed the
-  // footfalls now land too far apart and the walk reads as a glide. #399 (full speed in every
-  // direction) widens that gap further. Pulling the interval down to 250 puts a footfall roughly
-  // every half-second at top speed — noticeably quicker, still tied to speed so a crawl still
-  // steps slowly. Weight is carried by stepBob/footShake/footstep audio (all inherited,
-  // untouched), so the step is faster without going floaty. Player-only: overriding here (not in
-  // medium.js) leaves the enemy Warden's medium chassis alone.
+  // foot every `stepInterval` ms at full throttle. But the medium stepInterval this file used to
+  // inherit (340) was tuned before #159 nearly DOUBLED maxSpeed (98 → 195), so at the mech's
+  // then-current top speed the footfalls landed too far apart and the walk read as a glide. #399
+  // (full speed in every direction) widened that gap further. Pulling the interval down to 250
+  // put a footfall roughly every half-second at top speed — noticeably quicker, still tied to
+  // speed so a crawl still steps slowly. Weight is carried by stepBob/footShake/footstep audio,
+  // which were left at the medium's figures. Player-only, and now structurally so: the enemy
+  // Warden's chassis lives in enemy/medium.js and shares nothing with this.
   //
   // #438 (playtest follow-up): "play the animation slightly faster" — 250 → 215, about 14%
   // quicker. This one number sets the WHOLE gait clock, not just the footfalls: the cycle is
@@ -74,24 +89,29 @@ export const MEDIUM_PLAYER_CONFIG = {
   // hip wobble all read off that same phase, so they speed up together and stay in lockstep. A
   // deliberately small step — the brief was "slightly", and the heavy bounding feel from #435
   // lives on this dial too.
+  //
   // #501 re-experiment: much slower player top speed/turn, paired with locomotion.js's
   // INSTANT_TURNING/INSTANT_VELOCITY flipped back off (arena/locomotion.js) so the rate-limited
   // "twist slew" turning and accel/decel ramp are both back in play instead of the instant-snap
-  // feel. Roughly half MEDIUM_CONFIG's speed/accel and ~60% of its turnRate — a first pass to
-  // playtest against, not a locked balance number. Player-only: the enemy Warden's medium
-  // chassis is untouched.
+  // feel. Roughly half the enemy medium's speed/accel (195/210) and ~60% of its turnRate (1.55)
+  // — a first pass to playtest against, not a locked balance number.
+  //
+  // turretSlew/stepBob/footShake are the medium's original values, copied at the split.
   movement: {
-    ...MEDIUM_CONFIG.movement, stepInterval: 215,
-    maxSpeed: 100, accel: 130, decel: 90, turnRate: 0.9,
+    accel: 130, decel: 90, maxSpeed: 100, turnRate: 0.9,
+    turretSlew: 2.9,
+    stepInterval: 215, stepBob: 2.7, footShake: 2.0,
   },
 };
 
 // #501: live A/B toggle (D-pad down, arena/locomotion.js) between the re-experiment above and
-// the exact pre-#501 feel, so the owner can compare in play without a redeploy. These are
-// MEDIUM_CONFIG's original numbers verbatim — what mediumPlayer.js's `movement.maxSpeed` etc.
-// were before this experiment overrode them. Only the 4 fields the experiment touches; turret
-// slew/arc, step cadence, etc. are unaffected by the toggle either way.
+// the exact pre-#501 feel, so the owner can compare in play without a redeploy. These four
+// numbers are what this chassis' `movement.maxSpeed`/`accel`/`decel`/`turnRate` were before the
+// experiment overrode them — i.e. the enemy medium's figures, which the player's chassis still
+// inherited at the time. They're written out as literals rather than read off enemy/medium.js so
+// the 2026-07-31 enemy/player split holds here too: retuning the Warden must not silently move
+// the player's A/B reference point out from under this comparison. Only the 4 fields the
+// experiment touches; turret slew, step cadence, etc. are unaffected by the toggle either way.
 export const LEGACY_MOVEMENT_OVERRIDE = {
-  maxSpeed: MEDIUM_CONFIG.movement.maxSpeed, accel: MEDIUM_CONFIG.movement.accel,
-  decel: MEDIUM_CONFIG.movement.decel, turnRate: MEDIUM_CONFIG.movement.turnRate,
+  maxSpeed: 195, accel: 210, decel: 140, turnRate: 1.55,
 };

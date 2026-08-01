@@ -1651,7 +1651,7 @@ export const BOUNDARY_RING_WIDTH = Math.ceil(REQUIRED_VIEW_DEPTH_PX / HEX_STEP_P
 // REAL `generateSpine`/`corridorHexSet` pipeline, 2000 seeds, mirrored in worldgen.test.js) not
 // just guessed:
 //   - Bigger is more "calm" — sized against the FASTEST chassis (light, 268px/s,
-//     chassis/light.js `maxSpeed`) as the binding case, since a slower chassis only gets MORE
+//     chassis/enemy/light.js `maxSpeed`) as the binding case, since a slower chassis only gets MORE
 //     calm seconds out of the same px floor.
 //   - But `baseCount` floors have to fit end-to-end inside ONE corridor alongside the existing
 //     stratified-slice segmentation, which only gives each base a 1/`baseCount` slice (~1130px)

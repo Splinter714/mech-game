@@ -1,6 +1,10 @@
 // Heavy chassis (~75t): the big stompy bruiser. Slow to accelerate and turn, a
 // narrow+slow turret traverse (you must turn the whole mech to track flankers), and a
 // ground-shaking gait. Carries far more armor and slots.
+//
+// ENEMY-side chassis — see enemy/light.js's header for the 2026-07-31 enemy/player split. The
+// player's Colossus used to take this file's `art` wholesale; it now owns its own copy
+// (`player/colossusPlayer.js`), so retuning the bruiser silhouette here is enemy-only.
 export const HEAVY_CONFIG = {
   id: 'heavy',
   name: 'Bulwark',

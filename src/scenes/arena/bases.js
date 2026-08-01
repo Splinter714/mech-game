@@ -68,8 +68,8 @@ const GATE_DEMAND_UNITS_PER_SCAN = 6;
 // the gate a player is actually near cycles open — the base's other gates, and every other captured
 // base's gates, stay shut. Sized comfortably past the reaction+opening travel time
 // (GATE_REACTION_MS + GATE_OPENING_MS ≈ 1.4s) at a sprinting light chassis's top speed (~400px/s,
-// data/sprint.js SPRINT_SPEED_MULT x data/chassis/light.js maxSpeed), so the doors are done swinging
-// open by the time a player who triggered them at the edge of this radius actually arrives.
+// data/sprint.js SPRINT_SPEED_MULT x data/chassis/enemy/light.js maxSpeed), so the doors are done
+// swinging open by the time a player who triggered them at the edge of this radius actually arrives.
 export const CAPTURED_GATE_APPROACH_PX = 420;
 
 // ── The node cap for a DEMAND search, and why it is NOT the movement router's ───────────

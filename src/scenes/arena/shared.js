@@ -8,7 +8,7 @@ import { CENTER } from '../../art/mechPrims.js';
 import { weaponMuzzleTip } from '../../art/mounts/barrelSpec.js';
 import { hexCorners } from '../../data/hexgrid.js';
 import { liveToughnessBounds } from '../../data/rosterBounds.js';
-import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/mediumPlayer.js';
+import { LEGACY_MOVEMENT_OVERRIDE } from '../../data/chassis/player/mediumPlayer.js';
 
 // On-screen scale of an arena mech (hull/turret sprites). Used by locomotion (view + muzzle)
 // and combat (mapping a hit point back to the nearest body part).
