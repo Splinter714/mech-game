@@ -11,6 +11,8 @@
 // track or clean up anywhere: a value at a given (seed, time-step) is exactly reproducible, so
 // HudScene can recompute the whole effect fresh every frame from `scene.time.now` alone and throw
 // it away — cheap (a handful of `Math.sin` calls per tile), and nothing here can leak.
+import { LETHAL_LOCATIONS, LETHAL_GROUPS } from './anatomy.js';
+
 function hash(seed) {
   const s = Math.sin(seed) * 43758.5453;
   return s - Math.floor(s);
@@ -105,4 +107,72 @@ export function hpCriticalFlash(hpFrac, tSec) {
   const closeness = 1 - f / HP_CRITICAL_FRAC;     // 0 right at the threshold, 1 at hp 0
   const pulse = 0.5 + 0.5 * Math.sin(tSec * HP_CRITICAL_PULSE_HZ);
   return closeness * (0.25 + 0.55 * pulse);
+}
+
+// ── #580: the LOW-HP SCREEN-EDGE VIGNETTE ───────────────────────────────────────────────────
+//
+// The critical flash above is a few pixels in a corner tile. Jackson: it is easy to miss in a
+// fight, and the replacement should be a "screen-edge glow / vignette … scaling with how critical
+// you are", because a vignette is unmissable while still leaving the middle of the screen — where
+// you are actually looking — completely clear. The corner pulse is KEPT and layered under it: the
+// two cues answer different questions (WHICH part is about to go, vs. YOU are about to go), and
+// the vignette can't say which limb is failing.
+//
+// Both live here so they share one clock idiom and one notion of "critical", and so the drawing
+// side (HudScene) stays a dumb consumer of a pure number.
+
+// "How much of the thing that ACTUALLY KILLS YOU is left", 0..1. Deliberately not total hp across
+// every part: an arm at 5% is not near-death, and with the current anatomy (anatomy.js) you die
+// when BOTH shoulders are destroyed, so a mech at 50% overall can be one hit from the wreck or
+// nowhere near it. Written off LETHAL_LOCATIONS/LETHAL_GROUPS rather than naming any location, so
+// it stays correct if the kill rule changes shape again (it has, twice — head/cockpit/centerTorso
+// all dropped out of it).
+//
+//   * a LETHAL_LOCATION kills you on its own, so its own fraction is the margin;
+//   * a LETHAL_GROUP kills you only when EVERY member is destroyed, so the margin is the
+//     BEST-OFF member — death is waiting on whichever one is still standing, not on the one
+//     already in pieces.
+//
+// The overall answer is the WORST (smallest) of those margins: the soonest way you can die.
+// Shields are deliberately excluded — they regenerate on their own in 4s (data/shield.js), so an
+// alarm that cleared itself every time the shield came back would train the player to ignore it.
+// `mech` only needs `partHealthFraction`, which is what the arena's hand-built doubles stub.
+export function vitalFraction(mech) {
+  if (typeof mech?.partHealthFraction !== 'function') return 1;
+  const frac = (id) => Math.max(0, Math.min(1, mech.partHealthFraction(id) ?? 0));
+  let worst = 1;
+  for (const id of LETHAL_LOCATIONS) worst = Math.min(worst, frac(id));
+  for (const group of LETHAL_GROUPS) {
+    let best = 0;
+    for (const id of group) best = Math.max(best, frac(id));
+    worst = Math.min(worst, best);
+  }
+  return worst;
+}
+
+// EVERY NUMBER BELOW IS A FEEL DIAL and is expected to be retuned in play — the issue explicitly
+// left the intensity curve open, so this is a deliberately conservative first pass rather than a
+// guess dressed up as a spec.
+export const HP_VIGNETTE_FRAC = 0.4;        // vital fraction at/below which the glow exists at all
+const HP_VIGNETTE_MAX_ALPHA = 0.45;         // opacity at the very edge of the screen, at death's door
+const HP_VIGNETTE_CURVE = 1.5;              // >1 = back-loaded: a whisper at the threshold, an alarm at 0
+const HP_VIGNETTE_HZ_MIN = 2.2;             // breathing rate just under the threshold …
+const HP_VIGNETTE_HZ_MAX = 6.5;             // … and at death's door (matches the corner pulse's rate)
+const HP_VIGNETTE_PULSE_DEPTH = 0.3;        // how much of the alpha the breath swings, 0..1
+
+// The vignette's opacity RIGHT NOW, 0 = draw nothing. Same pure (value, clock) shape as everything
+// else in this module — no state, so the HUD recomputes it from scratch each frame.
+//
+// Two things scale with criticality, not one: the glow gets STRONGER and it BREATHES FASTER. The
+// rate change is what stops "badly hurt" and "one hit from dead" reading as the same picture at a
+// glance, which a pure opacity ramp does when you are busy looking at something else.
+export function hpVignette(vitalFrac, tSec) {
+  const f = Math.max(0, Math.min(1, vitalFrac ?? 1));
+  if (f >= HP_VIGNETTE_FRAC) return 0;
+  const closeness = 1 - f / HP_VIGNETTE_FRAC;   // 0 right at the threshold, 1 at death
+  const strength = Math.pow(closeness, HP_VIGNETTE_CURVE);
+  const hz = HP_VIGNETTE_HZ_MIN + (HP_VIGNETTE_HZ_MAX - HP_VIGNETTE_HZ_MIN) * closeness;
+  const pulse = 0.5 + 0.5 * Math.sin(tSec * hz);
+  const breath = 1 - HP_VIGNETTE_PULSE_DEPTH + HP_VIGNETTE_PULSE_DEPTH * pulse;
+  return HP_VIGNETTE_MAX_ALPHA * strength * breath;
 }

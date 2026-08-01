@@ -25,7 +25,9 @@ import {
   paperDollLayout, perimeterRun, mechPools, noneLayout, structureColor,
   fusedLayout, shieldArcLayout, bracketOutline, FUSED_DOME_RISE, armorDrainRect, coreMeter,
 } from '../data/healthReadout.js';
-import { hpUrgency, hpFlicker, hpStaticSpecks, hpSparks, hpCriticalFlash } from '../data/hpFx.js';
+import {
+  hpUrgency, hpFlicker, hpStaticSpecks, hpSparks, hpCriticalFlash, vitalFraction, hpVignette,
+} from '../data/hpFx.js';
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
@@ -100,6 +102,43 @@ const C = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
   cooldown: '#5e7ce0',
 };
+
+// #580: the low-HP screen-edge vignette. The alert/kill red already in the game's vocabulary
+// (data/players.js's colour notes list 0xcf4d4d as exactly that), so the glow reads as the same
+// "you are in trouble" signal the kill markers and damage numbers use rather than a new colour.
+const VIGNETTE_TEX_KEY = 'hudCriticalVignette';
+const VIGNETTE_COLOR = 0xcf4d4d;
+const VIGNETTE_TEX_SIZE = 256;
+// Where the glow starts and where it reaches full strength, as a fraction of the half-width. Both
+// are FEEL DIALS: `INNER` is how much of the screen stays completely clear (0.55 leaves the whole
+// middle untouched, which is the entire point of a vignette over a full-screen flash) and the
+// stop between them is what keeps the falloff soft instead of a visible ring.
+const VIGNETTE_INNER = 0.55;
+const VIGNETTE_MID = 0.8;
+
+// Bake the vignette once onto a real canvas 2D context: transparent through the middle, ramping to
+// solid at the edge. Idempotent and guarded exactly like `bakeSmokePuffTexture` (scenes/arena/
+// stealth.js), so a headless/hand-rolled scene with no canvas support simply ends up with no
+// vignette rather than throwing. Filled as a RECT, not an arc — everything outside the gradient's
+// radius takes the final stop, which is what gives the corners full coverage.
+function bakeVignetteTexture(scene, key) {
+  if (scene.textures?.exists?.(key)) return key;
+  if (typeof scene.textures?.createCanvas !== 'function') return key;
+  const size = VIGNETTE_TEX_SIZE;
+  const tex = scene.textures.createCanvas(key, size, size);
+  const ctx = tex?.context;
+  if (!ctx) return key;
+  const c = size / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(VIGNETTE_INNER, 'rgba(255,255,255,0)');
+  g.addColorStop(VIGNETTE_MID, 'rgba(255,255,255,0.42)');
+  g.addColorStop(1, 'rgba(255,255,255,1)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  tex.refresh();
+  return key;
+}
 
 // #448: the integrity readout's palette. The three layers have to be told apart INSTANTLY and
 // with no numbers to fall back on, so each one is a different hue AND a different surface:
@@ -473,6 +512,7 @@ export default class HudScene extends Phaser.Scene {
     // a panel rebuild rather than per frame (it only moves when the player count does), and
     // explicitly BEHIND everything else in the band.
     this.consoleGfx = this.add.graphics().setDepth(-1);
+    this._makeCriticalVignette();   // #580: the low-HP screen-edge glow, behind every instrument
     // #452: the target readout poses real enemy art in a HUD bay, and every texture in this game
     // is a fixed-size square canvas — so the art has to be fitted to its INKED bounds or a drone
     // renders as a speck in the corner. Shared with the art gallery (art/inkBounds.js).
@@ -614,6 +654,49 @@ export default class HudScene extends Phaser.Scene {
   // `hudPlayerSnapshot`). Falls back to the old singleton channels so any path that drives the
   // HUD without the arena's `hudPlayers` channel (older saves mid-transition, the smoke test's
   // direct scene starts) still renders exactly one working panel rather than nothing.
+  // ── #580: the low-HP screen-edge vignette ──────────────────────────────────────────────────
+  // ONE stretched image, not a stack of graphics strokes: a vignette needs a smooth falloff, and
+  // Phaser's Graphics has no gradient fill, so nested rectangles would read as visible bands and
+  // square off the corners. The texture is baked once onto a real 2D canvas context (the same
+  // `textures.createCanvas` + `createRadialGradient` route the smoke puffs already take —
+  // scenes/arena/stealth.js — so this is still zero asset files) and then simply stretched over
+  // the screen; the non-square stretch is what turns the circular gradient into the ellipse a
+  // widescreen vignette wants anyway.
+  //
+  // Baked WHITE and tinted at draw time, so the alarm colour is one constant rather than a
+  // re-bake. Depth is below `consoleGfx` (-1), i.e. under every readout in the HUD — the glow is
+  // meant to catch the eye at the edges of vision, never to wash out the numbers.
+  _makeCriticalVignette() {
+    bakeVignetteTexture(this, VIGNETTE_TEX_KEY);
+    if (!this.textures.exists(VIGNETTE_TEX_KEY)) return;   // headless/test scene with no canvas
+    this.vignette = this.add.image(this.W / 2, this.H / 2, VIGNETTE_TEX_KEY)
+      .setDisplaySize(this.W, this.H)
+      .setTint(VIGNETTE_COLOR)
+      .setDepth(-5)
+      .setAlpha(0)
+      .setVisible(false);
+  }
+
+  // Per-frame: how close is the player to the wreck, and how loud should the glow be? `snapshots`
+  // is the same per-player channel every other readout reads.
+  //
+  // CO-OP: there is ONE screen and one shared camera, so there is one vignette, driven by the
+  // MOST critical live player. A teammate about to die is a thing the whole team needs to react
+  // to, and the per-player corner pulse (still in each player's own panel) is what says WHOSE
+  // machine it is. A dead player contributes nothing — their respawn clock is the cue for that,
+  // and a permanent full-strength vignette over a 20s wait would just become wallpaper.
+  _updateCriticalVignette(snapshots, tSec) {
+    const v = this.vignette;
+    if (!v) return;
+    let worst = 1;
+    for (const s of snapshots) {
+      if (!s || s.dead) continue;
+      worst = Math.min(worst, vitalFraction(s.mech));
+    }
+    const alpha = hpVignette(worst, tSec);
+    v.setVisible(alpha > 0).setAlpha(alpha);
+  }
+
   _playerSnapshots() {
     const published = this.registry.get('hudPlayers');
     if (Array.isArray(published) && published.length) return published;
@@ -1336,6 +1419,10 @@ export default class HudScene extends Phaser.Scene {
     // #366: re-ask the player list EVERY frame — this is what picks up a mid-sortie START join
     // (or a garage co-op deploy) and grows the second panel without a redeploy.
     const snapshots = this._syncPanels();
+    // #580: BEFORE the no-mech early-out below, so a run that ends (or a frame with no player
+    // published at all) always gets the glow cleared rather than leaving it frozen on screen.
+    // Same free-running clock the per-tile damage FX use, so the two cues pulse off one timebase.
+    this._updateCriticalVignette(snapshots, (this.time?.now ?? 0) / 1000);
     const mech = snapshots[0]?.mech;
     if (!mech) return;
 

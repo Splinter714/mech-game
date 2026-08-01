@@ -49,6 +49,12 @@ const RESPAWN_PHASE_MS = 900;   // one slide/breath cycle
 const MARKER_EDGE = 0x0b0e14;
 const MARKER_EDGE_W = 1.6;
 
+// #579: how long a previously-seen pad has to stay unreadable before its player is despawned.
+// Long enough that one dropped poll or a wireless pad's momentary radio hiccup rides through it,
+// short enough that a genuine unplug clears the mech off the field while the moment still reads
+// as "your controller died" rather than as a bug. Tunable.
+const PAD_DISCONNECT_MS = 700;
+
 export const CoopMixin = {
   // #348: the two shared "can a player be HERE?" primitives behind both co-op placements
   // (respawn and the mid-sortie joiner). `_isPassablePos` is the cheap map-lookup predicate;
@@ -182,20 +188,33 @@ export const CoopMixin = {
   // is WHICH mech they get: their own saved build if it is usable, falling back to phase 2's
   // copy-of-player-1 only if it is not (see `_mechForPlayer`).
   //
-  // #387: watch EVERY not-yet-claimed pad, not just pad 1. Players claim pads 0..count-1, so the
-  // unclaimed pads are indices count..MAX_PLAYERS-1. `_addPlayer` assigns the joiner index =
-  // current count and binds it to pad = that index, so drop-ins line up pad-for-slot as they join
-  // in order (pad 2 → player 3 → mech3, pad 3 → player 4 → mech4).
+  // #387: watch EVERY not-yet-claimed pad, not just pad 1.
+  //
+  // #579: "unclaimed" is now asked of the LIVE ROSTER (`_padClaimed`) rather than inferred from
+  // `players.length`. Those two agreed only while players could exclusively join — once a player
+  // can also LEAVE (a controller disconnect despawns them, below), the roster develops holes:
+  // with P1+P3 on the field, `length` is 2, so the old loop would have watched pad 2 — which P3
+  // already owns — and a START press there would have spawned a duplicate of an existing player.
   _updateCoopJoin() {
     if (!this._joinEdges) return;
     if (playersOf(this).length >= MAX_PLAYERS) return;
-    for (let pad = playersOf(this).length; pad < MAX_PLAYERS; pad++) {
-      if (this._joinEdges[pad]?.pressed(PAD.START)) { this._addPlayer(); return; }
+    for (let pad = 1; pad < MAX_PLAYERS; pad++) {
+      if (this._padClaimed(pad)) continue;
+      if (this._joinEdges[pad]?.pressed(PAD.START)) { this._addPlayer(pad); return; }
     }
   },
 
-  _addPlayer() {
-    const index = playersOf(this).length;
+  // Is some live player already driving this physical pad? A player's `id` IS its pad index
+  // (see `_addPlayer`), which is also what picks its garage slot and its texture key — so this
+  // one identity answers "who owns pad N", "whose mech is mech(N+1)" and "which colour" at once.
+  _padClaimed(pad) {
+    return playersOf(this).some((p) => p.id === pad);
+  },
+
+  // `pad` is BOTH the physical gamepad index and this player's id/slot — see `_padClaimed`.
+  // Defaulted to the next free slot so the garage spawn path (and any older caller) is unchanged.
+  _addPlayer(pad = playersOf(this).length) {
+    const index = pad;
     const host = primaryPlayerOf(this);
     // A fresh, fully-healthy mech for this player, built from whichever saved garage slot is
     // theirs. Going through the registry's allMechs keeps it data-driven — #349 changed only
@@ -213,6 +232,67 @@ export const CoopMixin = {
     playersOf(this).push(player);
     this._floatText(player.x, player.y - 30, `PLAYER ${index + 1}`, '#4fc3f7');
     Audio.ui('deploy');
+  },
+
+  // ── #579: a controller unplugging DESPAWNS its player ────────────────────────────────────
+  // Before this, a disconnected pad left its mech standing exactly where it stopped: frozen (its
+  // Controls read all-zero forever) but still SOLID, still targetable, still soaking enemy
+  // attention, and still one of the bodies the shared leash hard-stops the survivor against.
+  // Jackson's call was the quick fix — "despawn the mech as a quick change" — with rejoining
+  // handled by the mid-sortie drop-in that already exists (START on that pad again), which is
+  // exactly why `_updateCoopJoin` above had to learn to cope with holes in the roster. Handing
+  // the abandoned mech to the AI instead is the deliberate follow-up, filed separately as #604
+  // and NOT attempted here.
+  //
+  // Detection is a SEEN-THEN-GONE LATCH rather than a bare "is this pad present" test, because a
+  // physically-connected gamepad is invisible to the browser until it is first touched — the same
+  // enumeration quirk #122/#524 fight inside Controls. A player deployed straight out of the
+  // co-op garage can therefore legitimately have no readable pad for its first frames, and a bare
+  // presence test would despawn it before its owner ever pressed anything. So the check only ARMS
+  // once that player's pad has actually been read at least once, and even then waits out a short
+  // confirm window so one dropped poll (or a wireless pad's brief radio hiccup) is not a leave.
+  _updateCoopLeave(delta) {
+    const players = playersOf(this);
+    if (players.length < 2) return;
+    // Iterate a COPY: `_removePlayer` splices the live array out from under this loop.
+    for (const p of [...players]) {
+      // Player 1 owns the keyboard+mouse and can always keep playing without a pad, so it is
+      // never a disconnect candidate — and there would be no primary player left to hand the
+      // camera, the HUD and the audio listener to.
+      if (p.id === 0) continue;
+      if (p.controls?.pad?.()) { p._padSeen = true; p._padGoneMs = 0; continue; }
+      if (!p._padSeen) continue;   // never armed — see the enumeration quirk above
+      p._padGoneMs = (p._padGoneMs ?? 0) + delta;
+      if (p._padGoneMs >= PAD_DISCONNECT_MS) this._removePlayer(p);
+    }
+  },
+
+  // Take one player off the field entirely. Deliberately NOT the same thing as dying: there is no
+  // wreck, no death FX and no respawn clock — the player is simply gone, and the run continues
+  // for whoever is left (a solo survivor's rings switch back off on the very next frame, because
+  // `_updatePlayerMarkers` re-asks `showsPlayerColor` every frame).
+  //
+  // Everything this player OWNED in the world goes with them. The two ability-spawned things
+  // (the drone squad and the smoke cloud) get their own despawn calls because each holds live
+  // Phaser objects that nothing else would ever clean up once the owner is off the roster — the
+  // usual cleanup paths are keyed on `player.dead`, which never becomes true here. Rounds already
+  // in flight are left alone on purpose: they only carry `p.shooter` to EXCLUDE the firer from
+  // friendly-fire candidates, and `otherLivePlayers` filters the live roster, so a departed
+  // shooter is simply never found — no dangling reference, and the shots that were already in the
+  // air still land. Enemies re-resolve `targetPlayer` from the collection every frame.
+  _removePlayer(player) {
+    const players = playersOf(this);
+    const i = players.indexOf(player);
+    if (i < 0) return;
+    players.splice(i, 1);
+    this._despawnFriendlyDrone?.(player);
+    this._despawnSmokeCloud?.(player);
+    this._floatText(player.x, player.y - 30, `P${player.id + 1} DISCONNECTED`, '#cf4d4d');
+    player.view?.destroy();
+    player.marker?.destroy();
+    player.view = null;
+    player.marker = null;
+    player.controls = null;
   },
 
   // A second mech for player `index`: a FRESH Mech through the model's own constructor.

@@ -21,7 +21,10 @@
 // layout (positions in mech-local design coords) so art + hit mapping line up;
 // `partHealthFraction` returns the whole-unit health for every part (they're one pool), which
 // is exactly what the damage-visual code wants (the unit greys out uniformly as it dies).
-import { createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent } from './shield.js';
+import {
+  createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
+  scaleForLayer, unscaleFromLayer,
+} from './shield.js';
 import { applyStatusEffect as applyEffect, tickStatusEffects as tickEffects } from './statusEffects.js';
 
 // Build the parts map from a layout spec: { locId: { x, y, w, h } }. Each part carries the
@@ -81,8 +84,11 @@ export class HpBody {
   // placement) but every part draws from the one pool, so where you hit doesn't change the
   // total — it just changes where the damage number floats up. Returns a Mech-shaped result
   // so combat.js feedback code (destroyed? shielded? armor just broke?) works without a
-  // special case. `weaponCategory` is the same forward-compat seam as Mech.applyDamage — see
-  // data/shield.js `layerMultiplier` (not implemented this pass, every category = 1.0x).
+  // special case. #576: `weaponCategory` is LIVE — the same per-layer scaling Mech.applyDamage
+  // runs (energy strips shields, ballistic chews armor; see data/shield.js LAYER_MULTIPLIERS and
+  // its worked example). It has to be here as well as on Mech or the bonus would silently apply
+  // to enemy MECHS only and not to the tanks/turrets/drones, which is most of what the player
+  // shoots. No category passed = 1.0 everywhere = exactly the old behaviour.
   applyDamage(locationId, amount, weaponCategory) {
     if (amount <= 0 || this.hp <= 0) {
       return {
@@ -90,8 +96,8 @@ export class HpBody {
         shieldAbsorbed: 0, shielded: false, armorBrokeNow: false,
       };
     }
-    const shieldRes = damageShield(this.shield, amount);
-    const overflow = shieldRes.overflow;
+    const shieldRes = damageShield(this.shield, scaleForLayer(amount, weaponCategory, 'shield'));
+    const overflow = unscaleFromLayer(shieldRes.overflow, weaponCategory, 'shield');   // back to raw
     if (overflow <= 0) {
       this._syncParts();
       return {
@@ -101,15 +107,19 @@ export class HpBody {
     }
     const before = this.hp;
     const armorBefore = this.armor;
-    const armorHit = Math.min(this.armor, overflow);
+    const armorDealt = scaleForLayer(overflow, weaponCategory, 'armor');
+    const armorHit = Math.min(this.armor, armorDealt);
     this.armor -= armorHit;
-    const toHp = overflow - armorHit;
+    // Structure is neutral for every category, so armor's leftovers go to hp un-scaled.
+    const toHp = unscaleFromLayer(armorDealt - armorHit, weaponCategory, 'armor');
     this.hp = Math.max(0, this.hp - toHp);
     this._syncParts();
     const destroyed = this.hp <= 0 && before > 0;   // this hit is what killed it
     const armorBrokeNow = armorBefore > 0 && this.armor <= 0;
+    // #576: `applied` is the durability removed (armor + structure), identical to the old
+    // `overflow` while every multiplier is 1.0 — same change as Mech.applyDamage.
     return {
-      applied: overflow, destroyed, location: locationId, partDestroyedNow: this.hp <= 0,
+      applied: armorHit + toHp, destroyed, location: locationId, partDestroyedNow: this.hp <= 0,
       shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow,
     };
   }

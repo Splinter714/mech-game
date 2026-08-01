@@ -150,17 +150,58 @@ export function shieldTotalMax(shield) {
   return (shield.max || 0) + (shield.temp || 0);
 }
 
-// ── Damage-pipeline category-vs-layer seam (#246) ───────────────────────────────────────────
-// Forward-compatibility scoping per the design decision: architect the pipeline so a FUTURE
-// weapon-category-vs-layer bonus (e.g. energy strong vs shields, ballistic strong vs armor)
-// can be added as a pure DATA change here, without touching Mech.applyDamage/HpBody.applyDamage
-// or any call site's control flow. NOT implemented this pass — every entry defaults to 1.0, so
-// every weapon damages every layer identically today. A future pass would populate
-// LAYER_MULTIPLIERS (e.g. `{ energy: { shield: 1.5 }, ballistic: { armor: 1.3 } }`) and thread
-// the attacking weapon's category id into `layerMultiplier` at the call sites — nothing else
-// changes.
-export const LAYER_MULTIPLIERS = {};
+// ── Category-vs-layer damage multipliers (#246 seam, FILLED IN by #576) ─────────────────────
+// #246 architected this as a pure-data seam and left it empty on purpose, so categories only ever
+// picked a hardpoint colour. #576 is the pass that gives them real mechanical identity. Jackson:
+// "yes — energy vs shields, ballistic vs armor. The classic split: energy strips shields fast,
+// ballistic chews armor." That is what makes a loadout choice mean something and what turns the
+// existing category colour language from decoration into information.
+//
+// THE NUMBERS (a conservative first pass, expected to be TUNED IN PLAY):
+//   energy     1.5x vs shield, 0.75x vs armor — strips the energy screen, poor against plate.
+//   ballistic  0.75x vs shield, 1.5x vs armor — the exact inverse; slugs bounce off a shield.
+//   missile    1.0 / 1.0, DELIBERATELY NEUTRAL. Missile identity is its DELIVERY (arcing, homing,
+//              cluster, splash — axis 2 in weapons.js), not a damage type. Giving it a third
+//              specialisation would blunt the only choice this feature actually creates: whether
+//              to bring an answer for shields or an answer for armor. A missile rack is the
+//              always-adequate option, which is a real position, not an absence of one.
+//   support    1.0 / 1.0, for the same reason from the other end: a support weapon's point is not
+//              damage at all (Gravity Well's damage is near-zero by design — see weaponStats.js),
+//              so a damage-type modifier on it would be noise on a number nobody reads.
+// Every category is written out explicitly, including the neutral pair, so this table shows the
+// DECISION rather than an omission.
+//
+// STRUCTURE (hp) is deliberately absent and therefore neutral for everybody: once you are through
+// the shield and the plate, damage is damage. Adding a third specialisation there would make the
+// two that matter unreadable.
+export const LAYER_MULTIPLIERS = {
+  energy:    { shield: 1.5,  armor: 0.75 },
+  ballistic: { shield: 0.75, armor: 1.5 },
+  missile:   { shield: 1,    armor: 1 },
+  support:   { shield: 1,    armor: 1 },
+};
 
 export function layerMultiplier(weaponCategory, layer) {
   return LAYER_MULTIPLIERS[weaponCategory]?.[layer] ?? 1;
+}
+
+// ── Converting a hit between "raw damage" and one layer's own currency (#576) ────────────────
+// The multipliers above have to be applied PER LAYER while a single hit passes through several of
+// them, so the pipeline can't just scale the incoming number once up front. The rule both bodies
+// (Mech and HpBody) follow is:
+//
+//   raw ──scaleForLayer──▶ that layer absorbs what it can ──unscaleFromLayer──▶ raw for the next
+//
+// Worked example, 10 raw energy damage into a 6-point shield backed by armor:
+//   10 raw × 1.5  = 15 shield-damage; the shield eats 6 and 9 is left over;
+//   9 ÷ 1.5       = 6 raw still travelling; that 6 is then scaled by the ARMOR multiplier (0.75)
+//                   into 4.5 armor-damage.
+// So a shield that stops the hit stops it entirely, a shield that only partly stops it consumes
+// exactly the share of the hit it was actually worth, and nothing double-counts a bonus.
+export function scaleForLayer(raw, weaponCategory, layer) {
+  return raw * layerMultiplier(weaponCategory, layer);
+}
+export function unscaleFromLayer(layerAmount, weaponCategory, layer) {
+  const m = layerMultiplier(weaponCategory, layer);
+  return m > 0 ? layerAmount / m : layerAmount;
 }
