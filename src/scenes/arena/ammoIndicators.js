@@ -16,8 +16,9 @@
 // back to the full (gun-bearing) texture, changing the SHIELD SHAPE mid-reload. Pulling the glow into
 // its own sprite and toggling THAT leaves the part texture CONSTANT, so the outline never re-derives.
 //
-// The reload STATE is read live from the pure model (Mech.weapons()); the "is the overlay shown this
-// frame" decision is a pure function (`glowOverlayVisible`), unit-tested in ammoIndicators.test.js.
+// The reload STATE is read live from the pure model (Mech.weapons()); the cycle cooldown is scene
+// state (firing.js). How bright the overlay is this frame is a pure function of the two,
+// `glowOverlayAlpha` below. (That test file is long gone with the rest of the suite.)
 import { PIVOT_LOCATIONS } from '../../art/index.js';
 import { livePlayersOf } from './players.js';
 
@@ -35,21 +36,37 @@ import { livePlayersOf } from './players.js';
 // rendering fault rather than as information.
 export const GLOW_COOLDOWN_MIN_MS = 500;
 
-// Should a weapon-carrying slot's glow overlay be VISIBLE this frame? Pure function of the
-// weapon's state plus this slot's live fire cooldown.
-//   - no weapon / offline (destroyed part) → hidden (no floating glow).
-//   - still cycling, and the cycle is long enough to see → hidden until it comes back up.
-//   - unlimited-ammo (`ammo == null`, melee) → otherwise always on (never reloads).
-//   - reloading → hidden for the whole reload.
-//   - otherwise (loaded, idle, or mid-magazine) → on.
-// The cooldown check sits ABOVE the unlimited-ammo early-out deliberately: "ready to fire" is the
-// question being answered, and a melee weapon mid-swing isn't ready either — an unlimited magazine
-// only means it never RELOADS.
-export function glowOverlayVisible(weapon, cooldownMs = 0, intervalMs = 0) {
-  if (!weapon || !weapon.online) return false;
-  if (intervalMs >= GLOW_COOLDOWN_MIN_MS && cooldownMs > 0) return false;
-  if (weapon.ammo == null) return true;
-  return !weapon.reloading;
+// How dim the glow gets at the START of a cycle. Follow-up ask, same day: the first pass made the
+// cooldown a BINARY hide, which looked fine tapping single shots but broke down holding the
+// trigger — the weapon re-fires the instant the cooldown expires, so the "ready" window is about
+// one frame and the glow sat dark essentially always ("if I hold down most weapons, they basically
+// just stay dark all the time which looks dumb"). A binary switch simply can't show readiness on a
+// weapon that is continuously re-arming.
+//
+// So the cooldown drives a RAMP, not a switch: brightness tracks how close the slot is to ready,
+// dimmest right after a shot and full at ready. Holding the trigger now reads as a rhythmic pulse
+// in time with the weapon's actual cadence — which is more information than the binary version
+// ever conveyed — and the floor keeps it from ever bottoming out to black, so "dark" stays
+// exclusively the RELOAD state and the two remain instantly distinguishable.
+export const GLOW_COOLDOWN_FLOOR = 0.22;
+
+// A weapon-carrying slot's glow-overlay ALPHA this frame, 0–1. Pure function of the weapon's state
+// plus this slot's live fire cooldown.
+//   - no weapon / offline (destroyed part) → 0 (no floating glow).
+//   - reloading → 0. The one fully-dark state, so it stays visually distinct from cycling.
+//   - still cycling, and the cycle is long enough to see → ramps FLOOR→1 as it re-arms.
+//   - otherwise (loaded, idle, mid-magazine, or cycling too fast to read) → 1.
+// The cycle ramp applies to unlimited-ammo weapons too: "ready to fire" is the question being
+// answered, and a melee weapon mid-swing isn't ready either — an unlimited magazine only means it
+// never RELOADS.
+export function glowOverlayAlpha(weapon, cooldownMs = 0, intervalMs = 0) {
+  if (!weapon || !weapon.online) return 0;
+  if (weapon.ammo != null && weapon.reloading) return 0;
+  if (intervalMs >= GLOW_COOLDOWN_MIN_MS && cooldownMs > 0) {
+    const ready = 1 - Math.min(1, Math.max(0, cooldownMs) / intervalMs);   // 0 just-fired → 1 ready
+    return GLOW_COOLDOWN_FLOOR + (1 - GLOW_COOLDOWN_FLOOR) * ready;
+  }
+  return 1;
 }
 
 export const AmmoIndicatorsMixin = {
@@ -73,7 +90,9 @@ export const AmmoIndicatorsMixin = {
         // stops going dark once its cycle drops under the readability threshold.
         const cd = player.fireCooldowns?.[loc] ?? 0;
         const interval = weapon?.weapon ? this._fireInterval(weapon.weapon) : 0;
-        overlay.visible = glowOverlayVisible(weapon, cd, interval);
+        const a = glowOverlayAlpha(weapon, cd, interval);
+        overlay.visible = a > 0;
+        overlay.alpha = a;
       }
     }
   },
