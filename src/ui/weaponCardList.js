@@ -12,13 +12,19 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_
 import { scheduleFireCues } from '../audio/fireCues.js';
 import { stepIndex, scrollToShow } from './padNav.js';
 import { orderByLock } from './catalogOrder.js';
+// #534: the ability half of the live preview. Weapon cards live-fire through the shared delivery
+// sim; ability cards replay their own real effect (shared FX specs, the real intercept selector,
+// the real smoke art, the real drone AI) through this — see its header for what's real per
+// ability and what's a declared stand-in.
+import { AbilityCardPreview } from './abilityPreview.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
 // column of cards inside a bounded region; each weapon card auto-fires a live shot/beam
-// preview using the same delivery sim + art primitives the arena uses, and each ability
-// card shows its signature fx. Optional `onSelect(id)` makes a card clickable (the garage
-// arms the picked item); `selectedId` highlights one.
+// preview using the same delivery sim + art primitives the arena uses, and (#534) each ability
+// card loops its real effect on the same principle — shared blast specs, the real intercept
+// selector, the real smoke art, the real drone AI (ui/abilityPreview.js). Optional `onSelect(id)`
+// makes a card clickable (the garage arms the picked item); `selectedId` highlights one.
 //
 // Usage:
 //   const list = new WeaponCardList(scene, { x, y, w, h, ids, onSelect, selectedId, compact });
@@ -222,7 +228,11 @@ export class WeaponCardList {
   // CANONICAL order; when lock info is available (#78) locked items sort to the bottom, so we
   // stash the canonical ids for refreshLocks() to re-sort against on unlock.
   setIds(ids) {
-    for (const c of this.cards) { c.container.destroy(); if (c._heldOn) Audio.stopHeld(c.id); }
+    for (const c of this.cards) {
+      c.preview?.destroy();   // #534: drops the ability preview's own sprites before the card goes
+      c.container.destroy();
+      if (c._heldOn) Audio.stopHeld(c.id);
+    }
     this.cards = [];
     this._focus = -1;
     this._ids = [...ids];   // canonical order, pre lock-sort — remembered for refreshLocks()
@@ -267,6 +277,11 @@ export class WeaponCardList {
       fontFamily: 'monospace', fontSize: statsSize, color: UI.dim, lineSpacing: this.compact ? 1 : 2, wordWrap: { width: wrapW },
     });
     const fxG = this.scene.add.graphics();
+    // #534: an ability card's live preview. It owns a `layer` container (for the Smoke Screen
+    // puff sprites) that sits BELOW fxG, matching the arena's own depth order — smoke is ground
+    // FX, the caster and its blasts draw over it. Vector work goes straight into fxG alongside
+    // the weapon cards', so a card is still exactly one Graphics redraw per frame.
+    const preview = weapon ? null : new AbilityCardPreview(this.scene, id, item, color, this.cards.length);
 
     // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
     // — sits on TOP of everything when the item is locked, hiding the live preview without
@@ -278,12 +293,13 @@ export class WeaponCardList {
 
     // emitter sits under fxG so projectiles/beams render over the muzzle; the lock overlay
     // sits above everything.
-    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats, fxG, lockScrim, lockLabel]);
+    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats,
+      ...(preview ? [preview.layer] : []), fxG, lockScrim, lockLabel]);
     this.scroller.add(c);
 
     const card = {
       id, item, weapon, color, container: c, panel, stage, emitter, name, cat, stats, fxG,
-      lockScrim, lockLabel,
+      lockScrim, lockLabel, preview,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     };
@@ -375,6 +391,9 @@ export class WeaponCardList {
       card.stageW = Math.max(20, stageW - muzzleInset - 8);
       // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
       card.emitter?.setDisplaySize(this.emitSize, this.emitSize).setPosition(card.muzzleX - this.emitBack, card.muzzleY);
+      // #534: an ability has no muzzle to fire from, so its preview gets the WHOLE stage rect —
+      // the effect is centred in it rather than launched from one edge.
+      card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
       card.lockScrim.setSize(cardW, cardH);
       card.lockLabel.setPosition(cardW / 2, cardH / 2);
     });
@@ -419,6 +438,7 @@ export class WeaponCardList {
 
   _updateCard(card, dt, delta) {
     if (card.weapon) this._tickWeapon(card, delta);
+    else card.preview?.update(dt);   // #534: ability cards run their own effect loop instead
     this._advance(card, dt, delta);
     this._draw(card);
   }
@@ -559,11 +579,10 @@ export class WeaponCardList {
     const g = card.fxG;
     g.clear();
 
-    // #188: every catalog card is a weapon now (the old non-weapon "ability" card — jumpJet/
-    // bubbleShield's pulsing signature fx — is gone along with equipment.js). `card.weapon` is
-    // never null in practice, but the null-safe shape elsewhere in this file (emitter/name/cat
-    // ternaries) is left as harmless, forward-compatible scaffolding.
-    if (!card.weapon) return;
+    // #534: abilities are back as their own card kind (#506) and draw their own live preview into
+    // the same Graphics — the real blast/intercept/smoke/squad, not the flat swatch the #188-era
+    // comment here described. Weapons fall through to the delivery-sim replay below.
+    if (!card.weapon) { card.preview?.draw(g); return; }
 
     const w = card.weapon;
     // (the emitter/mount is a rotated Image behind fxG, not drawn here — see _buildCard.)
@@ -595,7 +614,10 @@ export class WeaponCardList {
     s.input.off('pointerdown', this._onDown);
     s.input.off('pointermove', this._onMove);
     s.input.off('pointerup', this._onUp);
-    for (const c of this.cards) if (c._heldOn) Audio.stopHeld(c.id);
+    for (const c of this.cards) {
+      if (c._heldOn) Audio.stopHeld(c.id);
+      c.preview?.destroy();
+    }
     this.maskG.destroy();
     this.root.destroy();
     this.cards = [];

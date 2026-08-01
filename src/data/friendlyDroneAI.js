@@ -13,10 +13,30 @@
 // to the owner (mirrors data/leash.js's own "hard stop, no rubber-band" convention) so separation/
 // jitter can never carry one off wandering after a far-off target.
 import { nearestInterceptTarget } from './interceptor.js';
+import { ENEMY_KINDS } from './enemyKinds.js';
 
 // #497 rework (owner: "deploy 3-5 at a time"): a whole squad per summon instead of one pet.
 export const DRONE_COUNT_MIN = 3;
 export const DRONE_COUNT_MAX = 5;
+
+// The movement tuning `stepFriendlyDroneOrbit` consumes. #534 moved it here from
+// scenes/arena/friendlyDrones.js (values unchanged): it's pure tuning for the pure stepper, and
+// the garage catalog's animated ability preview drives the SAME stepper with these SAME numbers
+// (scaled down to card px) so the preview's swarm moves the way the real one does — which is
+// impossible if the constants only exist inside an arena scene mixin.
+//
+// maxSpeed/accel are the enemy Recon Drone's own (`ENEMY_KINDS.drone.move`), matching the #497
+// rework's "same movement feel as the enemy versions" brief.
+export const FRIENDLY_DRONE_TUNING = {
+  maxSpeed: ENEMY_KINDS.drone.move.maxSpeed,
+  accel: ENEMY_KINDS.drone.move.accel,
+  orbitRadius: 90,          // px — how close the squad hangs around its owner
+  leashRadius: 160,         // px — hard cap; mirrors data/leash.js's own "no rubber-band" rule
+  separationRadius: 40,     // px — squadmate spacing so 3-5 drones don't stack
+  separationWeight: 1.5,
+  jitterMin: 300,           // ms — re-pick cadence, matches droneBehavior
+  jitterMax: 700,
+};
 
 // A random count in [DRONE_COUNT_MIN, DRONE_COUNT_MAX], inclusive. `rng` is injectable (defaults
 // to Math.random) so the spawn count is deterministically testable without stubbing the global.
