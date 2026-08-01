@@ -2,6 +2,10 @@
 // point to the nearest body part) and the hit feedback (impact bursts, floating text).
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { reskinMech, mechLayout, ART_SCALE } from '../../art/index.js';
+// #534: the ring geometry behind `_aoeBlastFx`/`_interceptFx` below now lives in one shared spec
+// (art/abilityFx.js) that the garage catalog's animated ability preview replays too — so a card
+// shows the real blast, and retuning it here retunes both surfaces at once.
+import { aoeBlastRings, interceptRings, INTERCEPT_BOLT_COLOR } from '../../art/abilityFx.js';
 import { playerMechArt } from '../../art/playerMechLook.js';
 import { Audio } from '../../audio/index.js';
 import {
@@ -356,15 +360,14 @@ export const CombatMixin = {
   _interceptFx(px, py, x, y) {
     const g = this.projFx;
     if (g && g.lineStyle) {
-      g.lineStyle(2, 0xbdf3ff, 0.85);
+      g.lineStyle(2, INTERCEPT_BOLT_COLOR, 0.85);
       g.beginPath();
       g.moveTo(px, py);
       g.lineTo(x, y);
       g.strokePath();
     }
-    this._burst(x, y, 4, 16, 0xffffff, 1, 100, false);     // bright core flash
-    this._burst(x, y, 6, 32, 0x5ec8e0, 0.9, 280, true);    // cyan shockwave ring — bigger/longer than a normal spark
-    this._burst(x, y, 4, 20, 0x5ec8e0, 0.5, 220, false);   // cyan afterglow fill
+    // Core flash, cyan shockwave ring, cyan afterglow fill — see art/abilityFx.js.
+    for (const r of interceptRings()) this._burst(x, y, r.r0, r.r1, r.color, r.alpha, r.dur, r.stroke);
     Audio.ui('antiMissile');
   },
 
@@ -381,9 +384,8 @@ export const CombatMixin = {
   // "landed" beat — currently scenes/arena/abilities.js's `jumpBlast` (launch pop + landing
   // blast, at two different radii/tints).
   _aoeBlastFx(x, y, radius, color = 0xffcf8a) {
-    this._burst(x, y, radius * 0.15, radius * 0.6, 0xffffff, 0.95, 140, false);   // core flash
-    this._burst(x, y, radius * 0.3, radius * 1.05, color, 0.85, 260, true);       // shockwave ring
-    this._burst(x, y, radius * 0.2, radius * 0.8, color, 0.35, 320, false);       // afterglow fill
+    // Core flash, shockwave ring, afterglow fill — the geometry lives in art/abilityFx.js.
+    for (const r of aoeBlastRings(radius, color)) this._burst(x, y, r.r0, r.r1, r.color, r.alpha, r.dur, r.stroke);
     const cam = this.cameras?.main;
     if (cam?.shake) {
       // Live-chat ask (2026-07-31), "screen shake needs to be less overall": cap 8 → 5 and the

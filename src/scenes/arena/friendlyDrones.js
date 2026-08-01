@@ -35,7 +35,9 @@ import { scheduleFireCues } from '../../audio/fireCues.js';
 import { listenerOf } from './players.js';
 import { buildVehicleTextures } from '../../art/index.js';
 import { vehicleDarkPalette } from '../../art/vehicles/palette.js';
-import { randomDroneCount, stepFriendlyDroneOrbit, pickFriendlyDroneTarget } from '../../data/friendlyDroneAI.js';
+import {
+  randomDroneCount, stepFriendlyDroneOrbit, pickFriendlyDroneTarget, FRIENDLY_DRONE_TUNING,
+} from '../../data/friendlyDroneAI.js';
 
 // #497 rework: "same weapons as enemy drones" — the friendly drone borrows the enemy Recon
 // Drone's own weapon/range/cadence straight from its data entry rather than ad hoc constants, so
@@ -52,13 +54,10 @@ export const DRONE_RANGE = ENEMY_KINDS.drone.fireRange;            // same engag
 // without another data change; nothing currently decrements it.
 export const DRONE_HP = 16;
 
-// #497 rework ("deploy 3-5 at a time"): a squad, not a single pet.
-const DRONE_MOVE = ENEMY_KINDS.drone.move;      // same maxSpeed/accel feel as the enemy version
-export const DRONE_ORBIT_RADIUS = 90;           // px — how close the squad hangs around its owner
-export const DRONE_LEASH_RADIUS = 160;          // px — hard cap; mirrors data/leash.js's own "no rubber-band" rule
-const DRONE_SEPARATION_RADIUS = 40;             // px — squadmate spacing so 3-5 drones don't stack
-const DRONE_SEPARATION_WEIGHT = 1.5;
-const DRONE_JITTER_MIN_MS = 300, DRONE_JITTER_MAX_MS = 700;   // re-pick cadence, matches droneBehavior
+// #497 rework ("deploy 3-5 at a time"): a squad, not a single pet. The movement tuning itself
+// (orbit/leash radius, separation, jitter cadence, and the enemy Recon Drone's own maxSpeed/accel)
+// moved to data/friendlyDroneAI.js with #534 — it belongs next to the pure stepper that consumes
+// it, and the garage's animated ability preview drives that same stepper with the same numbers.
 
 const ROTOR_SPIN_RATE = 40;       // rad/s — matches the hostile drone's own rotor-blur spin (enemies.js)
 const DEFAULT_ACCENT = 0x5ec8e0;  // fallback owner tint if a test double/older caller has no player.color
@@ -89,8 +88,8 @@ export const FriendlyDronesMixin = {
       // (they'll separate on their own once orbiting, but a fanned-out spawn avoids one frame of
       // total overlap for a 3-5-strong squad).
       const spawnAng = (Math.PI * 2 * i) / count + Math.random() * 0.4;
-      const sx = player.x + Math.cos(spawnAng) * DRONE_ORBIT_RADIUS * 0.5;
-      const sy = player.y + Math.sin(spawnAng) * DRONE_ORBIT_RADIUS * 0.5;
+      const sx = player.x + Math.cos(spawnAng) * FRIENDLY_DRONE_TUNING.orbitRadius * 0.5;
+      const sy = player.y + Math.sin(spawnAng) * FRIENDLY_DRONE_TUNING.orbitRadius * 0.5;
       const shadow = this.add.ellipse(0, 0, 34 * scale, 18 * scale, 0x000000, 0.28);
       const hull = this.add.sprite(0, 0, `${key}_hull`).setScale(scale);
       const turret = this.add.sprite(0, 0, `${key}_turret`).setScale(scale);
@@ -100,7 +99,7 @@ export const FriendlyDronesMixin = {
       view.turret = turret;
       drones.push({
         x: sx, y: sy, vx: 0, vy: 0, angle: 0,
-        orbitAng: Math.random() * Math.PI * 2, orbitR: DRONE_ORBIT_RADIUS,
+        orbitAng: Math.random() * Math.PI * 2, orbitR: FRIENDLY_DRONE_TUNING.orbitRadius,
         jitterAt: 0, handed: Math.random() < 0.5 ? 1 : -1,
         hp: DRONE_HP, fireCd: 0, rotorSpin: Math.random() * Math.PI * 2, view,
       });
@@ -133,11 +132,7 @@ export const FriendlyDronesMixin = {
 
       for (const d of drones) {
         const siblings = drones.filter((o) => o !== d);
-        const stepped = stepFriendlyDroneOrbit(d, player.x, player.y, dt, {
-          maxSpeed: DRONE_MOVE.maxSpeed, accel: DRONE_MOVE.accel, orbitRadius: DRONE_ORBIT_RADIUS,
-          leashRadius: DRONE_LEASH_RADIUS, separationRadius: DRONE_SEPARATION_RADIUS,
-          separationWeight: DRONE_SEPARATION_WEIGHT, jitterMin: DRONE_JITTER_MIN_MS, jitterMax: DRONE_JITTER_MAX_MS,
-        }, siblings);
+        const stepped = stepFriendlyDroneOrbit(d, player.x, player.y, dt, FRIENDLY_DRONE_TUNING, siblings);
         d.x = stepped.x; d.y = stepped.y; d.vx = stepped.vx; d.vy = stepped.vy;
         d.orbitAng = stepped.orbitAng; d.orbitR = stepped.orbitR; d.jitterAt = stepped.jitterAt;
         d.angle = stepped.angle;
