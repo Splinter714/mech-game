@@ -750,7 +750,13 @@ export const ProjectilesMixin = {
             // (Formerly: for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage,
             // otherLivePlayers(this, hz.shooter))) this._damagePlayerAt(...) — deliberately removed.)
           }
-          this._impactFx(hz.x, hz.y, hz.color, 'plasma', hz.radius, hz.weaponId);
+          // #582: a mine going off is an EXPLOSION, so it asks for the explosive burst by name
+          // rather than borrowing the in-flight round's own kind. The charge is thrown as a
+          // `plasma`-art round, and that used to reach the orange fireball anyway (the old branch
+          // order sent anything with a blast radius there first); now that `_impactFx` reads kind
+          // before splash, passing 'plasma' through would turn a 55px mine blast into a plasma
+          // splatter. The detonation's look belongs to the hazard, not to the round that planted it.
+          this._impactFx(hz.x, hz.y, hz.color, 'missile', hz.radius, hz.weaponId);
           continue;
         }
       } else if (hz.kind === 'field' && hz.force) {
