@@ -11,7 +11,7 @@
 //
 // #66 is objective-only: the arena never feeds `playerDead` (that's the run-loop's job,
 // #64), so this mission can only ever go active → complete, never → failed, for now.
-import { makeMission, evaluateMission } from '../../data/mission.js';
+import { makeMission, evaluateMission, missionPhase } from '../../data/mission.js';
 import { axialKey, hexToPixel } from '../../data/hexgrid.js';
 import { isBaseCleared, baseClearState, baseMarkTargets, enemyMarkLift, CLEAR_DONE } from '../../data/bases.js';
 import { regionalBaseFor } from '../../data/regionalBases.js';
@@ -153,8 +153,10 @@ export const MissionMixin = {
     this.objectiveHex = targetHex ? axialKey(targetHex.q, targetHex.r) : null;
     this.mission = base ? makeMission('assault') : null;
     // #356: drop any stale clear-step line when there's no base left to target, so the HUD can't
-    // keep showing the last base's requirement after the run has run off the end.
-    if (!base) this.registry.set('baseClear', null);
+    // keep showing the last base's requirement after the run has run off the end. #605: the phase
+    // line rides along with it for the same reason — a leftover `BASE 5/5 — SECURED` under an
+    // empty requirement would outlive the thing it describes.
+    if (!base) { this.registry.set('baseClear', null); this.registry.set('missionPhase', null); }
     if (this._objectiveMarker) { this._objectiveMarker.destroy(); this._objectiveMarker = null; }
     this._clearSpreadMarkers();   // #371: last base's remaining-requirement markers don't carry over
     if (this.objectiveHex) this._makeObjectiveMarker(this.objectiveHex);
@@ -214,6 +216,19 @@ export const MissionMixin = {
     // Publish the live step so HudScene can show the player exactly ONE requirement at a time —
     // crucially, no enemy count until the last dock is down (see data/bases.js for why).
     this.registry.set('baseClear', clear);
+    // #605: the named STAGE, published from that same `clear` plus two facts the arena already
+    // holds — whether this base has woken (`_wokenBases`, scenes/arena/bases.js: the one signal
+    // that separates "still driving up on a dormant compound" from "in the fight") and where the
+    // base sits in the strictly-in-order sequence. A pure projection, so it can never disagree
+    // with the requirement line rendered from the same object. `_wokenBases` is only built in
+    // `_initBases`, hence the optional chain — a hand-built scene double need not have one, and
+    // reads as not-yet-woken.
+    this.registry.set('missionPhase', missionPhase({
+      clear,
+      awake: !!this._wokenBases?.has(this._objectiveBase?.id),
+      baseNumber: this._objectiveBaseIndex + 1,
+      baseCount: (this.bases ?? []).length,
+    }));
     // #371: the indicator spreads to whatever is still required, derived from that SAME `clear`.
     this._syncClearMarkers(clear);
     const wasActive = this.mission.status === 'active';

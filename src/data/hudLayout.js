@@ -89,7 +89,19 @@ export const OBJECTIVE_PANEL = {
   padY: 8,
   radius: 8,
   minW: 120,        // a very short line still reads as a plate, not a chip
+  // #605: the named-phase line above the requirement. Deliberately SMALLER and dimmer than the
+  // requirement — the phase is context ("BASE 2/5 — SWEEP"), the requirement is the instruction,
+  // and #449's whole point was that the instruction reads at a glance. A phase line at the same
+  // weight would compete with it and put the block back to the two-lines-of-shouting it was.
+  phaseFontSize: 12,
+  phaseGap: 5,      // px between the phase line's box and the requirement line's
 };
+
+// The vertical span the phase line occupies above the requirement line. Monospace ascender/
+// descender leading makes a rendered line taller than its font size, so this pads the nominal
+// size rather than using it raw — measured height isn't available at layout time (the line is
+// empty until the first mission update).
+export const OBJECTIVE_PHASE_ROW = OBJECTIVE_PANEL.phaseFontSize + 4 + OBJECTIVE_PANEL.phaseGap;
 
 // The backing plate for a measured objective line. `x`/`y` are where the TEXT is anchored and
 // `originX` how it is anchored there (1 = right-aligned under the map, 0.5 = centred in co-op) —

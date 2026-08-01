@@ -18,7 +18,7 @@ import {
   integrityLayout, INTEGRITY_ORDER,
   CONSOLE, CONSOLE_TILES, consoleLayout, consoleBand, consoleTileSize, tileRowWidth,
   HUD_DISC, minimapBox, targetDiscBox, targetDiscLayout, ringSweep, discReserveBottom,
-  OBJECTIVE_PANEL, objectivePanelRect, ARMOR_PEEK_PAD,
+  OBJECTIVE_PANEL, OBJECTIVE_PHASE_ROW, objectivePanelRect, ARMOR_PEEK_PAD,
 } from '../data/hudLayout.js';
 import {
   normalizeReadoutMode, nextReadoutMode,
@@ -31,6 +31,7 @@ import {
 import { themeFor } from '../art/mechPrims.js';
 import { playerColor, showsPlayerColor } from '../data/players.js';
 import { baseClearLabel } from '../data/bases.js';
+import { missionPhaseLabel } from '../data/mission.js';
 import { magazineReadout } from '../data/weaponStats.js';
 import { respawnHudRows } from '../data/respawn.js';
 
@@ -388,6 +389,12 @@ export default class HudScene extends Phaser.Scene {
     // (`objectivePanel`, drawn under the text each frame from the line's measured width) so it
     // reads on snow, sand or a burning compound alike instead of dissolving into the terrain.
     this.objectivePanel = this.add.graphics();
+    // #605: the named PHASE line, sharing the plate above the requirement line. It answers "where
+    // am I in this sortie" (`BASE 2/5 — SWEEP`) where the line below answers "what do I shoot" —
+    // dimmer and smaller so the instruction still wins the glance (see OBJECTIVE_PANEL's note).
+    this.phaseText = this.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: `${OBJECTIVE_PANEL.phaseFontSize}px`, color: C.dim, fontStyle: 'bold',
+    });
     this.objectiveText = this.add.text(0, 0, '', {
       fontFamily: 'monospace', fontSize: `${OBJECTIVE_PANEL.fontSize}px`, color: C.warn, fontStyle: 'bold',
     });
@@ -604,8 +611,23 @@ export default class HudScene extends Phaser.Scene {
 
     // The map now occupies the top-right corner, so tuck the objective line just under the disc in
     // solo (co-op's centred origin leaves it at the top).
-    this.objectiveText?.setPosition(this._layout.shared.objectiveX, this._objectiveTextY())
-      .setOrigin(this._layout.shared.objectiveOriginX, 0);
+    this._positionObjectiveBlock();
+  }
+
+  // #605: the phase line and the requirement line are ONE block on ONE plate, so they are placed
+  // together rather than each carrying its own copy of the alignment rules. Two call sites need
+  // this (create()'s minimap build and `_applyChromeLayout`'s panel-count rebuild) and they used
+  // to hold two identical copies of the objective placement.
+  _positionObjectiveBlock() {
+    const shared = this._layout?.shared;
+    if (!shared) return;
+    const y = this._objectiveTextY();
+    this.phaseText?.setPosition(shared.objectiveX, y).setOrigin(shared.objectiveOriginX, 0);
+    // The requirement line always sits a fixed row below, phase line present or not — reserving
+    // the row unconditionally keeps the plate (and the buff rings under it) from jumping a dozen
+    // pixels the first time a phase resolves.
+    this.objectiveText?.setPosition(shared.objectiveX, y + OBJECTIVE_PHASE_ROW)
+      .setOrigin(shared.objectiveOriginX, 0);
   }
 
   // Is the top-right shared chrome (objective line + buff rings) right-aligned? True in solo, false
@@ -614,8 +636,11 @@ export default class HudScene extends Phaser.Scene {
   _rightStack() { return this._layout?.shared?.objectiveOriginX === 1; }
   _objectiveTextY() { return this._rightStack() && this._mapReserveBottom ? this._mapReserveBottom : 16; }
   // The buff rings start under the objective PLATE, whose height is its font plus its own padding
-  // (#449 made it much taller than the 13px line the old +24 was measured against).
-  _objectivePanelH() { return OBJECTIVE_PANEL.fontSize + OBJECTIVE_PANEL.padY * 2 + 6; }
+  // (#449 made it much taller than the 13px line the old +24 was measured against), plus #605's
+  // phase row above it.
+  _objectivePanelH() {
+    return OBJECTIVE_PHASE_ROW + OBJECTIVE_PANEL.fontSize + OBJECTIVE_PANEL.padY * 2 + 6;
+  }
   _buffStartY() {
     return this._objectiveTextY() + this._objectivePanelH() + (this._rightStack() ? 8 : 12);
   }
@@ -630,8 +655,17 @@ export default class HudScene extends Phaser.Scene {
     if (!g || !t) return;
     g.clear();
     if (!t.text) return;
-    const r = objectivePanelRect(t.width || 0, t.height || OBJECTIVE_PANEL.fontSize, {
-      x: t.x, y: t.y, originX: t.originX ?? 1,
+    // #605: the plate now backs BOTH lines. It spans the wider of the two (the phase line's
+    // `BASE 2/5 — APPROACH` can out-measure a short `BASE CLEAR`) and starts at the phase line's
+    // top, so the pure rect helper needs no change — it is still "one measured block, anchored at
+    // x with this origin", just a taller block.
+    const p = this.phaseText;
+    const hasPhase = !!p?.text;
+    const w = Math.max(t.width || 0, hasPhase ? (p.width || 0) : 0);
+    const top = hasPhase ? t.y - OBJECTIVE_PHASE_ROW : t.y;
+    const h = (t.height || OBJECTIVE_PANEL.fontSize) + (hasPhase ? OBJECTIVE_PHASE_ROW : 0);
+    const r = objectivePanelRect(w, h, {
+      x: t.x, y: top, originX: t.originX ?? 1,
     });
     g.fillStyle(CONSOLE_COL.outline, 1);
     g.fillRoundedRect(r.x - 1.5, r.y - 1.5, r.w + 3, r.h + 3, OBJECTIVE_PANEL.radius + 1);
@@ -856,10 +890,9 @@ export default class HudScene extends Phaser.Scene {
   // Reposition the SHARED chrome that has to move out of a second panel's way. Guarded on each
   // object existing because the first build runs mid-create(), before the minimap exists.
   _applyChromeLayout() {
-    const { shared, margins } = this._layout;
-    // Objective line rides below the map in solo (right-aligned corner), top-centre in co-op.
-    this.objectiveText?.setPosition(shared.objectiveX, this._objectiveTextY())
-      .setOrigin(shared.objectiveOriginX, 0);
+    const { margins } = this._layout;
+    // Objective block rides below the map in solo (right-aligned corner), top-centre in co-op.
+    this._positionObjectiveBlock();
     if (!this.wayMargins) return;   // first build: create() sets these itself, just below
     this.wayMargins = {
       top: discReserveBottom(this._layout.count) + 20,
@@ -1474,6 +1507,13 @@ export default class HudScene extends Phaser.Scene {
       this.objectiveText
         .setText(complete ? 'COMPLETE' : line)
         .setColor(complete ? C.good : C.warn);
+      // #605: the STAGE, above the requirement. Rendered verbatim from the pure
+      // `missionPhaseLabel` for the same reason `baseClearLabel` is — the wording lives with the
+      // rule, so the HUD can't invent a phase name the model doesn't recognise. Goes green with
+      // the requirement line on a clear, so the whole block reads as one state change.
+      this.phaseText
+        .setText(missionPhaseLabel(this.registry.get('missionPhase')))
+        .setColor(complete ? C.good : C.dim);
       // #449: the plate is measured off the line, so it is repainted with it.
       this._paintObjectivePanel();
       // #64: the mission-complete banner only makes sense mid-run (a stage cleared, more to
