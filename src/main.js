@@ -112,12 +112,34 @@ function applySize() {
   game.scene.scenes.forEach((s) => s.cameras?.main?.setZoom(dpr * (s.zoomFactor || 1)));
 }
 
+// Live-chat ask (2026-07-31): "can we get the app to respond better to window resizing? right now
+// it's janky." FOUR sources below can each fire for the SAME visual change — `resize`,
+// `visualViewport`'s own resize, and a ResizeObserver on the container all report a window drag —
+// and every one of them called `applySize` synchronously. The no-op guard inside it stops the
+// duplicates that arrive at an unchanged size, but during an actual drag the size really is
+// different each time, so a single dragged frame could run `game.scale.resize()` two or three
+// times over. That call reallocates the WebGL drawing buffer at FULL DPR (on a Retina display,
+// several megapixels), which is far and away the most expensive thing here — doing it repeatedly
+// within one frame is the jank.
+//
+// So every source now just marks the size dirty and the real work runs ONCE per animation frame.
+// That both collapses the duplicates and aligns the reallocation with paint instead of landing
+// mid-frame. `applySize`'s own early-out still short-circuits a tick where nothing actually moved,
+// so a settled window costs one cancelled rAF and nothing else.
+let sizeRaf = 0;
+function requestApplySize() {
+  if (sizeRaf) return;
+  sizeRaf = requestAnimationFrame(() => { sizeRaf = 0; applySize(); });
+}
+
 applySize();
 game.events.once('ready', applySize);
-window.addEventListener('resize', applySize);
+window.addEventListener('resize', requestApplySize);
+// orientationchange still needs its own delay: the viewport metrics are briefly STALE right after
+// the event, so coalescing into the next frame would sample the pre-rotation size.
 window.addEventListener('orientationchange', () => setTimeout(applySize, 50));
-window.visualViewport?.addEventListener('resize', applySize);
-if (window.ResizeObserver && gameEl) new ResizeObserver(applySize).observe(gameEl);
+window.visualViewport?.addEventListener('resize', requestApplySize);
+if (window.ResizeObserver && gameEl) new ResizeObserver(requestApplySize).observe(gameEl);
 
 if (import.meta.env.DEV) window.__game = game;
 
