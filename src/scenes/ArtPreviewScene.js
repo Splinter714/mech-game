@@ -22,7 +22,7 @@ import { InkCache, texSize, fitScale } from '../art/inkBounds.js';
 import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/preview.js';
 import { vehicleScaleFactor, MECH_SCALE_FACTOR, trueScaleBase } from '../data/unitScale.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
-import { CHASSIS_IDS } from '../data/chassis/index.js';
+import { CHASSIS_IDS, PLAYER_CHASSIS_IDS } from '../data/chassis/index.js';
 import { WEAPON_IDS } from '../data/weapons.js';
 import { getItem } from '../data/items.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
@@ -892,10 +892,14 @@ export default class ArtPreviewScene extends Phaser.Scene {
   }
 
   // ── MECH ──────────────────────────────────────────────────────────────────────────────
-  // The player's own saved build, big. The 4-frame hull walk cycle laid out frame by frame
-  // (the only real frame animation in the game) plus one live animating copy, then the damage
-  // progression — the same applyDamage + reskin path the arena runs, so a stripped/destroyed
-  // part reads here exactly as it does mid-fight (#437 / #403).
+  // Two passes, in order:
+  //   1. #601 — BOTH chassis sets side by side, each group labelled (`_buildChassisSets`).
+  //   2. The selected chassis in depth: the player's own saved build big, the 4-frame hull walk
+  //      cycle laid out frame by frame (the only real frame animation in the game) plus one live
+  //      animating copy, then the damage progression — the same applyDamage + reskin path the
+  //      arena runs, so a stripped/destroyed part reads here exactly as it does mid-fight
+  //      (#437 / #403).
+  // The CHASSIS control-strip button drives pass 2 only; pass 1 always shows everything.
 
   _playerConfig() {
     const saved = this.allMechs?.[ACTIVE_MECH_KEY];
@@ -910,8 +914,55 @@ export default class ArtPreviewScene extends Phaser.Scene {
     return m;
   }
 
+  // #601: EVERY chassis, split into its two groups and labelled as such.
+  //
+  // The tab used to show exactly one "PLAYER BUILD — <id>" cell, for whichever id the CHASSIS
+  // button had cycled to — and that button walks `CHASSIS_IDS`, which is FLAT across both groups.
+  // So "PLAYER BUILD — light" drew the player theme on the ENEMY light chassis, not on
+  // `strikerPlayer`. That was harmless while the player three derived their art from the enemy
+  // three (it's exactly why "match the preview cell exactly" worked as a brief), but #596 split
+  // them into independent literals so they can now diverge — at which point the cell stops
+  // previewing what its label claims.
+  //
+  // Jackson's call: show BOTH sets, clearly labelled, so enemy-vs-player art can be compared
+  // directly — the useful view now that the two are meant to drift apart. Every cell here is baked
+  // with the SAME player theme deliberately: holding the palette constant is what makes this a
+  // comparison of GEOMETRY (bodyLen/bodyWid/shape/decor) rather than of theme. The enemy row's own
+  // enemy-themed art still lives on the ENEMIES tab.
+  //
+  // The two groups are derived as a PARTITION of CHASSIS_IDS rather than hardcoded, so a chassis
+  // added to either group can't silently go unshown.
+  _buildChassisSets() {
+    const playerIds = CHASSIS_IDS.filter((id) => PLAYER_CHASSIS_IDS.includes(id));
+    const enemyIds = CHASSIS_IDS.filter((id) => !PLAYER_CHASSIS_IDS.includes(id));
+    // The saved build's weapons, so the rows differ by CHASSIS alone and not by loadout too.
+    const { mounts } = this._playerConfig();
+
+    const row = (ids) => ids.map((id) => {
+      const m = new Mech({ chassisId: id, mounts });
+      m.repairAll();
+      const key = `${TEX_PREFIX}chassis_${id}`;
+      buildMechTextures(this, key, m, playerMechArt(0, { hullFrames: HULL_FRAMES }));
+      return { id, m, key };
+    });
+    // One shared ink per group, so the chassis within a set compare at true relative size instead
+    // of each re-zooming to fill its own cell (the same reason the damage row shares an ink).
+    const cells = (built) => {
+      const ink = this._inkUnion(built.flatMap((b) => this._mechKeys(b.key)));
+      // #598 payoff: one authoritative name per chassis, so this label can't disagree with the
+      // Mech Lab's chassis list or with the ENEMIES tab about what a machine is called.
+      return built.map((b) => this._mechCell(`${b.m.name}\n${b.id}`, b.key, b.m, { ink }));
+    };
+
+    this._group('PLAYER CHASSIS (the Mech Lab\'s three) — player theme', cells(row(playerIds)));
+    this._group('ENEMY CHASSIS (the weight classes enemies ride) — same player theme, for comparison',
+      cells(row(enemyIds)));
+  }
+
   _buildMech() {
     const cfg = this._playerConfig();
+    this._buildChassisSets();
+
     const live = this._freshPlayerMech();
     const liveKey = `${TEX_PREFIX}player_live`;
     // #404: bake the REAL player look (art/playerMechLook.js) — the same options the arena and the
@@ -919,7 +970,13 @@ export default class ArtPreviewScene extends Phaser.Scene {
     // bare palette (which renders the enemy reactor-purple centre spot). HULL_FRAMES because the
     // walk-cycle row below shows every baked frame.
     buildMechTextures(this, liveKey, live, playerMechArt(0, { hullFrames: HULL_FRAMES }));
-    this._group(`PLAYER BUILD — ${cfg.chassisId}`, [
+    // #601: name the GROUP the selected chassis belongs to, not just its id — the CHASSIS button
+    // cycles both sets, and "PLAYER BUILD — light" read as though `light` were a player chassis.
+    // The rows below (walk cycle, damage states) are this one chassis' deep-dive, so they follow
+    // the button; the two comparison rows above always show everything.
+    const group = this._chassisIndex < 0 ? 'saved'
+      : PLAYER_CHASSIS_IDS.includes(cfg.chassisId) ? 'player chassis' : 'ENEMY chassis';
+    this._group(`SELECTED BUILD — ${cfg.chassisId} (${group})`, [
       this._mechCell(`${live.name}\nwalking`, liveKey, live, { animate: true }),
     ]);
 
