@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { buildHexTextures } from '../art/hexArt.js';
 import { buildMechTextures } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
+import { PLAYER_SHIELD_CONFIG } from '../data/Mech.js';
 import { mechColorFor } from '../data/mechColors.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { hexToPixel } from '../data/hexgrid.js';
@@ -15,6 +16,7 @@ import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { CombatMixin } from './arena/combat.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { PowerupsMixin } from './arena/powerups.js';
+import { tickPlayerResources } from './arena/players.js';
 import { GAMEPLAY_ZOOM } from './arena/shared.js';
 import { BaseWorldMixin } from './base/world.js';
 import { BaseLocomotionMixin } from './base/locomotion.js';
@@ -95,6 +97,12 @@ export default class BaseScene extends Phaser.Scene {
     this.allMechs = this.registry.get('allMechs');
     const mech = this.allMechs[ACTIVE_MECH_KEY];
     mech.repairAll();
+    // #597 playtest fix: "shield isn't visible". The baseline shield is not part of a saved build —
+    // it's applied at DEPLOY (`configureShield(PLAYER_SHIELD_CONFIG)`, ArenaScene.create and
+    // coop.js's join). Walking into the base is not a deploy, so the mech arrived here with
+    // `shield.max` of 0 and `shieldOutlineActive` correctly hid a shell with no shield behind it.
+    // That was never a rendering bug; there was genuinely nothing to draw.
+    mech.configureShield(PLAYER_SHIELD_CONFIG);
 
     const textureKey = 'baseMech';
     buildMechTextures(this, textureKey, mech, playerMechArt(0, { accent: mechColorFor(mech, 0) }));
@@ -164,6 +172,17 @@ export default class BaseScene extends Phaser.Scene {
     // the part tilts `_stepGaitBase` just eased, so a shot leaves the barrel where it is actually
     // drawn this frame rather than where it was last frame.
     updateBaseFiring(this, intent, delta, dt);
+    // #597 playtest fix: "shield isn't visible and reload isn't working". BOTH were the same
+    // omission — this call. `tickPlayerResources` is what drives `regenAmmo` (which counts the
+    // reload lockout down and refills the magazine when it hits zero) and `tickShield` (which
+    // fills the shield pool). Without it a magazine emptied once stayed empty forever, and the
+    // shield pool sat at zero — so `shieldOutlineActive` correctly hid a shell that genuinely had
+    // no shield behind it. The shield was never a rendering bug; nothing was charging it.
+    //
+    // Composing the arena's firing mixins brought the code that SPENDS these resources without the
+    // per-frame tick that RESTORES them. Anything that consumes a player resource in the base needs
+    // this call, so it runs before the visual that reads the result.
+    tickPlayerResources(this, dt);
     this._updateShieldVisual(delta);
     this._checkTriggers();
   }

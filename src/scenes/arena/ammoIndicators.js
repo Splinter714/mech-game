@@ -50,6 +50,19 @@ export const GLOW_COOLDOWN_MIN_MS = 500;
 // exclusively the RELOAD state and the two remain instantly distinguishable.
 export const GLOW_COOLDOWN_FLOOR = 0.22;
 
+// RELOAD gets the same treatment on a DEEPER band (live-chat ask: "for the reload visual, let's do
+// the dim thing like you're doing with the cycle time, but make it even more dim during reload").
+// So reload is no longer a flat blackout — it ramps as the reload completes, exactly like a cycle,
+// just much darker throughout.
+//
+// The ceiling here sits BELOW `GLOW_COOLDOWN_FLOOR` on purpose, and that gap is what carries the
+// meaning: the brightest a reloading weapon ever gets is still dimmer than the dimmest a merely-
+// cycling one gets. So the two states can never be confused at a glance no matter where each
+// happens to be in its own ramp — "dimmer than anything a cycle does" reads as reload without
+// needing a separate visual language for it.
+export const GLOW_RELOAD_FLOOR = 0.05;
+export const GLOW_RELOAD_CEIL = 0.16;
+
 // A weapon-carrying slot's glow-overlay ALPHA this frame, 0–1. Pure function of the weapon's state
 // plus this slot's live fire cooldown.
 //   - no weapon / offline (destroyed part) → 0 (no floating glow).
@@ -61,7 +74,11 @@ export const GLOW_COOLDOWN_FLOOR = 0.22;
 // never RELOADS.
 export function glowOverlayAlpha(weapon, cooldownMs = 0, intervalMs = 0) {
   if (!weapon || !weapon.online) return 0;
-  if (weapon.ammo != null && weapon.reloading) return 0;
+  if (weapon.ammo != null && weapon.reloading) {
+    // `reload` counts DOWN to 0, so this runs 0 (just emptied) → 1 (about to come back).
+    const done = 1 - Math.min(1, Math.max(0, weapon.reload) / (weapon.reloadMax || 1));
+    return GLOW_RELOAD_FLOOR + (GLOW_RELOAD_CEIL - GLOW_RELOAD_FLOOR) * done;
+  }
   if (intervalMs >= GLOW_COOLDOWN_MIN_MS && cooldownMs > 0) {
     const ready = 1 - Math.min(1, Math.max(0, cooldownMs) / intervalMs);   // 0 just-fired → 1 ready
     return GLOW_COOLDOWN_FLOOR + (1 - GLOW_COOLDOWN_FLOOR) * ready;
