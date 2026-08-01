@@ -4,6 +4,7 @@
 // tactical-AI design this configures (PRESS/KITE/FLANK/COVER/HOLD).
 import { ARENA_MECH_SCALE } from './shared.js';
 import { LETHAL_GROUPS } from '../../data/anatomy.js';
+import { CHASSIS_DPS_BUDGET } from '../../data/enemyLoadout.js';
 
 // #309 playtest: an open gate is passable to EVERYONE now, so there is no longer an enemy-specific
 // form of the scene's `_blocked` to route through — this is the plain query, kept as a named helper
@@ -145,6 +146,43 @@ export const ENEMY_FOOTFALL_POWER_FRAC = 1.0; // scales the shared footfall impa
 // PLAYER is untouched — it still tracks at its chassis turretSlew (full 360°, no arc clamp). Owner:
 // tunable — raise toward the chassis values for snappier enemy aim, lower for heavier lag.
 export const ENEMY_MECH_TURRET_SLEW = 0.55; // rad/s — capped aim-tracking rate for enemy mechs (was 0.9, #398)
+// #577: that single number applied to EVERY enemy mech, so every one of them tracked the player
+// at exactly the same rate and the aim lag carried no information. Jackson's call: vary it
+// INVERSE TO FIREPOWER — whatever hits hardest tracks slowest, REGARDLESS OF CHASSIS. That ties
+// the tell to the actual threat rather than to the silhouette, so a heavily-armed light still
+// reads as dangerous-but-evadable and a lightly-armed heavy is genuinely quicker on the draw.
+//
+// Firepower comes from the existing weapon-stat model — `loadoutSustainedDps`, which is the same
+// summed sustained DPS the per-spawn loadout roller already budgets against (data/enemyLoadout.js;
+// the DPS math itself was corrected in #559). No new hand-maintained table: retune a weapon and
+// both the roll budget and the aim speed move together.
+//
+// The input band is DERIVED from CHASSIS_DPS_BUDGET rather than written out, for the same reason —
+// it is exactly the range of totals the roller can produce, across all chassis, so the full slew
+// spread is actually reachable and a budget edit rescales the curve automatically.
+//
+// The slew spread is a FEEL DIAL and deliberately conservative: it brackets the old flat 0.55
+// closely enough that a MEDIAN-armed mech lands at ~0.575 — i.e. today's game — and only the ends
+// of the distribution move much. Widen the gap between MIN and MAX for a louder tell.
+export const ENEMY_MECH_TURRET_SLEW_MIN = 0.40;  // rad/s — the hardest-hitting roll: slowest, heaviest swing
+export const ENEMY_MECH_TURRET_SLEW_MAX = 0.75;  // rad/s — the lightest-hitting roll: quickest on the draw
+
+const DPS_BAND = Object.values(CHASSIS_DPS_BUDGET).reduce(
+  (band, b) => ({ lo: Math.min(band.lo, b.lo), hi: Math.max(band.hi, b.hi) }),
+  { lo: Infinity, hi: -Infinity },
+);
+
+// One enemy mech's turret tracking rate, rad/s, from its ROLLED loadout's total sustained DPS.
+// Linear across the band and clamped at both ends, so a roll that lands outside the budget (the
+// roller's own fallback path can produce one) still gets a sane rate rather than an extrapolated
+// one. A caller that can't name a DPS at all falls back to the old flat constant.
+export function enemyMechTurretSlew(loadoutDps) {
+  if (!Number.isFinite(loadoutDps)) return ENEMY_MECH_TURRET_SLEW;
+  const span = DPS_BAND.hi - DPS_BAND.lo;
+  if (!(span > 0)) return ENEMY_MECH_TURRET_SLEW;
+  const t = Math.max(0, Math.min(1, (loadoutDps - DPS_BAND.lo) / span));
+  return ENEMY_MECH_TURRET_SLEW_MAX - (ENEMY_MECH_TURRET_SLEW_MAX - ENEMY_MECH_TURRET_SLEW_MIN) * t;
+}
 // Aim slop (#398 third pass): the slew cap alone still tracks TOWARD the player's exact bearing,
 // so it eventually settles dead-on and holds there. Instead, the turret chases a noisy offset
 // from the true bearing that's re-rolled periodically — combined with the slow slew above, the

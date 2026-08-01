@@ -22,7 +22,7 @@
 import Phaser from 'phaser';
 import { Mech } from '../../data/Mech.js';
 import { ENEMIES } from '../../data/enemies.js';
-import { rollLoadout } from '../../data/enemyLoadout.js';
+import { rollLoadout, loadoutSustainedDps } from '../../data/enemyLoadout.js';
 import { mulberry32 } from '../../data/rng.js';
 import { ENEMY_KINDS, isEnemyKind, SWARM_SIZE, INFANTRY_MOB_SIZE } from '../../data/enemyKinds.js';
 import { allPlayersDeadIn, enemyTargetOf, listenerOf, playersOf, targetPlayerFor } from './players.js';
@@ -79,7 +79,7 @@ import {
   LURCH_DRIVE_MIN_MS, LURCH_DRIVE_MAX_MS, LURCH_PAUSE_MIN_MS, LURCH_PAUSE_MAX_MS, LURCH_PAUSE_SPEED_FRAC,
   LURCH_WINDUP_MIN_MS, LURCH_WINDUP_MAX_MS, LURCH_WINDUP_SPEED_FRAC, WINDUP_TURN_FRAC,
   HULL_DETENT_RAD, TURRET_DETENT_RAD, ENEMY_STEP_BOB_FRAC, ENEMY_FOOTFALL_POWER_FRAC,
-  ENEMY_MECH_TURRET_SLEW, ENEMY_MECH_AIM_SLOP_RAD, ENEMY_MECH_AIM_SLOP_MIN_MS, ENEMY_MECH_AIM_SLOP_MAX_MS,
+  ENEMY_MECH_TURRET_SLEW, enemyMechTurretSlew, ENEMY_MECH_AIM_SLOP_RAD, ENEMY_MECH_AIM_SLOP_MIN_MS, ENEMY_MECH_AIM_SLOP_MAX_MS,
   ARRIVE_SLOW, REPICK_ON_ARRIVE,
   IDLE_WANDER_RADIUS, IDLE_REPICK_MIN, IDLE_REPICK_MAX,
   STAND_DOWN_DELAY_MS, IDLE_SPEED_FRAC,
@@ -139,6 +139,14 @@ export const EnemiesMixin = {
       handed: Math.random() < 0.5 ? 1 : -1,   // persistent flank handedness (spaces enemies out)
       // #44 follow-up: an all-indirect (homing/arcing) loadout camps cover as its primary posture.
       allIndirect: isAllIndirect(mech),
+      // #577: this mech's own turret tracking rate, INVERSE to the firepower it just rolled —
+      // the hardest hitter on the field is the slowest to bring its guns round. Resolved ONCE at
+      // spawn (the loadout never changes afterward) rather than per frame, and stored on the
+      // enemy so the aim tick stays a plain read. Named `aimSlew`, NOT `turretSlew`, to keep it
+      // clearly distinct from the chassis's own `move.turretSlew` (the fast, purely cosmetic rate
+      // the gun follows its direction of TRAVEL at while idle). See enemyAiTuning.js
+      // `enemyMechTurretSlew`.
+      aimSlew: enemyMechTurretSlew(loadoutSustainedDps(Object.values(mounts).flat())),
       // #103: detection range derives from the same standoff/weapon-range concept the tactical
       // AI already computed above, widened a touch (see data/awareness.js).
       detectRange: detectionRangeFor(clamp(opt * STANDOFF_FRAC, STANDOFF_MIN, STANDOFF_MAX)),
@@ -1142,7 +1150,11 @@ export const EnemiesMixin = {
         e.aimOffset = (Math.random() * 2 - 1) * ENEMY_MECH_AIM_SLOP_RAD;
         e.aimSlopAt = rand(ENEMY_MECH_AIM_SLOP_MIN_MS, ENEMY_MECH_AIM_SLOP_MAX_MS);
       }
-      e.turretRaw = rotateToward(e.turretRaw ?? e.turret, bearing + e.aimOffset, ENEMY_MECH_TURRET_SLEW, dt);
+      // #577: per-enemy rate, stamped at spawn from its rolled firepower (`aimSlew`). Falls back
+      // to the old flat constant for the many hand-built enemy doubles that never went through
+      // `_spawnMech` and so carry no rate of their own.
+      e.turretRaw = rotateToward(e.turretRaw ?? e.turret, bearing + e.aimOffset,
+        e.aimSlew ?? ENEMY_MECH_TURRET_SLEW, dt);
     }
     else if (Math.hypot(e.vx, e.vy) > 5) e.turretRaw = rotateToward(e.turretRaw ?? e.turret, Math.atan2(e.vy, e.vx), mv.turretSlew, dt);
     // #398 fourth pass: SNAP the continuously-slewed heading onto its detent — the turret (and
