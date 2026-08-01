@@ -146,10 +146,17 @@ export const FiringMixin = {
     // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve
     // whatever charge had accumulated, if any.
     player.firingNow[w.location] = false;
-    if (state.charging) {
-      if (state.elapsed >= w.weapon.delivery.chargeable.minTime) this._releaseCharge(w, player, state);
-      else { state.charging = false; state.elapsed = 0; }
-    }
+    // Live-chat ask (2026-07-31): "remove the minimum charge [requirement] for firing." A release
+    // below `chargeable.minTime` used to throw the charge away silently — the trigger pull did
+    // nothing at all, which is the same dead-button problem the homing lock gate had. Now EVERY
+    // release fires; a tap simply lands at `minDamageMult`, because `_releaseCharge`'s ramp
+    // fraction already clamps negative values to 0.
+    //
+    // `minTime` is therefore no longer a firing GATE — it survives purely as the anchor the damage
+    // ramp measures from (see `_releaseCharge`), so the existing charge curve is unchanged above it.
+    // Left in the data rather than zeroed for exactly that reason: setting it to 0 would silently
+    // re-scale the whole ramp and buff every short hold, which is not what was asked for.
+    if (state.charging) this._releaseCharge(w, player, state);
   },
 
   _releaseCharge(w, player, state) {

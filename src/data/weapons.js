@@ -280,7 +280,13 @@ export const WEAPONS = {
     // arcs, so realistic single-target DPS sits back down near the ~25 band; the payoff is against
     // clustered enemies. Magazine 5 -> 30 = 6 volleys (30 ÷ 5 bolts/pull) before the reload beat.
     damage: 24, range: { min: 0, opt: 480, max: 820 },
-    ammoMax: 30, cycleTime: 2400,   // #434: 6 volleys (30 ÷ 5 bolts/pull), ~14.4s burst, then reload
+    // #602: 30 -> 15. The audit corrected a bad premise (this was read as "30 shots / 72 seconds",
+    // but `ammoPerShot` means each pull spends 5 of them), so the real figure was 6 volleys /
+    // 14.4s. Still the outlier: every other discrete weapon empties in 5.4-7.5s, and swarmRack's
+    // deliberate 15.4s was the only longer one. 15 = 3 volleys / 7.2s, squarely in that band.
+    // Knock-on, accepted: ammoMax feeds weaponStats.sustainedDps -> enemyLoadout's budget, so this
+    // re-prices Plasma Arc slightly in the medium and heavy pools (sustained ~44 -> ~39).
+    ammoMax: 15, cycleTime: 2400,   // 3 volleys (15 ÷ 5 bolts/pull), ~7.2s burst, then reload
     // #252 playtest follow-up: "lobbed weapons should actually seek, not just fly to the spot
     // targeted when the shot was initiated." NOT `guidance: 'homing'` — that would flip
     // canFireWeapon's no-lock-no-fire gate on (targetlock.js only special-cases
@@ -355,7 +361,13 @@ export const WEAPONS = {
     // close-range identity (a short gout of flame) more than the other weapons touched by
     // #135 — applied per explicit instruction, but flagged as worth a follow-up
     // conversation about whether flamethrower should have been an exception.
-    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6 },
+    // #583: `projectileColor` here is the flame's own hot orange (`0xff7a18`, the outer tongue in
+    // art/projectiles/flame.js). It does NOT repaint the flame — flame.js keeps drawing its own
+    // multi-tone gradient, which is the point of that art. What it does is feed the mount-neon
+    // derivation (`neonForWeapon`, art/mounts/index.js), so the gun on the mech stops glowing
+    // energy-category CYAN while spraying orange fire. Audited and raised as the one remaining
+    // mount/projectile colour mismatch; owner chose to make the mount match the flame.
+    delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6, projectileColor: 0xff7a18 },
   }),
   plasmaCoater: w({   // #489: heavier bolt that COATS the enemy — most of its damage is the burn,
     // not the hit. Deliberately NOT a stream/burst weapon (unlike plasmaLance) — a repeat hit only
