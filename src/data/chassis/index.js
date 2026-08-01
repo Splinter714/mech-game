@@ -92,6 +92,12 @@ export function makeChassis(cfg) {
     id: cfg.id,
     name: cfg.name,
     weightClass: cfg.weightClass,
+    // #587: `art` is pure GEOMETRY — bodyLen/bodyWid/shape/decor, all of which mechArt.js reads
+    // off `mech.chassis.art`. It used to also carry a per-chassis `accent` colour that NOTHING
+    // read: `themeFor()` is handed buildMechTextures' options, not the chassis, and gets its
+    // accent from `playerMechArt()` (the player's PLAYER_COLORS slot or their garage pick). Six
+    // dead values, same category as #573's dead fields, deleted. Don't reintroduce a colour here
+    // without a consumer — the mech's one identity colour is the PLAYER's, by design.
     art: cfg.art,
     locations,
     movement: {

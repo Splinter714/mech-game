@@ -18,7 +18,7 @@
 // (2026-07-31): "can we actually split out the enemy chassis as separate code to be tweaked
 // separately from the player chassis code?" — drift is now the POINT, so the spread is gone and
 // every value below is a literal this file owns. The inherited ones (the name, weightClass
-// 'medium', art bodyLen/bodyWid/accent, turretSlew/stepBob/footShake) were copied verbatim off
+// 'medium', art bodyLen/bodyWid, turretSlew/stepBob/footShake) were copied verbatim off
 // enemy/medium.js at the time of the split, so behaviour is byte-identical — but from here on,
 // editing enemy/medium.js has ZERO effect on the player, and vice versa.
 //
@@ -48,9 +48,14 @@ export const MEDIUM_PLAYER_CONFIG = {
   // Plus the unconditional 100-point shield, always applied at deploy.
   totalArmor: 2100,
   totalHp: 1400,
-  // Body size + accent are the enemy medium's original figures (bodyLen 38 / bodyWid 30 /
-  // 0xe8a13a), copied at the 2026-07-31 split rather than spread — the player's Trooper and the
-  // enemy Warden merely happen to share them now, and either may move alone.
+  // Body size is the enemy medium's original figures (bodyLen 38 / bodyWid 30), copied at the
+  // 2026-07-31 split rather than spread — the player's Trooper and the enemy medium merely happen
+  // to share them now, and either may move alone.
+  //
+  // #587: the `accent: 0xe8a13a` that used to sit alongside them is GONE — nothing ever read it.
+  // A chassis' `art` block is pure GEOMETRY now; the mech's one identity colour is the player's
+  // own (data/players.js PLAYER_COLORS, or their garage pick per #487), resolved by
+  // `playerMechArt()` and handed to `themeFor` as the rim accent.
   //
   // #438: player-only leg proportions. First pass went SKINNIER (legW 1.0 → 0.72) and
   // WIDER-SET (legSpread 1.0 → 1.4); the playtest kept the wide stance but asked for the legs
@@ -70,7 +75,7 @@ export const MEDIUM_PLAYER_CONFIG = {
   // A partial `shape`: the fields left out fall back to mechArt.js's DEFAULT_SHAPE, same as the
   // enemy Warden (which declares no `shape` at all → the old legDrop 1 = +0.15·L).
   art: {
-    bodyLen: 38, bodyWid: 30, accent: 0xe8a13a,
+    bodyLen: 38, bodyWid: 30,
     shape: { legW: 0.90, legSpread: 1.4, legH: 1.5, legDrop: 0.45 },
   },
   // #403: quicker step cadence for the player. `_stepGait` (scenes/arena/locomotion.js) ties

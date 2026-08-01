@@ -17,7 +17,7 @@ export const MEDIUM_CONFIG = {
   // split.
   totalArmor: 150,
   totalHp: 150,
-  art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },
+  art: { bodyLen: 38, bodyWid: 30 },
   movement: {
     // #3 MechWarrior-feel pass. The workhorse: noticeably more ponderous than a light —
     // slower to spool up, longer coast, lazier turn + turret, a heavier planted step.

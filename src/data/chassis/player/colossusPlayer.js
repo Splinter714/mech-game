@@ -44,7 +44,7 @@ export const COLOSSUS_PLAYER_CONFIG = {
   // body-texture decor are gone (live-chat ask, same day: "remove decor from heavy torso"), so
   // the torso is clean.
   art: {
-    bodyLen: 46, bodyWid: 38, accent: 0xe2533a,
+    bodyLen: 46, bodyWid: 38,
     shape: { head: 1.08, torso: 1.18, shoulder: 1.2, armW: 1.32, armH: 0.8, armSpread: 0.88, legW: 1.45, legH: 0.8, legSpread: 0.86, legDrop: 0.95, headDy: 0.04, armDy: 0.07 },
     decor: [{ kind: 'pauldron', side: -1 }, { kind: 'pauldron', side: 1 }],
   },
