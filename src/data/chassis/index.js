@@ -1,21 +1,37 @@
-// Chassis registry. Each weight class is a plain config (light/medium/heavy.js);
-// makeChassis expands it into full per-location stats so the config files stay short
-// and declarative. Mirrors the horse game's species registry: adding a chassis is a
-// new config + one entry here, no model changes.
+// Chassis registry. Each chassis is a plain config file; makeChassis expands it into full
+// per-location stats so the config files stay short and declarative. Mirrors the horse game's
+// species registry: adding a chassis is a new config + one entry here, no model changes.
+//
+// The configs live in TWO INDEPENDENT GROUPS (live-chat ask, 2026-07-31: "can we actually split
+// out the enemy chassis as separate code to be tweaked separately from the player chassis
+// code?"):
+//
+//   enemy/  — light/medium/heavy, the weight classes every ENEMY mech rides (data/enemies.js).
+//   player/ — mediumPlayer/strikerPlayer/colossusPlayer, the three the Mech Lab offers.
+//
+// The player three used to DERIVE from the enemy three (mediumPlayer spread MEDIUM_CONFIG whole;
+// Striker/Colossus took light's/heavy's `art` wholesale), so retuning an enemy silently retuned
+// the player. Every value is now a literal owned by its own file — the split is deliberate and
+// there is intentionally no shared third group (Jackson: "just decouple, 6 chassis not 9"). The
+// only remaining spread is INSIDE player/, where Striker/Colossus take mediumPlayer's stat block
+// on purpose ("same stats, just different art cosmetically").
+//
+// This registry stays flat: one id → one built def, ids unchanged (they're persisted in saved
+// builds, see rosters.js), so nothing downstream has to know which group a chassis came from.
 
 import { LOCATIONS, LOCATION_INFO } from '../anatomy.js';
-import { LIGHT_CONFIG } from './light.js';
-import { MEDIUM_CONFIG } from './medium.js';
-import { HEAVY_CONFIG } from './heavy.js';
+import { LIGHT_CONFIG } from './enemy/light.js';
+import { MEDIUM_CONFIG } from './enemy/medium.js';
+import { HEAVY_CONFIG } from './enemy/heavy.js';
 // #299: the player's own medium variant (different stat totals from the enemy medium — see
-// mediumPlayer.js). Registered like any other chassis; rosters.js force-migrates player mechs
-// onto this id, and nothing in ENEMIES references it.
-import { MEDIUM_PLAYER_CONFIG } from './mediumPlayer.js';
+// player/mediumPlayer.js). Registered like any other chassis; rosters.js force-migrates player
+// mechs onto this id, and nothing in ENEMIES references it.
+import { MEDIUM_PLAYER_CONFIG } from './player/mediumPlayer.js';
 // #529: two more COSMETIC-ONLY player chassis variants (same stats as mediumPlayer, different
-// art shape) for the Mech Lab's chassis-select tab — see strikerPlayer.js/colossusPlayer.js for
-// why they're separate configs rather than an in-place art swap.
-import { STRIKER_PLAYER_CONFIG } from './strikerPlayer.js';
-import { COLOSSUS_PLAYER_CONFIG } from './colossusPlayer.js';
+// art shape) for the Mech Lab's chassis-select tab — see player/strikerPlayer.js and
+// player/colossusPlayer.js for why they're separate configs rather than an in-place art swap.
+import { STRIKER_PLAYER_CONFIG } from './player/strikerPlayer.js';
+import { COLOSSUS_PLAYER_CONFIG } from './player/colossusPlayer.js';
 
 // Relative bulk of each damage-tracked location, used to distribute armor + HP (#246:
 // renamed from "structure" — plain language, same layering) from the chassis' baseline
@@ -95,7 +111,7 @@ export function makeChassis(cfg) {
   };
 }
 
-// Built registry: weight-class id → full chassis def.
+// Built registry: chassis id → full chassis def. Flat across both groups (enemy + player).
 export const CHASSIS = Object.fromEntries(
   [
     LIGHT_CONFIG, MEDIUM_CONFIG, HEAVY_CONFIG,

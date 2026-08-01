@@ -112,8 +112,8 @@ export default class ArenaScene extends Phaser.Scene {
     // #324: the player's survivability buffer used to be applied HERE as `boostHealth(7)`, which
     // meant the chassis data said 600 while the mech on the field was 3500 — and several balance
     // passes were reasoned against the wrong figure. It now lives in the chassis totals
-    // (data/chassis/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500). repairAll() above is
-    // all the deploy path needs.
+    // (data/chassis/player/mediumPlayer.js: 2100 armor + 1400 hp = the same 3500). repairAll()
+    // above is all the deploy path needs.
     // #246: (re)establish the player's baseline shield fresh each sortie — redeploy-safe and
     // idempotent (never compounds, always starts this deploy at full charge with no lingering
     // powerup boost from a prior run). #348: co-op joiners get the exact same unconditional

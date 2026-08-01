@@ -20,7 +20,7 @@ import {
 // #496 briefly made it an equip choice through the now-removed core-slot system). Jackson: "yes,
 // always-on baseline" — every player mech simply gets this unconditionally, at deploy time, no
 // build choice to make and no way to skip it. Same 100-point pool #496 shipped with (see
-// data/chassis/mediumPlayer.js's own note on the 100 in 200/300/100).
+// data/chassis/player/mediumPlayer.js's own note on the 100 in 200/300/100).
 export const PLAYER_SHIELD_CONFIG = { max: 100 };
 
 // #402: the RELOAD period (seconds) — how long a weapon slot is locked out while it reloads,

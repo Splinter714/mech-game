@@ -1,12 +1,17 @@
 // Medium chassis (~55t): the balanced workhorse. Middling speed, turn, and turret
 // traverse with a noticeably weightier step than a light.
+//
+// ENEMY-side chassis — see enemy/light.js's header for the 2026-07-31 enemy/player split. The
+// player's medium used to spread this whole config in; `player/mediumPlayer.js` now carries its
+// own literals, so every number below is enemy-only and can move without touching the player.
 export const MEDIUM_CONFIG = {
   id: 'medium',
   name: 'Trooper',
   weightClass: 'medium',
   // #299 balance pass (owner-set totals): the ENEMY medium chassis (the Warden sniper) —
   // 150 structure / 150 armor / 50 shield = 350 total. The PLAYER's medium is a separate
-  // chassis entry (mediumPlayer.js) at 200/300/100; see that file for why they had to split.
+  // chassis entry (player/mediumPlayer.js) at 200/300/100; see that file for why they had to
+  // split.
   totalArmor: 150,
   totalHp: 150,
   art: { bodyLen: 38, bodyWid: 30, accent: 0xe8a13a },

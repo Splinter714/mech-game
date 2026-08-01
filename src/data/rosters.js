@@ -58,10 +58,10 @@ export const ROSTERS = {
     // #248: the light/heavy chassis options are disabled for now (owner: "just roll with
     // the medium one and disable the switcher") — force every mech, including pre-existing
     // saves that picked light/heavy before this change, onto medium. This is a UI-level
-    // restriction: the light/heavy chassis data (chassis/light.js, chassis/heavy.js) is
+    // restriction: the light/heavy chassis data (chassis/enemy/light.js, chassis/enemy/heavy.js) is
     // untouched, so removing this one-line migrate hook fully re-enables them later.
     // #299: the target is now 'mediumPlayer' — the player's own medium-class stat block
-    // (chassis/mediumPlayer.js, 200/300/100) rather than the enemy medium the Warden uses.
+    // (chassis/player/mediumPlayer.js, 200/300/100) rather than the enemy medium the Warden uses.
     // #529: the Mech Lab's chassis-select tab lets a player pick one of PLAYER_CHASSIS_IDS
     // (mediumPlayer/strikerPlayer/colossusPlayer — cosmetic-only variants, identical stats) —
     // that choice must now SURVIVE a save/load round-trip instead of being force-reset every
