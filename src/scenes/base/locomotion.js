@@ -1,7 +1,8 @@
 // Base scene locomotion mixin — a TRIMMED copy of the arena's twin-stick drive + stompy gait
 // (arena/locomotion.js `_drive`/`_stepGait`), with only the COMBAT dependencies dropped: no
-// enemy-crush checks (the base has no enemies) and no weapon-convergence part-tilt (nothing
-// mounted fires here). The CONTROL FEEL is otherwise identical to a live run on purpose — same
+// enemy-crush checks (the base has no enemies). It also dropped weapon-convergence part-tilt on
+// the grounds that nothing mounted fires here — no longer true since #597 wired real firing into
+// the base, so that one is back (see `_stepGaitBase`). The CONTROL FEEL is otherwise identical to a live run on purpose — same
 // twin-stick mapping (left stick/WASD drives, right stick/mouse aims the turret independently
 // of travel), same terrain speed scaling, same swept wall/edge collision, and the full footfall
 // gait (frame stepping, footstep FX + camera shake, body bob) — reusing
@@ -109,8 +110,15 @@ export const BaseLocomotionMixin = {
     p.view.hull.setTexture(`${p.textureKey}_hull_${p.hullFrame}`);
     p.view.hull.rotation = p.angle + Math.PI / 2;
     p.view.turret.rotation = p.turretAngle + Math.PI / 2;
-    // No weapons to converge — every pivoting part eases back to its neutral (0) tilt.
-    this._syncTilts(p.view, p.mech, p.turretAngle, ARENA_MECH_SCALE, 0, 0, {}, dt);
+    // #597: the arms/shoulders cant toward their weapons' convergence, exactly as in the arena
+    // (`arena/locomotion.js` `_stepGait`). This used to pass `{}` — every pivoting part easing to
+    // a neutral 0 tilt — on the grounds that "nothing mounted fires here". Now it does, and the
+    // tilt isn't only cosmetic: `_muzzle` rotates each barrel's tip offset by the part's LIVE
+    // tilt, so a shot fired from an untilted arm would leave from a point the art doesn't show.
+    this._syncTilts(p.view, p.mech, p.turretAngle, ARENA_MECH_SCALE, 0, 0, {
+      leftShoulder: this._partTilt('leftShoulder', p), rightShoulder: this._partTilt('rightShoulder', p),
+      leftArm: this._partTilt('leftArm', p), rightArm: this._partTilt('rightArm', p),
+    }, dt);
     p.view.setPosition(p.x, p.y - bob);
   },
 };
