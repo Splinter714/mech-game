@@ -13,7 +13,7 @@ import { applyStatusEffect as applyEffect, tickStatusEffects as tickEffects } fr
 import * as loadout from './loadout.js';
 import {
   createShield, damageShield, tickShield as tickShieldState, fillShield, shieldFraction, shieldPresent,
-  grantTempShield, shieldTotalHp, shieldTotalMax,
+  grantTempShield, shieldTotalHp, shieldTotalMax, scaleForLayer, unscaleFromLayer,
 } from './shield.js';
 
 // The player's baseline full-mech shield (#246, previously ArenaScene's `PLAYER_SHIELD` before
@@ -180,10 +180,14 @@ export class Mech {
   //   2) the location's ARMOR absorbs next.
   //   3) the location's HP takes whatever's left; HP at 0 destroys the part (cascading to
   //      dependent locations — a shoulder takes its arm with it).
-  // `weaponCategory` is an optional forward-compat seam (#246 decision: architect for a future
-  // category-vs-layer bonus — e.g. energy strong vs shields — WITHOUT implementing one now).
-  // Every category currently resolves to a 1.0 multiplier at every layer (see data/shield.js
-  // `layerMultiplier`), so passing it (or not) has no behavioral effect yet.
+  // #576: `weaponCategory` is LIVE now — it was #246's forward-compat seam and it stayed a no-op
+  // until the multipliers went in (data/shield.js LAYER_MULTIPLIERS: energy strips shields,
+  // ballistic chews armor, missile/support neutral). Each layer is spent in its OWN currency:
+  // the raw hit is scaled INTO the layer, the layer absorbs what it can, and the remainder is
+  // scaled BACK to raw before the next layer sees it — see shield.js's worked example for why
+  // that is the only way a partial absorb can't double-count a bonus. A caller that passes no
+  // category (a crush, a ground-fire tick, a hazard tile — none of which have a weapon behind
+  // them) gets 1.0 everywhere, i.e. exactly the old behaviour.
   applyDamage(locationId, amount, weaponCategory) {
     const p = this.parts[locationId];
     if (!p || amount <= 0) {
@@ -193,8 +197,10 @@ export class Mech {
         overshoot: 0,
       };
     }
-    const shieldRes = damageShield(this.shield, amount);
-    const overflow = shieldRes.overflow;
+    // LAYER 1 — SHIELD, in shield currency. `shieldAbsorbed` is reported in that currency (the
+    // shield points actually removed), which is what the HUD bar and the bubble flash want.
+    const shieldRes = damageShield(this.shield, scaleForLayer(amount, weaponCategory, 'shield'));
+    const overflow = unscaleFromLayer(shieldRes.overflow, weaponCategory, 'shield');   // back to raw
     if (overflow <= 0) {
       return {
         applied: 0, destroyed: false, location: locationId, partDestroyedNow: partDestroyed(p),
@@ -204,9 +210,12 @@ export class Mech {
     }
     const beforeHp = p.hp;
     const armorBefore = p.armor;
-    const armorHit = Math.min(p.armor, overflow);
+    // LAYER 2 — ARMOR, in armor currency; then LAYER 3 — STRUCTURE, which is neutral for every
+    // category, so what armor could not eat goes to hp un-scaled.
+    const armorDealt = scaleForLayer(overflow, weaponCategory, 'armor');
+    const armorHit = Math.min(p.armor, armorDealt);
     p.armor -= armorHit;
-    const toHp = overflow - armorHit;
+    const toHp = unscaleFromLayer(armorDealt - armorHit, weaponCategory, 'armor');
     p.hp = Math.max(0, p.hp - toHp);
     const destroyed = p.hp <= 0 && beforeHp > 0;
     if (destroyed) this._cascadeDestroy(locationId);
@@ -221,8 +230,13 @@ export class Mech {
     // durability (raw − overshoot), never the wasted excess. Shield-absorbed damage is NOT
     // overshoot (it was really absorbed) and stays out of this figure.
     const overshoot = Math.max(0, toHp - beforeHp);
+    // #576: `applied` is the DURABILITY this hit removed — armor points plus structure points.
+    // With every multiplier at 1.0 that is byte-identical to the `overflow` it used to report;
+    // with a category bonus live the two genuinely differ, and the durability figure is the
+    // meaningful one. (Nothing in the codebase reads this field today; it is kept because it is
+    // the natural thing for a damage result to say.)
     return {
-      applied: overflow, destroyed, location: locationId, partDestroyedNow: p.hp <= 0,
+      applied: armorHit + toHp, destroyed, location: locationId, partDestroyedNow: p.hp <= 0,
       shieldAbsorbed: shieldRes.absorbed, shielded: false, armorBrokeNow, overshoot,
     };
   }

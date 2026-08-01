@@ -16,6 +16,19 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
+import { getWeapon } from '../../data/weapons.js';
+
+// #576: which weapon CATEGORY is behind this hit, for the category-vs-layer multipliers
+// (data/shield.js). Derived from the `meta.weaponId` every real weapon-damage path already
+// carries for the run stats, rather than adding a parallel field to ~20 call sites — the two
+// always agree by construction, because they read the same id. Deliberately null for the paths
+// that have no weapon behind them at all (a crush/stomp, a burning-ground tick, a hazard tile, a
+// base self-destruct), which resolves to a flat 1.0x at every layer, i.e. the pre-#576 pipeline.
+// An enemy's tuned weapon variant (`resolveWeapon`) keeps the base weapon's id and category, so
+// an override'd Repeater is still ballistic here.
+function damageCategory(meta) {
+  return meta?.weaponId ? (getWeapon(meta.weaponId)?.category ?? null) : null;
+}
 
 // Hard cap on impact-flash circles alive at once (#76). Under concentrated fire the burst-merge
 // below already collapses same-point bursts; this pool bounds the WORST case (many enemies) by
@@ -140,8 +153,10 @@ export const CombatMixin = {
   // other call sites / tests that hang off `damagePlayer`).
   // #347: `player` is WHO is being hit. Defaults to the primary player, which is both today's
   // only player and what every existing caller/test means by "the player".
-  damagePlayer(locationId, amount, player = primaryPlayerOf(this)) {
-    return player.mech.applyDamage(locationId, amount);
+  // #576: `weaponCategory` is optional and defaults to none, so every existing 3-argument caller
+  // (and the arena's hand-built doubles) keeps the flat 1.0x pipeline it has always had.
+  damagePlayer(locationId, amount, player = primaryPlayerOf(this), weaponCategory = null) {
+    return player.mech.applyDamage(locationId, amount, weaponCategory);
   },
 
   // Enemy round hits the player: damage a (centre-mass-weighted) random part through the shield.
@@ -170,7 +185,7 @@ export const CombatMixin = {
     // cascaded from its shoulder), which would otherwise waste the whole hit into nothing.
     // `pickLiveWeighted` rerolls among the still-live entries of the same pool instead.
     const loc = pickLiveWeighted(parts, (part) => player.mech.isPartDestroyed(part));
-    const res = this.damagePlayer(loc, dmg, player);
+    const res = this.damagePlayer(loc, dmg, player, damageCategory(meta));
     // #560: symmetric with `_damageEnemyAt` below — a hit carrying `meta.dot` (Plasma's coating)
     // also applies/refreshes a status effect at the same location the direct hit just resolved.
     // Players already tick status effects every frame (`tickPlayerResources`, players.js), they
@@ -183,6 +198,12 @@ export const CombatMixin = {
     // Shield-absorbed damage is NOT overshoot, so it stays counted: a fully-shielded hit has zero
     // overshoot and still books its full (shield-absorbed) amount, so it still registers as a
     // landed enemy shot for accuracy — the placement semantics that used to sit up front.
+    // #576 KNOWN IMPRECISION, flagged rather than silently absorbed: this is the RAW hit minus the
+    // raw that overshot, which is no longer the same as the durability actually removed once a
+    // category multiplier is in play (a ballistic round removes 1.5x its raw in ARMOR points).
+    // Left as-is on purpose — it is a telemetry figure, every existing stat is denominated in raw
+    // incoming damage, and re-denominating the whole run-stats model is its own change, not a
+    // side effect of this one.
     const effective = dmg - (res.overshoot ?? 0);
     this._statPlayerHurt?.(meta.enemyKind ?? null, meta.weaponId ?? null, effective, meta.shotId ?? null, meta.spawnerKind ?? null);
     // #348: stamp WHEN this player was last hit. This is the signal the co-op respawn's
@@ -429,7 +450,7 @@ export const CombatMixin = {
     // geometrically-nearest one is already destroyed (see `resolveHitLocation` in shared.js
     // for why that redirect matters — otherwise the hit silently wastes into a dead part).
     const best = resolveHitLocation(lay, locs, lx, ly, dispUnit, (loc) => e.mech.isPartDestroyed(loc));
-    const res = e.mech.applyDamage(best, damage);
+    const res = e.mech.applyDamage(best, damage, damageCategory(meta));
     // #489/#536: a hit carrying `meta.dot` (Plasma's coating) also applies/refreshes a status
     // effect at the SAME location the direct hit just resolved. Vehicle-kind enemies (`e.mech` is
     // an HpBody) now carry the same applyStatusEffect/tickStatusEffects pair as a Mech (#536), so
@@ -453,6 +474,9 @@ export const CombatMixin = {
       // starts here, not at spawn. Set before the kill block below reads it, so a one-shot kill
       // reads a ~0 ttl (first hit == death) rather than the unit's whole lifetime.
       if (e._firstHitAt == null) e._firstHitAt = this.time?.now ?? 0;
+      // #576: same known imprecision as the player path above — `damage` is the RAW hit, which a
+      // category multiplier no longer maps 1:1 onto durability removed. Telemetry only; the run
+      // stats stay denominated in raw incoming damage until they are re-based deliberately.
       const overkill = this._statOverkill ? this._statOverkill(damage, remainingBefore, killedNow) : 0;
       this._statPlayerHit?.(meta.weaponId, meta.pullId ?? null, statKind, damage, killedNow, overkill);
     }
