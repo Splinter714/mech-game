@@ -14,6 +14,14 @@ import { updateDotOutline, updateDotTint } from './shieldOutline.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
+// #253: how close a NON-target enemy has to get to a guided round before that round may capture
+// it as its new target. Deliberately expressed as a multiple of the hit radius rather than a free
+// number: the whole safety argument for this feature is that a round only ever switches to
+// something it has effectively already flown into. At 2x, a captured enemy is within a couple of
+// frames of flight for every guided round in the game, so a capture reads as the missile picking
+// off what it brushed past — not as it abandoning a lock at range.
+const RETARGET_RADIUS = HIT_RADIUS * 2;
+
 // #543: a 'field' hazard's (Gravity Well's) visual ring is sampled at this many evenly-spaced
 // angles around its centre to find which arcs have a clear line to hard cover — enough to read
 // as a smooth cut rather than a jagged polygon at the field's visual radius (~65-210px), while
@@ -97,6 +105,56 @@ export const ProjectilesMixin = {
       // — skip straight to the next round once it goes off, exactly like a direct hit/landing
       // does (both set p.dead and `continue`).
       if (p.fuse && this._tickFuse(p, dt)) { this._detonateFuse(p); continue; }
+      // #253 IN-FLIGHT RETARGET. A guided round is scoped to the enemy it was locked at (the
+      // `lockedLive` rule just below, from #77: a bystander must not steal a locked shot). True to
+      // that rule and nothing else, a salvo read as guided rails — six missiles ghosting straight
+      // THROUGH a clustered garrison to converge on one unit. A round may now CAPTURE a different
+      // enemy, but only one it has effectively already flown into: within RETARGET_RADIUS of the
+      // warhead right now AND closer than the target it currently holds.
+      //
+      // Both halves of that gate matter. The distance half is what keeps #77 fixed — a bystander
+      // merely NEARER to the round than its target is not enough (re-resolving on "nearest" was
+      // exactly the bug where a passer-by read as blocking the shot); it has to be within a
+      // missile's length, at which range the round is going to detonate on it a frame or two later
+      // anyway. The closer-than-current half means a capture always moves the round toward
+      // something, so it can never trade a hit it was about to land for a longer chase.
+      //
+      // SCOPED TO ROUNDS THAT HAD A LOCK — and a dumb-fired one deliberately gets nothing here,
+      // because it already has the behaviour. Since 2026-07-31 an unlocked homing weapon dumb-fires
+      // (data/targetlock.js) and `_spawnProjectile` gives that round `homing = false` with no seek
+      // handle, so its hit test is ALREADY `enemyIndex.nearest` below: it detonates on whatever it
+      // runs into today. Handing it a seeker here is the one version of this feature that really
+      // would make the lock meaningless — it would silently upgrade every unlocked missile into a
+      // guided one, which is a weapon change, not a retargeting rule.
+      //
+      // An arcing lob may only capture once its seeker has ENGAGED (past the #57 ascent blend).
+      // On the way up it is flying OVER the field by design; a mortar that snapped onto a unit it
+      // was lobbing across would be a different weapon. Swarm Rack — the salvo this issue is
+      // actually about — arcs too, and spends its whole descent eligible.
+      const arcBlend = p.arc ? arcHomingBlend(p.dist / p.maxDist, p.blendStart) : 1;
+      if (!enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech && arcBlend > 0) {
+        // The per-frame spatial index the dumbfire/weak-seek lookups already use — a locked round
+        // did not previously query it, so this is one extra `nearest` per guided round per frame
+        // and no new scan of the enemy list.
+        const near = enemyIndex.nearest(p.x, p.y);
+        if (near && near !== p.seekTarget && !near.mech.isDestroyed()) {
+          const d = Math.hypot(near.x - p.x, near.y - p.y);
+          if (d < RETARGET_RADIUS && d < Math.hypot(p.seekTarget.x - p.x, p.seekTarget.y - p.y)) {
+            p.seekTarget = near;
+            // A capture is a NEW engagement, so the per-target DISTANCE bookkeeping resets:
+            // `homingMinDist` and the stall window describe closest approach to the OLD target,
+            // and carrying them across would read the switch itself as an overshoot or a stall and
+            // trigger an instant give-up on a round that is about to connect.
+            // The ORBIT and FUEL rails (#418) are deliberately NOT reset — they bound the round's
+            // whole flight, and a round allowed to zero its net-turn counter on every capture could
+            // circle a tight cluster indefinitely, which is the exact spin this project has already
+            // fixed twice.
+            p.homingMinDist = null;
+            p.homingStallDist = null;
+            p.homingStallSince = 0;
+          }
+        }
+      }
       // #418: a round that has GIVEN UP is no longer scoped to its lock — it is a ballistic round
       // now, so it hits whatever it runs into on the way down, like any dumbfire shot.
       const lockedLive = !enemyShot && p.homing && !p.homingGivingUp && p.seekTarget?.mech ? p.seekTarget : null;
@@ -162,10 +220,12 @@ export const ProjectilesMixin = {
       const turnFull = p.turn;   // the round's true, undamped turn rate — always restored after stepProjectile
       let turnScale = 1;
       let seekerLive = homingActive;   // #418: an arcing lob's seeker isn't engaged during ballistic ascent
+      // #253 hoisted `arcBlend` (computed above, from the same pre-step `p.dist`) rather than
+      // calling arcHomingBlend twice a frame for the same round — the retarget gate needs the very
+      // same "has this lob's seeker engaged yet" answer this block does.
       if (homingActive && p.arc) {
-        const blend = arcHomingBlend(p.dist / p.maxDist, p.blendStart);
-        if (blend <= 0) { seekerLive = false; turnScale = 0; }
-        else if (blend < 1) { turnScale = blend; }
+        if (arcBlend <= 0) { seekerLive = false; turnScale = 0; }
+        else if (arcBlend < 1) { turnScale = arcBlend; }
       }
       if (turnScale !== 1) p.turn = turnFull * turnScale;
       // #377 follow-up — SALVO SEPARATION. A round carrying its own `aimOffset` steers at a
