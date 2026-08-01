@@ -302,29 +302,43 @@ export const CombatMixin = {
     this._lastBurst = { x, y, t: now };
     this._burst(x, y, 3, 9, 0xffffff, 0.9, 120, false); // core flash, every hit
 
-    // Plasma Coater ask: "impact blast color to purple themed." `kind === 'plasma'`'s own
-    // splatter branch below already uses the passed `color` correctly, but never gets reached
-    // for this weapon — its `splash: 40` trips the generic missile/splash fireball check first
-    // (hardcoded orange, ignores `color` entirely). This is exactly the mismatch flagged for a
-    // proper audit issue (impact colors vs. the actual projectile color, general case); scoped
-    // narrowly to just this weapon for now rather than reordering the shared branch below, which
-    // would also silently repaint every other splash-carrying plasma weapon's impact.
-    if (weaponId === 'plasmaCoater') {
-      // Playtest ask: "the splash visual should match the splash application radius" — scale
-      // with the real `splash` value (40px) instead of the fixed 4/18-ish numbers the generic
-      // plasma splatter below uses (tuned back when plasma splash didn't do anything visually
-      // distinct from a direct hit). Mirrors the missile branch's `r = Math.max(10, splash)`
-      // scaling convention, just softer/rounder to keep the "splatter" character.
-      const r = Math.max(10, splash);
-      this._burst(x, y, r * 0.28, r * 1.05, color, 0.6, 240, false);
-      this._burst(x, y, r * 0.2, r * 0.85, color, 0.9, 220, true);
+    // #582: KIND decides the burst's CHARACTER first; `splash` only decides its SIZE. The order
+    // used to be the other way round — any round carrying splash fell into the hardcoded-orange
+    // fireball before its own kind was ever consulted — so a weapon's blast colour depended on
+    // whether it happened to have a splash radius rather than on what it actually fires. Plasma
+    // Coater was patched out of that with a `weaponId === 'plasmaCoater'` special case; a
+    // per-weapon literal in shared FX code is a smell, and it left its siblings still wrong.
+    //
+    // A splattering round (plasma, and Caustic Lobber's shadow orb) now takes its own splatter in
+    // its own colour whether or not it splashes; a genuinely EXPLOSIVE round (a missile, or
+    // anything else carrying a blast radius — napalm, the flame stream, a detonating mine) still
+    // gets the orange fireball, because an explosion is orange regardless of what launched it.
+    // That distinction is why this can't simply tint everything by `color`.
+    //
+    // Changed by the reorder, deliberately: Plasma Arc (fires a cyan bolt, exploded orange) and
+    // Caustic Lobber (fires a violet orb, exploded orange), plus the small landing puff of the
+    // two rounds that plant a hazard instead of detonating (Gravity Well's now reads its own
+    // support green). Everything else is byte-identical — the no-splash splatter keeps its
+    // original fixed radii, and Plasma Coater lands on exactly the numbers its special case
+    // used, so it does not move.
+    if (kind === 'plasma' || kind === 'shadow') {
+      // Playtest ask (Plasma Coater): "the splash visual should match the splash application
+      // radius" — a splattering round scales with its real `splash` value instead of the fixed
+      // radii below (tuned back when plasma splash did nothing visually distinct from a direct
+      // hit). Mirrors the fireball branch's `Math.max(10, splash)` convention, just softer and
+      // rounder to keep the "splatter" character.
+      if (splash > 0) {
+        const r = Math.max(10, splash);
+        this._burst(x, y, r * 0.28, r * 1.05, color, 0.6, 240, false);
+        this._burst(x, y, r * 0.2, r * 0.85, color, 0.9, 220, true);
+      } else {
+        this._burst(x, y, 4, 18, color, 0.6, 240, false);              // splatter blob
+        this._burst(x, y, 3, 14, color, 0.9, 220, true);
+      }
     } else if (kind === 'missile' || splash > 0) {
       const r = Math.max(10, splash);
       this._burst(x, y, r * 0.4, r * 1.6, 0xff7a18, 0.4, 260, false);  // fireball
       this._burst(x, y, r * 0.5, r * 1.9, 0xffd56b, 0.9, 300, true);   // shock ring
-    } else if (kind === 'plasma') {
-      this._burst(x, y, 4, 18, color, 0.6, 240, false);                // splatter blob
-      this._burst(x, y, 3, 14, color, 0.9, 220, true);
     } else if (kind === 'beam') {
       this._burst(x, y, 2, 7, color, 0.9, 110, false);                 // scorch flash
     } else {                                                            // ballistic spark

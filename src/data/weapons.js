@@ -525,6 +525,15 @@ export const WEAPONS = {
     delivery: {
       hit: 'projectile', path: 'straight', velocity: 130,   // deliberately slow — the "cloud" has to linger to matter
       splash: 30, kind: 'shadow', scale: 1.6, ignoresEnemyHit: true,
+      // #582: the round's REAL colour, declared as data. `shadow` art (like `fire` and `flame`)
+      // hardcodes its own palette and ignores the colour it's passed, so `p.color` was still the
+      // ballistic row's orange — which is what every downstream consumer of "what colour is this
+      // round" then used: an orange impact blast under a purple orb, an orange damage flash, and
+      // an orange mount glow on a gun that fires violet. Two of those were already patched by
+      // hardcoding the violet a second and third time (`_drawAoeTendril`'s GLOW/CORE consts, the
+      // orb's own art). This is the one number they should all have been reading. 0xb060e0 is the
+      // orb's bright eye — shadow.js's own "the one hot spot the orb reads by."
+      projectileColor: 0xb060e0,
       // #538: capped at 15 tendrils (individual connecting hits) so a round parked over a
       // crowd can't tick indefinitely — only a tick that actually connects spends the budget,
       // an empty tick is free. See `_tickTravelAoe`/`maxTendrils` in projectiles.js.

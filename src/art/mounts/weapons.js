@@ -113,12 +113,13 @@ function plasmaCannon(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
 // the limb's own body rather than floating in front of it. Unverified live (this session's
 // environment can't render WebGL) — iterate from here.
 // Live-chat ask: "plasma coater lights should match the purple projectile" — the mount would
-// otherwise glow the shared 'energy' category cyan (`n`, the neon this fn is normally handed),
-// visibly mismatched from the weapon's own purple bolt (weapons.js `projectileColor: 0xa04dff`).
-// A local NEON-shaped override, same halo/core/hot/edge spread as the category table
-// (mechPrims.js `NEON`) just built around that purple instead. (Same mismatch #583 tracks
-// generally for every weapon; applied directly here since Jackson's already looking at this one.)
-const PLASMA_COATER_NEON = { halo: 0x6a1fc8, core: 0xa04dff, hot: 0xf3e6ff, edge: 0xc98cff };
+// otherwise glow the shared 'energy' category cyan, visibly mismatched from the weapon's own
+// purple bolt (weapons.js `projectileColor: 0xa04dff`). That was first fixed here, as a local
+// NEON-shaped const hardcoding the purple ramp. #583 replaced it with the general rule: any
+// weapon that declares a `projectileColor` has its mount neon derived from that one number
+// (`neonForWeapon`/`neonRamp` in ./index.js), so this fn now just glows the `n` it is handed
+// like every other mount, and the purple can't drift from the round again. The derived ramp
+// reproduces the hand-picked one within ~6/255 on a single channel — no visible change.
 
 // Live-chat ask, round 1: "the weapons position for a lobbed/mounted weapon like plasma coater
 // should sit within the outline of the plate on the body segment" — shrunk to avoid overhanging
@@ -186,7 +187,7 @@ function plasmaCoater(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
     // plasma coater" — those two size their glowDot to fill/dominate their own tube instead of a
     // small light tucked inside the bore; matched that here (radius up from tubeR*0.55 to *1.0).
     tag('color');
-    glowDot(sg, tx, ty, tubeR, PLASMA_COATER_NEON);
+    glowDot(sg, tx, ty, tubeR, n);
   }
 }
 

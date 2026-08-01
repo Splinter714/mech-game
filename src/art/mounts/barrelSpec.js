@@ -10,11 +10,26 @@
 // `barrelLen()` is called both by the draw fns (so the rendered art never drifts from this
 // table) and by `weaponMuzzleTip()` below (so the fired shot always matches whatever actually
 // got drawn, cap-clamp included).
+//
+// #584 audit (2026-07-31), all 19 weapons / 13 bespoke mounts + 5 category fallbacks: every
+// PROJECTING mount (a barrel/tube/blade that sticks out past the limb) was already correct at
+// `frac: 1` — or at its own tuned fraction where the emitter sits short of the modeled tube
+// (napalm 0.9). The FLUSH `weaponCollar()` mounts were not. Those sit ON the limb: the collar
+// runs from `frontY` BACKWARD to `frontY + collarH` (collarH = 0.8L), so their emitters are all
+// at a POSITIVE art-y offset — i.e. a NEGATIVE `frac`, since weaponMuzzleTip's return is a
+// forward offset. They were left at the projecting-mount default of 1, which reported a muzzle
+// tip a full modeled length AHEAD of a mount that never leaves the limb at all (shots spawning
+// well in front of the gun). Now derived from each fn's own emitter placement, in units of L:
+//   collarY = frontY + 0.4L (the collar's own centre)   y0 = frontY (its front edge)
+// The reference point is the FOREMOST LIT feature — the emitter glow/launch cell, which is what
+// reads as the muzzle. That's the same point every already-correct projecting entry uses (each
+// one's `frac` lands exactly on its own glowDot), so it's one rule across the whole table.
 export const BARREL_SPECS = {
   // category fallbacks (src/art/mounts/{energy,ballistic,missile,support,melee}.js)
   energy:        { len: 11,  frac: 1 },
   ballistic:     { len: 10,  frac: 1 },
-  missile:       { len: 6.5, frac: 1 },
+  // flush collar mount: foremost launch cell at y0 + collarH*0.28 = frontY + 0.224L
+  missile:       { len: 6.5, frac: -0.224 },
   support:       { len: 7,   frac: 1 },
   melee:         { len: 11,  frac: 1 },
   // bespoke energy (src/art/mounts/weapons.js)
@@ -22,23 +37,27 @@ export const BARREL_SPECS = {
   beamLaser:     { len: 13,  frac: 1 },
   railLance:     { len: 15,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
-  // 2026-07-31: iterated live against actual screenshots (see weapons.js's plasmaCoater
-  // header for the full round-by-round history). frac stays NEGATIVE -- the front (centre)
-  // tube's tip sits BEHIND frontY (into the limb), not ahead of it, matching the draw fn's
-  // `collarY - collarH*0.32` position, which nets out to frontY + L*0.494 at the current len.
-  // weaponMuzzleTip only reports one point, and the frontmost tube is still the right one to
-  // spawn shots from.
-  plasmaCoater:  { len: 6,   frac: -0.494 },
+  // 2026-07-31: the first mount to go flush (see weapons.js's plasmaCoater header for the full
+  // round-by-round history), so it was also the first to need a NEGATIVE frac -- the front
+  // (centre) tube sits BEHIND frontY (into the limb), not ahead of it. weaponMuzzleTip only
+  // reports one point, and the frontmost tube is still the right one to spawn shots from.
+  // #584: the recorded -0.494 didn't match the art. Its own comment claimed to track the draw
+  // fn's front-tube position, but that arithmetic never reached 0.494 for any tube offset the
+  // fn has used (and the fn now uses collarH*0.24, not the 0.32 the comment cited), so the shot
+  // spawned ~0.29L deeper into the limb than the tube it is supposed to leave.
+  // Front tube: collarY - collarH*0.24 = frontY + 0.208L.
+  plasmaCoater:  { len: 6,   frac: -0.208 },
   flamethrower:  { len: 7,   frac: 1 },
   // bespoke ballistic
   autocannon:    { len: 12,  frac: 1 },
   machineGun:    { len: 10,  frac: 1 },
   shotgun:       { len: 8,   frac: 1 },
   napalm:        { len: 8,   frac: 0.9 },   // canister glow sits at 0.9L, not the full modeled tube
-  // bespoke missile
-  swarmRack:     { len: 7.5, frac: 1 },
-  streakPod:     { len: 9,   frac: 1 },
-  clusterRocket: { len: 8,   frac: 0.86 },  // packed warhead cluster sits at 0.86L
+  // bespoke missile — all three went flush on the shared weaponCollar() the same day Plasma
+  // Coater did, but kept the projecting-mount fracs their old free-floating tube shapes earned.
+  swarmRack:     { len: 7.5, frac: -0.16 },    // foremost 2x3 cell: y0 + collarH*0.2 = frontY + 0.16L
+  streakPod:     { len: 9,   frac: -0.208 },   // seeker eye: collarY - collarH*0.24 = frontY + 0.208L
+  clusterRocket: { len: 8,   frac: -0.128 },   // foremost warhead glint: collarY - collarH*0.34 = frontY + 0.128L
 };
 
 // The barrel/tube length (design units) for one mount, at chassis scale `s`, clamped so it
