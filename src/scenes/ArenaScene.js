@@ -288,6 +288,9 @@ export default class ArenaScene extends Phaser.Scene {
     //
     // The join check runs FIRST so a player who joined this very frame gets an intent read like
     // everyone else, rather than spending its first frame absent from the map.
+    // #579: leave BEFORE join, so a pad that has gone away frees its slot in the same frame it is
+    // noticed — and so a despawned player never reaches the intent read below with a dead pad.
+    this._updateCoopLeave(delta);   // #579: controller unplugged? despawn that player's mech.
     this._updateCoopJoin();   // #348: second controller asking in? START on gamepad 2.
     const intents = new Map();
     for (const player of this.players) intents.set(player, player.controls.read());
