@@ -13,13 +13,10 @@ reading code or diffs.
 
 ```
 npm run dev      # dev server (http://localhost:5173) — used by the Claude preview
-npm run smoke    # Playwright headless test of the real running game
 npm run build    # production bundle
 ```
 
-`npm run smoke` needs a one-time `npx playwright install chromium`, and a dev server
-running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wired via
-`.claude/launch.json` (`mech-game-dev`).
+The Claude preview is wired via `.claude/launch.json` (`mech-game-dev`).
 
 ## Architecture
 
@@ -145,9 +142,11 @@ running (it auto-detects the port, or set `SMOKE_URL`). The Claude preview is wi
   explicit, durable direction — don't add it back). Verification means playing the real
   game: the Claude preview during a session, and Jackson's own playtest before an issue
   is closed. `npm run build` is a compile sanity check only, not a substitute for
-  playing. `npm run smoke` (Playwright, headless) still exists as an opportunistic
-  "does the real game boot, render, drive, and apply damage" check — it is not a merge
-  gate.
+  playing. The Playwright smoke harness (`npm run smoke`) was deleted 2026-07-31 (#329):
+  it had been crashing for two weeks without anyone missing it, which is what a check
+  that was never a merge gate looks like. Don't rebuild it. Playwright itself stays a
+  devDependency — the one-off `scripts/audit-*.mjs` / `scripts/profile-*.mjs` rigs drive
+  a headless browser too.
 
 ## Status (Milestone 1)
 

@@ -46,7 +46,7 @@ Locked design decisions (from planning on 2026-06-26):
   (#38) with TWO interchangeable 32-step tracks (`this.track`/`setTrack`): **'metal'** (the
   DEFAULT — galloping distorted power chords via a WaveShaper guitar chain + double-bass at
   ~184 BPM) and **'synthwave'** (the original A-minor synth, kept). Guards no-op until the
-  context is live, so callers + the headless smoke need no guards. Mute = M. Mock-context
+  context is live, so callers + headless runs need no guards. Mute = M. Mock-context
   unit tests in `AudioEngine.test.js`; verified non-silent via in-browser offline render.
 - **Arena enemies** = an `enemies` LIST (#39): each a self-contained object (own mech/textures/
   view/AI). Player weapons + homing + napalm + aim-assist target the nearest living enemy.

@@ -7,9 +7,9 @@ import ArenaScene from './scenes/ArenaScene.js';
 import HudScene from './scenes/HudScene.js';
 import PauseMenuScene from './scenes/PauseMenuScene.js';
 
-// `?canvas` forces Phaser's Canvas renderer. Headless browsers (the smoke test)
-// often lack WebGL framebuffers, and the game logic we verify there is
-// renderer-agnostic. No effect in production.
+// `?canvas` forces Phaser's Canvas renderer. Headless browsers (the one-off
+// audit/profile scripts in `scripts/`) often lack WebGL framebuffers, and the game
+// logic we verify there is renderer-agnostic. No effect in production.
 const forceCanvas = import.meta.env.DEV &&
   new URLSearchParams(window.location.search).has('canvas');
 
@@ -17,7 +17,7 @@ const forceCanvas = import.meta.env.DEV &&
 // crisp on Retina screens, while keeping on-screen size and all game coordinates
 // LOGICAL (CSS px) — each scene's camera zoom = DPR compensates. MAX_DPR caps the
 // fill-rate cost (2 = full native quality on any iPad/Retina laptop). At DPR 1
-// (standard monitors, headless smoke) this is a no-op.
+// (standard monitors, headless runs) this is a no-op.
 const MAX_DPR = 2;
 export const getDpr = () => Math.min(window.devicePixelRatio || 1, MAX_DPR);
 
