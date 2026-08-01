@@ -210,17 +210,19 @@ function drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff = false) {
 // a dark cavity, so armor loss reads as the shell being ripped open rather than plating
 // vanishing. Full destruction still falls through to `stump`. #472: that armor read is
 // PLAYER-ONLY (`T.armorArt`) — an enemy mech never shows its armor state on the body.
-// `noWeapons` (#397 follow-up): draw the arm's PLATING only, skipping its mounted guns +
-// muzzle glow — the body-only raster the player's shield shell hugs (buildMechTextures builds
-// a `_shield` variant with it set; see arena/shieldOutline.js). A destroyed arm is still a
-// stump either way.
 // `muzzleOff` (#433): draw the arm's weapons with their muzzle glow OMITTED — `glowSkip`
 // (drawWeaponsAt) suppresses the glowDot/glowBar layers so that area bakes TRANSPARENT (bare gun
 // hardware), not a dark blob. For the player this is now the arm's SOLE baked state — the muzzle
 // colour lives in a separate glow-only overlay sprite (MUZZLE_GLOW_SUFFIX, drawPartGlow) that the
 // reload blink toggles on/off, leaving this part texture constant; the off phase reads as the colour
 // vanishing to nothing. Enemies bake muzzleOff=false (glow straight in the part, no overlay).
-function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
+// SUPERSEDED (2026-07-31 live chat, "add the shield glow back to the weapon muzzles, don't exclude
+// them anymore"): there used to be a second `noWeapons` flag here that dropped the mounted guns
+// entirely, for the body-only raster the player's shield shell was built from (#397). Nothing asks
+// for it now — the shell bakes the guns WITH `muzzleOff` set instead (see buildMechTextures), which
+// gets the hardware into the shell without the soft halo that caused #397 — so the flag is gone
+// rather than left as a dead parameter ahead of `muzzleOff` in a positional call.
+function drawArm(sg, mech, loc, T, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
@@ -236,7 +238,7 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // placement (rimSide: 'back') but with the theme's neutral rim tone, not the player's color.
   plate(sg, T, p.x, p.y, p.w, p.h, { fill: T.faceMid, rimSide: 'back', rim: T.baseRim, tag: 'plate' });
   if (T.armorArt && !mech.hasArmor(loc)) { sg.layer('plate.internals'); exposedInternals(sg, T, p.x, p.y, p.w, p.h); }
-  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
+  drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // One shoulder (a weapon mount) — plate + recessed vent + its weapons — in its OWN texture
@@ -247,11 +249,10 @@ function drawArm(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
 // #401: same treatment as drawArm above — clean plate = armored, and once this shoulder's armor
 // is stripped (even though it's still alive) a jagged panel tears off to bare its internals
 // via `exposedInternals`, instead of the old brackets-on-top overlay. Player-only since #472.
-// `noWeapons` (#397 follow-up): plating + pauldron only, no mounted guns/muzzle glow — the
-// body-only raster for the player's shield shell (see drawArm's note).
 // `muzzleOff` (#433): see drawArm — the muzzle-glow-OMITTED bake (transparent where the glow would
-// be; the player's sole part state; the colour lives in the separate glow overlay).
-function drawShoulder(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
+// be; the player's sole part state; the colour lives in the separate glow overlay). drawArm's note
+// also covers why the old `noWeapons` flag (#397's body-only shell raster) is gone from both.
+function drawShoulder(sg, mech, loc, T, muzzleOff = false) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;
   const p = lay[loc];
@@ -271,7 +272,7 @@ function drawShoulder(sg, mech, loc, T, noWeapons = false, muzzleOff = false) {
   // drawShoulderDecorFor sets its own per-kind layer (SHOULDER_DECOR: pauldron, vane), so no
   // blanket tag here — otherwise a shoulder with no decor would leave an empty 'pauldron' group.
   drawShoulderDecorFor(sg, mech, lay, loc, T);
-  if (!noWeapons) drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
+  drawWeaponsAt(sg, mech, lay, loc, T, s, muzzleOff);
 }
 
 // #433 (re-architecture): the GLOW-ONLY overlay raster for one weapon-carrying part — the mounted
@@ -319,10 +320,11 @@ function drawShoulderDecorFor(sg, mech, lay, loc, T) {
 // shoulders — those are separate pivoting textures (drawArm / drawShoulder), drawn under this
 // body sprite so it occludes their inner edges (the top-down read). Drawn facing up; weapons
 // point forward (-y).
-// `noWeapons` (#397 follow-up): the body — centre torso, head, spine decor, reactor glow — WITHOUT
-// the centre/head weapon hardware or its muzzle glow. The body-only raster the player's shield
-// shell hugs (see drawArm's note).
-function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
+// Also lost its `noWeapons` flag (2026-07-31 — see drawArm's note), and here it was doubly moot:
+// the centre/head weapon loop at the bottom of this function has drawn NOTHING since #31/#188 took
+// head and centreTorso out of MOUNT_LOCATIONS, so the flag it was gating was already a no-op on
+// every mech in the game.
+function drawTurret(sg, mech, T, statusSpot) {
   const lay = mechLayout(mech);
   const s = mech.chassis.art.bodyLen / 38;     // size relative to the medium baseline
 
@@ -394,12 +396,15 @@ function drawTurret(sg, mech, T, statusSpot, noWeapons = false) {
   drawDecor(sg, mech, lay, T, { skip: SHOULDER_DECOR });
 
   // Weapon hardware for the centre/head mounts only — the ARM and SHOULDER mounts are drawn
-  // in their own pivoting textures (drawArm / drawShoulder), so skip them here.
-  if (!noWeapons) {
-    for (const loc of MOUNT_LOCATIONS) {
-      if (PIVOT_LOCATIONS.includes(loc)) continue;
-      drawWeaponsAt(sg, mech, lay, loc, T, s);
-    }
+  // in their own pivoting textures (drawArm / drawShoulder), so skip them here. Currently that
+  // leaves NOTHING to draw: MOUNT_LOCATIONS (data/anatomy.js) is exactly the four pivoting slots
+  // since #31 dropped the head and #188 the centre torso. Kept because it's the data-driven
+  // expression of "the body draws whatever non-pivoting mounts exist", so re-adding such a mount
+  // needs no art change — and if one ever comes back the shield shell wants it included anyway
+  // (2026-07-31 ask), which is now automatic.
+  for (const loc of MOUNT_LOCATIONS) {
+    if (PIVOT_LOCATIONS.includes(loc)) continue;
+    drawWeaponsAt(sg, mech, lay, loc, T, s);
   }
 }
 
@@ -545,18 +550,35 @@ export function buildMechTextures(scene, key, mech, opts) {
   // shell mid-blink). Enemies bake muzzleOff=false: glow straight into the part, no overlay, no blink.
   for (const loc of SHOULDER_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawShoulder(scaledGraphics(g), mech, loc, T, false, isPlayer));
+      (g) => drawShoulder(scaledGraphics(g), mech, loc, T, isPlayer));
   }
   for (const loc of ARM_LOCATIONS) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
-      (g) => drawArm(scaledGraphics(g), mech, loc, T, false, isPlayer));
+      (g) => drawArm(scaledGraphics(g), mech, loc, T, isPlayer));
   }
-  // #397 follow-up: the PLAYER's shield shell must hug the BODY ARMOR only — not the mounted guns
-  // and not their baked-in muzzle glow. Weapons live INSIDE each part texture (drawWeaponsAt), so
-  // the only clean way to keep the shell off them is a parallel BODY-ONLY raster of every
-  // weapon-carrying part. The hull carries no weapons, so it needs no variant — the shield outline
-  // just reuses the live hull frame. Only the player theme builds these (arena/shieldOutline.js
-  // `bodyOnly` points the player's outline duplicates at them); enemies keep their full-part shell.
+  // The PLAYER's shield shell — a parallel raster per part that the outline duplicates draw from
+  // (arena/shieldOutline.js `bakedShell`). Player theme only; enemies have no shell raster and keep
+  // the classic scaled duplicate of their real part.
+  //
+  // 2026-07-31 (live chat): "we previously removed shield glow/outline thing from weapon muzzles,
+  // but I think we should add it back, not exclude them anymore" — so the shell is baked from the
+  // WHOLE part, mounted guns included, with only the MUZZLE GLOW suppressed (`muzzleOff`).
+  //
+  // #397 (SUPERSEDED, kept because the trap it describes is still real): the shell used to be baked
+  // from a BODY-ONLY raster — plating with the guns skipped entirely — so the mech's own weapons
+  // poked out unshielded. That wasn't a look anyone asked for; it was damage control. Back then an
+  // energy weapon baked a big soft `glowDot` HALO at its muzzle tip INTO the part texture, and the
+  // outline's `setTintFill` floods every non-transparent pixel — halo included — to solid
+  // shield-blue, ballooning a bubble forward off the barrel (Jackson: it "further expands the visual
+  // size of the shield overlay, which looks ridiculous"). Dropping the guns was the only cut
+  // available, since a filter on sprite keys would have dropped the whole arm/shoulder with them.
+  // #433 removed the cause: the muzzle glow is no longer in the part at all, it's a separate
+  // glow-only overlay (MUZZLE_GLOW_SUFFIX), and `muzzleOff` bakes the bare gun HARDWARE with every
+  // emissive layer omitted — transparent, not dark. So the shell can take the guns and there is no
+  // halo left to flood. It also matches the real part exactly: the player's live part textures are
+  // baked muzzle-off too (above), so the shell is now a pure dilation of the very thing it shadows.
+  //
+  // The hull carries no weapons, so none of this touches it.
   //
   // #422: each shell raster is the body-only art DILATED by SHIELD_SHELL_PAD (drawDilated) instead
   // of the plain body art. The outline sprite then draws it at the mech's EXACT display scale, so
@@ -575,7 +597,8 @@ export function buildMechTextures(scene, key, mech, opts) {
         shell(`${key}_hull_${f}${SHIELD_SHELL_SUFFIX}`, (sg) => drawHull(sg, mech, f, T, hullFrames));
       }
     }
-    shell(`${key}_turret${SHIELD_SHELL_SUFFIX}`, (sg) => drawTurret(sg, mech, T, opts?.statusSpot, true));
+    shell(`${key}_turret${SHIELD_SHELL_SUFFIX}`, (sg) => drawTurret(sg, mech, T, opts?.statusSpot));
+    // `muzzleOff: true` on both — the guns' hardware is IN the shell, their glow is not (see above).
     for (const loc of SHOULDER_LOCATIONS) {
       shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawShoulder(sg, mech, loc, T, true));
     }

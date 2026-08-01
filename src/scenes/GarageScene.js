@@ -2,6 +2,10 @@ import Phaser from 'phaser';
 import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
+import {
+  SHIELD_MECH_PART_KEYS, SHIELD_COLOR, SHIELD_PLAYER_BLEND,
+  makeShieldOutline, updateShowroomShieldOutline,
+} from './arena/shieldOutline.js';
 import { mechColorFor, cycleSwatch, MECH_SWATCHES, MECH_SWATCH_NAMES, isSwatch } from '../data/mechColors.js';
 import { PLAYER_CHASSIS_IDS, CHASSIS } from '../data/chassis/index.js';
 import { Mech } from '../data/Mech.js';
@@ -403,7 +407,25 @@ export default class GarageScene extends Phaser.Scene {
     const scale = (Math.min(previewW, previewH) - 24) / 230;
     col.previewScale = scale; col.previewCx = previewCx; col.previewCy = previewCy;
     col.preview = makeMechParts(this, col.textureKey, { x: previewCx, y: previewCy, scale, isPlayer: true });
-    col.layer.add([col.previewPanel, ...col.preview.children]);
+    // 2026-07-31 live-chat ask ("add shield visual glow or whatever to the mech preview in garage").
+    // The SAME shield shell the arena draws — same construction call, same colour, same NORMAL
+    // blend, same baked `_shield` rasters (scenes/arena/shieldOutline.js is the one place that knows
+    // how a shield is drawn, per #302), just driven by the showroom driver instead of a live pool:
+    // every player mech gets the 100-point baseline unconditionally at deploy, so the lab shows what
+    // it will look like wearing it. Only the MAIN lab preview gets one — the little chassis-picker
+    // thumbnails (_buildChassisList) deliberately don't: at ~26px their whole job is comparing three
+    // silhouettes, and a blue rim on each would blur exactly the difference the rows exist to show.
+    //
+    // The shells go into `col.layer` between the preview panel and the mech art, so the mech's own
+    // parts still cover all of each duplicate except the rim — hence the three adds in this order
+    // rather than one combined add.
+    col.layer.add(col.previewPanel);
+    col.previewShield = makeShieldOutline(this, col.preview, {
+      keys: SHIELD_MECH_PART_KEYS, scale, color: SHIELD_COLOR, blend: SHIELD_PLAYER_BLEND,
+      bakedShell: true, dilated: true,
+      attach: (o) => col.layer.add(o),
+    });
+    col.layer.add(col.preview.children);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, scale, previewCx, previewCy, {});
 
     // The player-number label — sits INSIDE the preview box, at its bottom (#505 playtest
@@ -1012,6 +1034,10 @@ export default class GarageScene extends Phaser.Scene {
     // of whether that column's pad is connected (a mouse/keyboard-only player still needs their
     // catalog animating).
     for (const col of this.cols) col?.catalogList?.update(time, delta);
+    // The preview's shield shell (2026-07-31 ask — see _buildColumn): re-registers onto the mech's
+    // live part transforms and breathes with the arena's own ambient hum. Same "regardless of pad"
+    // reasoning as the catalog tick above.
+    for (const col of this.cols) updateShowroomShieldOutline(col?.previewShield, col?.preview, delta);
     for (const i of activeIndices(this.session)) {
       const col = this.cols[i];
       const e = this.padEdges[i];
