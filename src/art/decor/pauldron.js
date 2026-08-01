@@ -8,7 +8,7 @@ export function draw(sg, d, lay, T, tag = () => {}) {
   const cx = st.x + d.side * st.w * 0.28, cy = st.y - st.h * 0.36;
   // The prefix is threaded in, so `plate()`'s own opt-in furniture tags (body/rim/ao) nest under
   // whichever call site is drawing this — 'pauldron.plate.*' on the shoulder texture.
-  // Live-chat ask (2026-07-31): head-only accent — see mast.js for the full note. This plate()
+  // Head-only accent — see vane.js's header for the full rule (#600 moved it there). This plate()
   // call took the accented `T.rim` by default, which is what painted the blue bars across the
   // Colossus' shoulders in the art preview; `rim: T.baseRim` opts it out the same way every
   // non-head plate() caller in mechArt.js already does.

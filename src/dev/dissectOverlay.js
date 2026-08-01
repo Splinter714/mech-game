@@ -176,7 +176,9 @@ function rootNameFor(map) {
 //             `''` ABSORBS the source tag into the segment name. That's what lets the dissect UI
 //             show anatomy instead of texture layout: the mech's `turret` texture is split into a
 //             `head` segment (its `head` tag, absorbed → `head.plate.body`) and a `torso` segment
-//             (`centerTorso` absorbed + `decor` kept → `torso.spine`, `torso.decor.mast.tip`).
+//             (`centerTorso` absorbed + `decor` kept → `torso.spine`, `torso.decor.<kind>.body`;
+//             the example used to name `mast`, a decor kind #600 deleted — and both surviving
+//             kinds ride the SHOULDER textures, so nothing lands under `torso.decor` right now).
 //             `turret`/`hull` are how the sprite is SPLIT FOR AIMING, not body parts, so they never
 //             surface here.
 //   `z`     — paint order for the assembled composite, independent of the panel order (which

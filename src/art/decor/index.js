@@ -4,12 +4,16 @@
 // `draw(sg, d, lay, T)`; the generic dispatcher walks the chassis' `art.decor` list and
 // routes each entry by its `kind`. Unknown kinds are skipped (as the old chain did).
 // **Add a decor kind = a new file + one appended line in DECOR_ART.**
+//
+// #600: `mast` (a scout sensor antenna) and `stack` (rear exhaust) were deleted here. The
+// 2026-07-31 decor pass took the mast off the light and the stacks off the heavy, which left both
+// kinds implemented but listed by ZERO chassis — and an unused registry entry that no chassis can
+// point you at is just a file nobody will remember reading. Recoverable from git if either is
+// ever wanted back; re-adding one is a file plus a line here plus a `decor` entry on a chassis.
 import { draw as pauldron } from './pauldron.js';
-import { draw as mast } from './mast.js';
 import { draw as vane } from './vane.js';
-import { draw as stack } from './stack.js';
 
-export const DECOR_ART = { pauldron, mast, vane, stack };
+export const DECOR_ART = { pauldron, vane };
 
 // `opts.skip` is a list of decor kinds to NOT draw here (e.g. pauldrons, which ride on the
 // pivoting shoulder textures so they cant with the shoulder).
