@@ -47,6 +47,13 @@ export function makePlayer({
     view: null,
     marker: null,          // #348: the accent ring drawn under this mech
     dead: false,
+    // #604: true once this player's own controller has disconnected and the AI brain
+    // (scenes/arena/coop.js `_aiIntentFor`) has taken over producing its per-frame intent in
+    // place of `controls.read()`. Everything else about the player — mech, position, colour, HUD
+    // panel, camera inclusion — is untouched; only WHO is driving changes. Flips back the instant
+    // the same controller is read again (`_updateCoopReconnect`). Always false for player 1
+    // (never a disconnect candidate — it owns the keyboard).
+    aiControlled: false,
     // #348: INPUT-SHAPED state. Phase 1 (#347) deliberately left all of this SCENE-level and
     // said why: splitting it is inseparable from adding a second controller, because every one
     // of these is downstream of one device's buttons and one player's aim. Phase 2 adds that

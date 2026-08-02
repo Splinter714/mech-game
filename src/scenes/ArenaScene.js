@@ -289,11 +289,20 @@ export default class ArenaScene extends Phaser.Scene {
     // The join check runs FIRST so a player who joined this very frame gets an intent read like
     // everyone else, rather than spending its first frame absent from the map.
     // #579: leave BEFORE join, so a pad that has gone away frees its slot in the same frame it is
-    // noticed — and so a despawned player never reaches the intent read below with a dead pad.
-    this._updateCoopLeave(delta);   // #579: controller unplugged? despawn that player's mech.
+    // noticed. #604 replaced "frees its slot" with "hands the mech to AI" — the player stays in
+    // the roster, so this ordering no longer matters for correctness, but it's kept for locality
+    // with the reconnect check right after it.
+    this._updateCoopLeave(delta);      // #579/#604: controller unplugged? hand that player to AI.
+    this._updateCoopReconnect();       // #604: that player's own pad readable again? hand it back.
     this._updateCoopJoin();   // #348: second controller asking in? START on gamepad 2.
     const intents = new Map();
-    for (const player of this.players) intents.set(player, player.controls.read());
+    // #604: an `aiControlled` player (its own controller disconnected) is driven by the AI brain
+    // instead of its now-silent Controls — same intent SHAPE either way, so every downstream
+    // consumer (drive/aim/firing/abilities) needs no special-casing at all. See
+    // scenes/arena/coop.js `_aiIntentFor`.
+    for (const player of this.players) {
+      intents.set(player, player.aiControlled ? this._aiIntentFor(player, dt) : player.controls.read());
+    }
     const intent = intents.get(primaryPlayerOf(this));
     this.touchStickHud?.draw(this.controls.touch);   // #346, presentation only
 
