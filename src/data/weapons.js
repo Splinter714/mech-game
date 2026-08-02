@@ -860,13 +860,20 @@ export const WEAPONS = {
     // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead
     // of resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card
     // math, same convention as Gravity Well.
-    damage: 8, range: { min: 0, opt: 150, max: 190 },
+    // #623 playtest follow-up (Jackson: "link pylons don't have enough range and spread as they
+    // should"): both were still the ORIGINAL 2-pylon tight-toss numbers (150/190 range, 13°/46px
+    // spread), inherited unchanged when the volley grew to 5. A 5-pylon web is meant to blanket a
+    // real patch of ground, not land in a tight cluster near your feet — range roughly doubled
+    // (toward Gravity Well's old 380/520 mid-range reach) and spread widened so the 5 landings
+    // fan across enough space for the web's connecting segments to actually span something.
+    // Starting numbers, his to retune live like everything else.
+    damage: 8, range: { min: 0, opt: 350, max: 450 },
     ammoMax: 15, cycleTime: 2000,   // 3 volleys (15 ÷ 5 pylons/pull), ~6.0s burst, then reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
       fixedRange: true, arcBump: 1.3,
       count: 5, burst: { interval: 70 }, ammoPerShot: true, burstScatter: true,
-      spreadAngle: 13, salvoSpread: 46, salvoNoConverge: true,
+      spreadAngle: 50, salvoSpread: 110, salvoNoConverge: true,
       hazard: { kind: 'pylon', radius: 70, pulseDamage: 8, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
     },
   }),
