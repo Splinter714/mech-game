@@ -55,9 +55,10 @@ import { WeaponCardList } from '../ui/weaponCardList.js';
 // direction; the actual complaint was narrower: "the square-only weapon selection (it should
 // still be the rows of weapon firing live preview." So the condensed square-icon grid this scene
 // shipped with is gone again — each column's catalog is the real WeaponCardList (ui/
-// weaponCardList.js, the same component the standalone Weapon Lab tab uses), in its `compact`
-// mode: rows of weapons, each with its own live-firing shot/beam preview, scrolled inside the
-// column's own catalog rect rather than a fixed-size no-scroll grid.
+// weaponCardList.js, the same component the standalone Weapon Lab tab uses), at FULL size:
+// rows of weapons, each with its own live-firing shot/beam preview, scrolled inside the
+// column's own catalog rect rather than a fixed-size no-scroll grid. (These rows ran in
+// `compact` mode from #505 until 2026-08-01 — see _buildColumn's own note.)
 //
 // This still deploys onto the same four persistent build slots (data/rosters.js's mech1..mech4,
 // PLAYER_MECH_KEYS) and publishes the same registry keys (`coopMechKeys`/`coopPlayerCount`) the
@@ -353,17 +354,23 @@ export default class GarageScene extends Phaser.Scene {
     const catalogRect = gl.catalog;
 
     // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
-    // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
-    // stats + a live-firing shot/beam preview per card) fits this column's width. It owns its
-    // own top-level container rather than living inside col.layer, so it's positioned in WORLD
-    // coordinates (this column's own screen offset + the local catalog rect below).
+    // standalone Weapon Lab tab uses, at FULL size (`compact: false`). It owns its own top-level
+    // container rather than living inside col.layer, so it's positioned in WORLD coordinates
+    // (this column's own screen offset + the local catalog rect below).
+    // Jackson, 2026-08-01: "somewhere a LONG time ago, the garage weapon preview rows got
+    // smaller/shorter/not so tall; I hate it." #505 (5304539, 2026-07-25) introduced `compact`
+    // and shrank these rows from CARD_H 96 to COMPACT_CARD_H 60 — along with the fonts, label
+    // width, live-preview emitter size and spacing — so up to four columns could fit side by
+    // side. He asked for the full non-compact row back, and chose that over a height-only
+    // restore having been told it will crowd at 3-4 player co-op. If that crowding turns out to
+    // be worse than the taller rows are better, per-player-count sizing is the fallback.
     // #607: built ONCE with BOTH item bands (ABILITIES then WEAPONS) as sections — it is never
     // refiltered per slot again, because there is no selected slot any more. That also settles
     // #541 by construction: setIds/setSections (the only things that reset scroll) simply never
     // run again for the life of the column, so browsing position survives everything.
     // The highlighted cards are now every item mounted ANYWHERE in this column's build.
     col.catalogList = new WeaponCardList(this, {
-      x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: true,
+      x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: false,
       sections: [
         { id: 'ability', label: 'ABILITIES', ids: Object.keys(ABILITIES) },
         { id: 'weapon', label: 'WEAPONS', ids: this.catalogIds },
