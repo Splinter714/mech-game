@@ -7,10 +7,23 @@
 // `color` is the category's neon hue — drives both the catalog icons and the glow on
 // mounted weapons (the mech art layers a halo/hot ramp around this core).
 export const CATEGORIES = {
-  ballistic: { id: 'ballistic', label: 'Ballistic', color: 0xffb24a },
-  missile:   { id: 'missile',   label: 'Missile',   color: 0xff4fa3 },
-  energy:    { id: 'energy',    label: 'Energy',    color: 0x0088ff },
-  support:   { id: 'support',   label: 'Support',   color: 0x6dff9e },
+  ballistic: { id: 'ballistic', label: 'Ballistic',     color: 0xffb24a },
+  missile:   { id: 'missile',   label: 'Missile',       color: 0xff4fa3 },
+  // #618: label-only rename (Energy -> Laser Weapons) now that Plasma has split off into its
+  // own category below — `energy` still covers the laser family (pulseLaser/beamLaser/
+  // chargeLance). The id/object key stays `energy` on purpose (it's load-bearing all over
+  // weapons.js and saved builds); only the display text changes.
+  energy:    { id: 'energy',    label: 'Laser Weapons', color: 0x0088ff },
+  support:   { id: 'support',   label: 'Support',       color: 0x6dff9e },
+  // #618: new category — reuses PLASMA_COAT_COLOR (scenes/arena/shieldOutline.js), the exact
+  // violet already hand-tuned onto Plasma Coater's DoT specifically to read as "not the energy
+  // cyan". causticLobber/plasmaCoater/plasmaCannon/plasmaLance.
+  plasma:    { id: 'plasma',    label: 'Plasma',        color: 0xa04dff },
+  // #618: new category — reuses Flamethrower's own already-tuned flame outer colour
+  // (art/projectiles/flame.js). napalm/flamethrower. Flagged by the owner as sitting close to
+  // Ballistic's warm orange (0xffb24a) — if the two read as too similar in the catalog UI,
+  // that's the first thing to revisit.
+  fire:      { id: 'fire',      label: 'Fire',          color: 0xff7a18 },
 };
 
 export const CATEGORY_IDS = Object.keys(CATEGORIES);

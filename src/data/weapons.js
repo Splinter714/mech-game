@@ -202,7 +202,7 @@ export const WEAPONS = {
     // The enemy sniper/artillery fire loop (src/scenes/arena/enemies.js) already drives cadence
     // generically off `_fireInterval`, which already branches on `pattern === 'stream'` — no
     // enemy-side code changes were needed for this to work as an enemy-fired projectile stream.
-    id: 'plasmaLance', name: 'Plasma Lance', category: 'energy',
+    id: 'plasmaLance', name: 'Plasma Lance', category: 'plasma',  // #618: energy -> plasma
     damage: 1.6, range: { min: 0, opt: 460, max: 620 },
     ammoMax: 120, cycleTime: 0,   // #402: ~6.0s burst (120 ÷ 20/s), then 2s reload
     // #213: very light per-bolt tracking bias (Halo Needler-style) — see `weakSeek` above.
@@ -268,7 +268,7 @@ export const WEAPONS = {
     },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover — now a saturating VOLLEY (#434)
-    id: 'plasmaCannon', name: 'Plasma Arc', category: 'energy',
+    id: 'plasmaCannon', name: 'Plasma Arc', category: 'plasma',  // #618: energy -> plasma
     // #259 DPS-squish: damage 18 -> 32 to bring raw DPS up from 11.25 to the ~20 band.
     // #434 VOLLEY REWORK: one trigger pull now fires a rippling 5-bolt volley (delivery.count 5 +
     // burst stagger) that SATURATES a small area, and EACH bolt spends 1 round (delivery.ammoPerShot)
@@ -326,7 +326,7 @@ export const WEAPONS = {
     delivery: { hit: 'projectile', path: 'arcing', velocity: 400, pattern: 'single', splash: 40, tracksLock: true, homingTurnRadius: 140, homingBlendStart: 0, count: 5, burst: { interval: 70 }, ammoPerShot: true, burstScatter: true, spreadAngle: 13, salvoSpread: 46, salvoNoConverge: true },
   }),
   flamethrower: w({ // close-mid gout of flame, held as one continuous stream
-    id: 'flamethrower', name: 'Flamethrower', category: 'energy',
+    id: 'flamethrower', name: 'Flamethrower', category: 'fire',  // #618: energy -> fire
     // #256 playtest rebalance: damage 2 -> 0.65 (revised target, see below). Flamethrower's
     // DPS is fireRate(18) x count(3) x damage, so
     // 18*3*2 = 108 dps originally — a ~40%+ overshoot over Repeater's 72 dps (18 x
@@ -367,6 +367,9 @@ export const WEAPONS = {
     // derivation (`neonForWeapon`, art/mounts/index.js), so the gun on the mech stops glowing
     // energy-category CYAN while spraying orange fire. Audited and raised as the one remaining
     // mount/projectile colour mismatch; owner chose to make the mount match the flame.
+    // #618: now that flamethrower's own `category` is `fire` (color 0xff7a18, this exact hex),
+    // this override is redundant with the category default — left in place rather than risking
+    // the actual rendered colour.
     delivery: { hit: 'projectile', pattern: 'stream', fireRate: 18, count: 3, spreadJitter: 9, velocity: 230, kind: 'flame', splash: 6, projectileColor: 0xff7a18 },
   }),
   plasmaCoater: w({   // #489: heavier bolt that COATS the enemy — most of its damage is the burn,
@@ -397,7 +400,7 @@ export const WEAPONS = {
     // included. `projectileColor`: a purple-themed round (matching the DoT coating's own violet,
     // shieldOutline.js's PLASMA_COAT_COLOR) instead of the shared 'energy' category cyan every
     // other energy weapon uses — see makeProjectile's opt-in override, data/delivery.js.
-    id: 'plasmaCoater', name: 'Plasma Coater', category: 'energy',
+    id: 'plasmaCoater', name: 'Plasma Coater', category: 'plasma',  // #618: energy -> plasma
     damage: 14, range: { min: 0, opt: 380, max: 560 },
     ammoMax: 4, cycleTime: 1400,   // #402: ~5.6s burst (4 pulls × 1.4s), then 2s reload
     delivery: {
@@ -405,6 +408,9 @@ export const WEAPONS = {
       // No spreadJitter: playtest ask was "the spread/arc should be consistent, not
       // randomized" -- 3 shots at a fixed 24° fan, same 3 angles every pull.
       pattern: 'spread', count: 3, spreadAngle: 24,
+      // #618: this is now the exact same hex as the `plasma` category's own default color
+      // (both trace back to PLASMA_COAT_COLOR) — the override is redundant with the category
+      // default, but left in place rather than risk the actual rendered colour.
       projectileColor: 0xa04dff,
       splash: 40,
       dot: { kind: 'plasmaBurn', duration: 4, tickDamage: 5, tickInterval: 1 },
@@ -456,7 +462,7 @@ export const WEAPONS = {
     delivery: { hit: 'projectile', path: 'straight', velocity: 980, pattern: 'spread', count: 7, spreadAngle: 7, kind: 'bullet', wobble: 'sway', wobbleAmplitude: 2.5, wobbleFrequency: 14 },
   }),
   napalm: w({       // lobbed canister that bursts into a burning ground patch
-    id: 'napalm', name: 'Napalm Lobber', category: 'ballistic',
+    id: 'napalm', name: 'Napalm Lobber', category: 'fire',  // #618: ballistic -> fire
     // #259 DPS-squish: damage 6 -> 27 to bring the DIRECT-HIT raw DPS up from 4.0 to the ~18
     // band. DPS = damage / cycleTime(s): 6/1.5 = 4.0 dps -> 27/1.5 = 18.0 dps. This is
     // direct-hit only, same as the original 4.0 figure — the groundFire DOT (radius/dps/
@@ -531,7 +537,7 @@ export const WEAPONS = {
     // drawing code, not a per-weapon field. Follow-up #5 reverted that same function's SHAPE
     // back to a simple jagged line (kept the purple, dropped the sinuous-strand treatment) —
     // range here is unaffected.
-    id: 'causticLobber', name: 'Caustic Lobber', category: 'ballistic',
+    id: 'causticLobber', name: 'Caustic Lobber', category: 'plasma',  // #618: ballistic -> plasma
     damage: 18, range: { min: 40, opt: 700, max: 900 },
     ammoMax: 3, cycleTime: 1800,   // #402: ~5.4s burst (3 pulls × 1.8s), then 2s reload
     delivery: {
@@ -545,6 +551,10 @@ export const WEAPONS = {
       // hardcoding the violet a second and third time (`_drawAoeTendril`'s GLOW/CORE consts, the
       // orb's own art). This is the one number they should all have been reading. 0xb060e0 is the
       // orb's bright eye — shadow.js's own "the one hot spot the orb reads by."
+      // #618: category is now `plasma` (0xa04dff), the same violet family as this override —
+      // but 0xb060e0 is its own distinct shade (shadow.js's tuned eye colour, not the category
+      // default), so this is NOT redundant the way plasmaCoater's exact-match override is;
+      // left as-is.
       projectileColor: 0xb060e0,
       // #538: capped at 15 tendrils (individual connecting hits) so a round parked over a
       // crowd can't tick indefinitely — only a tick that actually connects spends the budget,
@@ -814,7 +824,11 @@ export const WEAPONS = {
 // #499: Jackson, playtest — "repulsor pulse is dumb, turn it off." Shelved rather than
 // deleted: its WEAPONS entry (data/art/sfx) stays fully intact, it's just unreachable from
 // the garage catalog/shop — the exact mechanism this list exists for.
-export const SHELVED_WEAPON_IDS = ['repulsorPulse'];
+// #618: "rail lance sucks; get rid of it, but keep its weapon mount art and use that art for
+// the beam laser." Same mechanism, same reason to shelve rather than delete: `enemyKinds.js`'s
+// wall-turret kind sets `weaponId: 'railLance'` and resolves it directly via getWeapon()/
+// resolveWeapon(), bypassing WEAPON_IDS entirely — that encounter is untouched by this list.
+export const SHELVED_WEAPON_IDS = ['repulsorPulse', 'railLance'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 

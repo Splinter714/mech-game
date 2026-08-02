@@ -359,7 +359,12 @@ export function arrivalSpeedMultiplier(weapon, angleOffset, straightDist) {
 export function projectileKind(weapon) {
   const d = weapon.delivery || {};
   if (d.kind) return d.kind;                       // explicit override (flame, fire, bullet, rail…)
-  if (weapon.category === 'energy') return 'plasma';
+  // #618: plasmaCannon is the one weapon that actually reaches this fallback (every other
+  // energy/plasma-category weapon declares its own explicit `kind` above) — it used to fall
+  // under `category === 'energy'` before #618 split plasma out into its own category. Checking
+  // `plasma` here instead keeps its bolt rendering as a plasma projectile rather than silently
+  // falling through to the ballistic 'slug' default below.
+  if (weapon.category === 'plasma') return 'plasma';
   if (weapon.category === 'missile') return 'missile';
   // Ballistic: rapid streams/pellets are little tracer bullets; a single shot is a heavy
   // autocannon shell.

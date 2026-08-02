@@ -34,7 +34,13 @@ export const BARREL_SPECS = {
   melee:         { len: 11,  frac: 1 },
   // bespoke energy (src/art/mounts/weapons.js)
   pulseLaser:    { len: 6,   frac: 1 },
-  beamLaser:     { len: 13,  frac: 1 },
+  // #618: beamLaser's own bespoke mount fn was deleted — WEAPON_MOUNT_ART.beamLaser (weapons.js)
+  // now draws with railLance's fn instead, which hardcodes its own `barrelLen('railLance', ...)`
+  // call regardless of which catalog key invoked it. weaponMuzzleTip() below looks up this table
+  // by the WEAPON's own id first, so this entry has to match railLance's spec exactly or the
+  // reported muzzle tip drifts from where the (now-shared) art is actually drawn — the exact
+  // mismatch bug #233 exists to prevent.
+  beamLaser:     { len: 15,  frac: 1 },
   railLance:     { len: 15,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
   // 2026-07-31: the first mount to go flush (see weapons.js's plasmaCoater header for the full
