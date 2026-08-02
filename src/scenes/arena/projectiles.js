@@ -972,13 +972,16 @@ export const ProjectilesMixin = {
     }
   },
 
-  // #624: the greedy bounded-degree nearest-neighbor construction — every candidate pair among
-  // the currently live+armed pylons, scored by distance and filtered to `MAX_LINK_RANGE`, sorted
-  // ascending, then walked once: a pair is accepted as a link only if BOTH pylons currently have
-  // fewer than `PYLON_LINK_CAP` links, otherwise it's skipped and the walk continues (a skipped
-  // pair is never revisited). This naturally favors short local links first and respects the cap
-  // by construction. Entirely replaces the previous graph — nothing from before this call
-  // survives except what gets reaccepted fresh.
+  // #624 (playtest follow-up, Jackson: "instead of closest, could we do furthest?"): the greedy
+  // bounded-degree construction — every candidate pair among the currently live+armed pylons,
+  // scored by distance and filtered to `MAX_LINK_RANGE`, sorted DESCENDING (farthest in-range
+  // pair first), then walked once: a pair is accepted as a link only if BOTH pylons currently
+  // have fewer than `PYLON_LINK_CAP` links, otherwise it's skipped and the walk continues (a
+  // skipped pair is never revisited). Favoring the farthest-still-in-range pairs first spreads
+  // each pylon's links toward the far edge of `MAX_LINK_RANGE` rather than to its immediate
+  // neighbors, so the web spans more ground per link instead of clustering into tight local
+  // clumps. The cap is still respected by construction either way. Entirely replaces the
+  // previous graph — nothing from before this call survives except what gets reaccepted fresh.
   _recomputePylonLinkGraph(live) {
     const pairs = [];
     for (let i = 0; i < live.length; i++) {
@@ -989,7 +992,7 @@ export const ProjectilesMixin = {
         pairs.push([a, b, dist]);
       }
     }
-    pairs.sort((p, q) => p[2] - q[2]);
+    pairs.sort((p, q) => q[2] - p[2]);
     const linkCount = new Map();
     const links = [];
     for (const [a, b] of pairs) {
