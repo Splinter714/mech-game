@@ -6,7 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeCoreAlpha } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeCoreAlpha, nearestChainTarget } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
 import { traceHitscan, traceHitscanPiercing } from '../../data/beamTrace.js';
@@ -378,6 +378,12 @@ export const FiringMixin = {
     // returned pull id is threaded to this pull's emissions so a connecting one books the hit
     // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
     const pullId = this._statShotFired?.(w.weapon.id, player) ?? null;
+    // #622: an id shared by every round THIS trigger pull spawns — Link Pylons' two charges
+    // stamp it onto their planted hazards (`_plantHazard`) so `_updatePylonLinks` can find each
+    // pylon's actual PARTNER from the same pull rather than the nearest other pylon on the field.
+    // Harmless (an unused extra id) for every weapon that doesn't plant a paired hazard.
+    this._nextPairId = (this._nextPairId ?? 0) + 1;
+    const pairId = this._nextPairId;
     // #500 (playtest follow-up — Jackson: "make cloak last until you fire a weapon instead of
     // lasting a finite amount of time"): the shot that breaks Cloak. Latched on THIS player (co-op:
     // only your own fire drops your own cloak) and consumed by the next ability tick
@@ -475,7 +481,7 @@ export const FiringMixin = {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset });
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset, pairId });
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -868,6 +874,12 @@ export const FiringMixin = {
       else if (isPlayerRef(this, target)) this._damagePlayerAt(dmg, target, { weaponId: w.weapon.id });
       else this._damageEnemyAt(target, endX, endY, dmg, color, false, { weaponId: w.weapon.id, pullId });
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+      // #622: Chain Bolt — after the first hit resolves, hop to nearby live enemies. Player-only
+      // (no enemy kind mounts this) and only when the first hit actually landed on an ENEMY, not
+      // a teammate (co-op friendly fire) — chaining through allies would read as a bug, not a feature.
+      if (w.weapon.delivery.chain && owner === 'player' && !isPlayerRef(this, target)) {
+        this._fireChainBolt(w, w.weapon.delivery.chain, target, endX, endY, color, beamTtl, pullId);
+      }
     } else if (blocked) {
       // #317: a stopped beam now CHIPS what stopped it, exactly as a round that detonates on cover
       // has always done (projectiles.js). Before this, hitscan weapons could not damage destructible
@@ -882,6 +894,32 @@ export const FiringMixin = {
       // no world mixin at all, the same way the rest of this file guards `_stopTrajectorySfx` etc.
       this._damageBuildingAt?.(endX, endY, Math.max(1, Math.round(w.weapon.damage)), { flame: false });
       this._impactFx(endX, endY, color, 'beam', 0, w.weapon.id);
+    }
+  },
+
+  // #622: Chain Bolt's hop resolution. `firstEnemy` is the live enemy handle the initial beam
+  // already struck (from `_liveEnemiesForTrace`'s `ref`) — excluded from every subsequent hop so
+  // the bolt never doubles back onto a target it already hit this shot. Each hop repeatedly finds
+  // the nearest live enemy within `chain.jumpRange` of the LAST hit position (pure pick via
+  // `nearestChainTarget`, data/delivery.js), applies `weapon.damage * chain.falloff^hopIndex`
+  // (hopIndex 1 for the 2nd target, 2 for the 3rd — the FIRST hit already dealt its own
+  // range-falloff-scaled damage in `_fireHitscan` above and isn't re-touched here), and draws its
+  // own `drawBeam` segment chained hit-to-hit (pushed onto `this.beams` exactly like the primary
+  // beam, so it fades on the same shared spark-fade path). Stops at `maxJumps` or once no live
+  // candidate remains in range.
+  _fireChainBolt(w, chain, firstEnemy, x0, y0, color, beamTtl, pullId) {
+    const candidates = this.enemies.filter((e) => !e.mech.isDestroyed());
+    const excluded = new Set([firstEnemy]);
+    let lastX = x0, lastY = y0;
+    for (let hopIndex = 1; hopIndex <= chain.maxJumps; hopIndex++) {
+      const next = nearestChainTarget(lastX, lastY, chain.jumpRange, candidates, excluded);
+      if (!next) break;
+      excluded.add(next);
+      const dmg = Math.max(1, Math.round(w.weapon.damage * Math.pow(chain.falloff, hopIndex)));
+      this._damageEnemyAt(next, next.x, next.y, dmg, color, false, { weaponId: w.weapon.id, pullId });
+      this.beams.push({ x0: lastX, y0: lastY, x1: next.x, y1: next.y, color, heavy: false, ttl: beamTtl, age: 0, loc: null, lane: 0, lateral: 0, coneDeg: 0 });
+      this._impactFx(next.x, next.y, color, 'beam', 0, w.weapon.id);
+      lastX = next.x; lastY = next.y;
     }
   },
 
@@ -1053,6 +1091,10 @@ export const FiringMixin = {
       // round's `shooter` above already serves this role for the player side). Carried onto a
       // planted hazard so its pull loop can exclude its own caster.
       caster: meta.caster ?? null,
+      // #622: which trigger pull spawned this round — see the comment on `pairId` in fireWeapon.
+      // Carried onto a planted 'pylon' hazard (`_plantHazard`) so its two charges can find each
+      // other. null for every caller that doesn't pass one.
+      pairId: meta.pairId ?? null,
     };
     this.projectiles.push(pushed);
     return pushed;

@@ -323,6 +323,39 @@ function clusterRocket(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   glowDot(sg, bx, collarY - collarH * 0.28, 1.0 * s, n);
 }
 
+// ── LIGHTNING (#622) ────────────────────────────────────────────────────────────────────
+
+// Chain Bolt — a bare charged conductor rod wrapped in coil windings, sparking at the tip: a
+// bolt caster, not a lens/beam emitter. Keeps the codebase's "compact procedural shape, not a
+// detailed model" rule (issue #622) — just a rod, a few coil bands, and a spark glow.
+function chainBolt(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
+  const L = barrelLen('chainBolt', s, cap), w = 2.2 * s;
+  tag('collar');
+  rectC(sg, bx, frontY - L * 0.14, w * 2.2, 3 * s, T.deep);            // small breech block
+  tag('barrel');
+  barrel(sg, T, bx, frontY - L / 2, w, L);                             // bare conductor rod
+  tag('detail');
+  for (const t of [0.32, 0.52, 0.72]) {                                // coil windings
+    rectC(sg, bx, frontY - L * t, w * 1.7, 0.8 * s, T.faceDk);
+  }
+  tag('color');
+  glowDot(sg, bx, frontY - L, 2 * s, n);                               // sparking tip
+}
+
+// Link Pylons — a stubby forked launcher stake: a squat base with two short prongs, each
+// glowing at its own tip, reading as "throws a pair of things" rather than a single barrel.
+function linkPylons(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
+  const L = barrelLen('linkPylons', s, cap), w = 3.6 * s;
+  tag('collar');
+  rectC(sg, bx, frontY - L * 0.2, w * 1.3, L * 0.42, T.deep);          // squat base
+  for (const dx of [-1, 1]) {                                          // two short throw prongs
+    tag('barrel');
+    barrel(sg, T, bx + dx * w * 0.34, frontY - L * 0.62, w * 0.3, L * 0.5);
+    tag('color');
+    glowDot(sg, bx + dx * w * 0.34, frontY - L * 0.86, 1.3 * s, n);
+  }
+}
+
 export const WEAPON_MOUNT_ART = {
   // energy
   // #618: beamLaser adopts railLance's own bespoke fn (Beam Laser's old fn was deleted). The
@@ -334,4 +367,6 @@ export const WEAPON_MOUNT_ART = {
   autocannon, machineGun, shotgun, napalm,
   // missile
   swarmRack, streakPod, clusterRocket,
+  // lightning
+  chainBolt, linkPylons,
 };

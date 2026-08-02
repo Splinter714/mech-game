@@ -778,6 +778,14 @@ export const ProjectilesMixin = {
       force: h.force || null,
       // #621: EMP Trap's payload — see `_updateHazards`'s mine branch for what this changes.
       disable: h.disable || null,
+      // #622: Link Pylons' payload — `pairId` (from the round, stamped by firing.js's
+      // `fireWeapon`/`_spawnProjectile`) is how `_updatePylonLinks` finds this pylon's actual
+      // PARTNER (the other charge from the SAME trigger pull) rather than just the nearest other
+      // pylon on the field. `pulseDamage`/`pulseInterval` are the static per-weapon numbers
+      // (data/weapons.js `linkPylons`); null/unused for every other hazard kind.
+      pairId: p.pairId ?? null,
+      pulseDamage: h.pulseDamage ?? null,
+      pulseInterval: h.pulseInterval ?? null,
     });
     this._impactFx(p.x, p.y, p.color, p.kind, 10, p.weaponId);
   },
@@ -866,6 +874,49 @@ export const ProjectilesMixin = {
       this._drawHazard(hz);
     }
     if (this.hazards.some((hz) => hz.dead)) this.hazards = this.hazards.filter((hz) => !hz.dead);
+    this._updatePylonLinks(dt);   // #622: Link Pylons' connecting line + line-pulse damage
+  },
+
+  // #622: Link Pylons — a SEPARATE per-frame pass (rather than folded into the per-hazard loop
+  // above) because linking is a property of the PAIR, not of either pylon individually, and
+  // doing it per-hazard would either double-process every pair (both members finding each other
+  // and both ticking their own pulse) or need extra bookkeeping to avoid that. Groups every live,
+  // ARMED 'pylon' hazard by `pairId`; a group of exactly 2 is a genuine live pair — draws their
+  // persistent connecting line (the same `drawBeam` primitive every other beam uses) and, on
+  // `pulseInterval`, damages any live enemy within `radius` of the LINE SEGMENT between them
+  // (point-to-segment distance via `segmentPointDistance`, data/delivery.js — already imported
+  // above and already used for swept projectile-hit detection, so this reuses rather than
+  // reinvents the geometry). A group of 1 (partner already dead/expired, or never landed) is a
+  // LONE pylon — it draws nothing here and pulses nothing; it just sits out its own `life` via
+  // the ordinary per-hazard countdown above. Flying enemies are exempt from the pulse, mirroring
+  // the mine branch's `!e.flying` filter above — a ground-planted electric line shouldn't zap
+  // something flying over it.
+  _updatePylonLinks(dt) {
+    const byPair = new Map();
+    for (const hz of this.hazards) {
+      if (hz.kind !== 'pylon' || hz.dead || hz.armIn > 0 || hz.pairId == null) continue;
+      const list = byPair.get(hz.pairId);
+      if (list) list.push(hz); else byPair.set(hz.pairId, [hz]);
+    }
+    for (const pair of byPair.values()) {
+      if (pair.length < 2) continue;   // lone pylon: no link, no pulse
+      const [a, b] = pair;
+      drawBeam(this.groundFx, a.x, a.y, b.x, b.y, a.color, 1, false, this.time.now, 1, 0);
+      // The pulse clock lives on `a` alone (whichever of the pair sorts first) — ticking it on
+      // both would double the damage every interval.
+      a._pylonPulseIn = (a._pylonPulseIn ?? a.pulseInterval ?? 0.5) - dt;
+      if (a._pylonPulseIn > 0) continue;
+      a._pylonPulseIn += a.pulseInterval ?? 0.5;
+      const candidates = a.owner === 'enemy'
+        ? livePlayersOf(this)
+        : this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
+      for (const c of candidates) {
+        if (segmentPointDistance(a.x, a.y, b.x, b.y, c.x, c.y) >= a.radius) continue;
+        if (a.owner === 'enemy') this._damagePlayerAt(a.pulseDamage, c, { weaponId: a.weaponId });
+        else this._damageEnemyAt(c, c.x, c.y, a.pulseDamage, a.color, false, { weaponId: a.weaponId });
+      }
+      this._impactFx((a.x + b.x) / 2, (a.y + b.y) / 2, a.color, 'beam', 0, a.weaponId);
+    }
   },
 
   // #543 (Jackson: "the gravity well visual and effect [should] be blocked by hard cover in
@@ -970,6 +1021,14 @@ export const ProjectilesMixin = {
         const r = vr * 0.55;
         g.fillStyle(0x9a4bf0, 0.85).fillCircle(hz.x + Math.cos(a) * r, hz.y + Math.sin(a) * r * 0.7, 5);
       }
+    } else if (hz.kind === 'pylon') {
+      // #622: a single pylon node — a crackling ring around a bright core, using the hazard's
+      // own colour (the lightning category's electric blue). The persistent connecting LINE
+      // between a live pair is a separate draw (`_updatePylonLinks`, once per pair per frame, not
+      // per node here) so a lone pylon still reads as "armed and waiting" even with no partner.
+      const pulse = 0.5 + 0.5 * Math.sin(now / 110);
+      g.lineStyle(1.5, hz.color, 0.35 + pulse * 0.45).strokeCircle(hz.x, hz.y, 8 + pulse * 3);
+      g.fillStyle(hz.color, 0.9).fillCircle(hz.x, hz.y, 4);
     }
   },
 

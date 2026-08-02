@@ -34,6 +34,14 @@ const GLYPHS = {
     sg.fillStyle(0x0d1014, 1);
     sg.fillTriangle(8, 6, 5.5, 13, 10.5, 13);
   },
+  // #622: a jagged bolt — Chain Bolt/Link Pylons. CRITICAL (per #618's postmortem): every
+  // category MUST have a glyph here — GLYPHS is iterated unconditionally at boot with no
+  // fallback, so a missing entry crashes the game instantly.
+  lightning: (sg, c) => {
+    sg.fillStyle(c, 1);
+    sg.fillTriangle(9, 1, 4, 9, 8, 9);
+    sg.fillTriangle(8, 9, 12, 9, 7, 15);
+  },
 };
 
 export function buildIconTextures(scene) {
