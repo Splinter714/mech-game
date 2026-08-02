@@ -271,6 +271,39 @@ export const CONSOLE = {
   playerGap: 34,    // one player's whole group ↔ the next player's
 };
 
+// ── #606: the CO-OP SEPARATION nudge ─────────────────────────────────────────────────────────
+//
+// Jackson, playtest: "in co-op, need slightly more horizontal separation between the two mech
+// HUDs" → asked how much, and he picked the SMALL option ("push each HUD toward its own screen
+// edge modestly — just enough to stop them reading as one block"), explicitly NOT pushing them
+// all the way out to the edges.
+//
+// Because the band is CENTRED (#452), "push each HUD outward" and "widen the gap between the
+// groups" are the same operation: adding 2×`sep` to the one gap moves player 1's whole group
+// `sep` to the left and player 2's `sep` to the right, symmetrically, and leaves solo untouched
+// (a one-group band has no gap to widen). So this is one number, not a per-panel offset.
+//
+// It is a FRACTION of the viewport width rather than a raw pixel constant — the layout is
+// DPR/viewport-driven and a nudge that reads as modest on a laptop would be invisible on a
+// wide monitor — clamped at both ends so it can neither vanish nor become the "all the way to
+// the edges" option he turned down. `consoleBand` then clamps it a SECOND time against the room
+// actually left on screen (see below), so a narrow window loses the nudge instead of pushing a
+// panel off the frame.
+export const COOP_SEPARATION = {
+  frac: 0.025,      // per player, as a share of viewport width (~32px at 1280, ~48px at 1920)
+  min: 16,          // still a visible break on a very narrow window
+  max: 48,          // "small nudge", not "hug the edges"
+  edgeMargin: 12,   // bare screen the band must keep past each end before the nudge is trimmed
+};
+
+// How far ONE player's group is pushed toward its own side, in px. Zero in solo — the
+// single-player console position is unchanged by #606.
+export function coopSeparation(W, count) {
+  if ((count | 0) < 2) return 0;
+  const S = COOP_SEPARATION;
+  return Math.round(Math.max(S.min, Math.min(S.max, (W || 0) * S.frac)));
+}
+
 // The skill tile row's own dial. #506's SECOND rework moved the two mountable abilities OUT of
 // this row entirely and into their own double-wide/half-height row stacked above it (see
 // ui/skillTiles.js `weaponAbilityRows`) — the width budget is back to just the FOUR weapon tiles,
@@ -293,9 +326,12 @@ export function tileRowWidth(size, n = CONSOLE_TILES.n, gap = CONSOLE_TILES.gap)
 // so it is measured, not assumed).
 export function consoleTileSize(W, blockWs) {
   const n = Math.max(1, blockWs.length);
+  // #606: the co-op nudge is spent out of the SAME width budget the tiles are, so a window that
+  // is already tight gives up tile size for the separation (down to CONSOLE_TILES.min) rather
+  // than growing the band past the screen. Solo's budget is untouched — `coopSeparation` is 0.
   const budget = W - CONSOLE.edgeGap * 2 - CONSOLE.padX * 2
     - blockWs.reduce((s, b) => s + blockRun({ blockW: b }), 0)
-    - CONSOLE.playerGap * (n - 1);
+    - (CONSOLE.playerGap + 2 * coopSeparation(W, n)) * (n - 1);
   const size = Math.floor((budget / n - CONSOLE_TILES.gap * (CONSOLE_TILES.n - 1)) / CONSOLE_TILES.n);
   return Math.max(CONSOLE_TILES.min, Math.min(CONSOLE_TILES.max, size));
 }
@@ -313,15 +349,25 @@ function blockRun(g) {
 }
 
 export function consoleBand(W, groups) {
-  const inner = groups.reduce((s, g) => s + blockRun(g) + g.tilesW, 0)
-    + CONSOLE.playerGap * Math.max(0, groups.length - 1);
-  const w = Math.round(inner + CONSOLE.padX * 2);
+  const gaps = Math.max(0, groups.length - 1);
+  const base = groups.reduce((s, g) => s + blockRun(g) + g.tilesW, 0)
+    + CONSOLE.playerGap * gaps;
+  // #606: the co-op nudge, clamped a second time against the room actually left on screen. The
+  // tiles already gave up width for it (`consoleTileSize`), but a genuinely narrow window can
+  // bottom out at CONSOLE_TILES.min with nothing left over — in that case the separation shrinks
+  // (to zero if it has to) rather than pushing either player's panel off the frame. `gaps` is 0
+  // in solo, so `extra` is 0 and the single-player band is byte-for-byte what it was.
+  const want = coopSeparation(W, groups.length) * 2 * gaps;
+  const room = Math.max(0, W - COOP_SEPARATION.edgeMargin * 2 - (base + CONSOLE.padX * 2));
+  const extra = Math.min(want, room);
+  const playerGap = CONSOLE.playerGap + (gaps > 0 ? extra / gaps : 0);
+  const w = Math.round(base + extra + CONSOLE.padX * 2);
   const x = Math.round((W - w) / 2);
   let cx = x + CONSOLE.padX;
   const placed = groups.map((g) => {
     const blockX = cx;
     const tilesX = cx + blockRun(g);
-    cx = tilesX + g.tilesW + CONSOLE.playerGap;
+    cx = tilesX + g.tilesW + playerGap;
     return { blockX, blockW: g.blockW, tilesX, tilesW: g.tilesW };
   });
   return { x, w, groups: placed };
