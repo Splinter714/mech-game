@@ -55,7 +55,12 @@ import { AbilityCardPreview } from './abilityPreview.js';
 // PauseMenuScene._highlight() paints its own row cursor cyan, so cyan-as-cursor is the house rule.
 //   idle             → panel      + 1px panelEdge
 //   selected         → panelSel   + 2px panelEdge   (neutral: no colour claims "equipped")
-//   focused / both   → panelSel   + 2px focus (cyan)
+//   focused / both   → panelSel   + 2px focus
+// #615 REVISES the cursor colour only: `focus` below is still cyan, but it is now just the DEFAULT
+// (what the standalone Weapon Lab, which has no player identity to draw from, keeps). The Garage
+// overrides it per column with that player's own mech colour — solo included — so a cursor always
+// says WHOSE it is. See `focusColor`/`setFocusColor`. Everything else about the table above is
+// unchanged: selected is still a neutral thicker edge, and only the cursor is ever coloured.
 // `panelSel` therefore has to carry "you have this" ON ITS OWN — a COLOR card has no bind glyph to
 // fall back on — so it is meaningfully brighter than `panel` rather than the ~5% lift (0x1b2430)
 // it was while gold did that job. One named constant, expected to be tuned in play.
@@ -68,6 +73,11 @@ const UI = {
 // panel states above, and gold is still the garage's colour for that (the loadout tiles' own bind
 // glyphs, the locked-card cost label). #611's "no gold" rule is about the panel fill/stroke only.
 const BIND_GOLD = '#efc14a';
+
+// #65's locked-card label colour, now the DEFAULT for the generalised "you can't pick this" label
+// (see `unavailable` below) rather than a hard-coded one — the #614 taken-colour card overrides it
+// with the holding player's own identity colour.
+const LOCK_GOLD = '#f5c542';
 
 const CARD_H = 96;
 const CARD_GAP = 12;
@@ -86,10 +96,11 @@ const LABEL_W = 200;     // left block: name + stats
 //
 // 380 is Jackson's number, chosen over ~465 (the fixed width this replaced) and ~340 (the
 // pre-#611 width): it gives 3 across from ~1170px of room and 4 from ~1560px. A garage column's
-// catalog rect is the column's inner width (colW - 2*8, see garage/columnLayout.js), so on a
-// 1440-wide window: solo → 1424px → 3 across at ~467px each; two players → 704px → 1 across at
-// 704px; three or four → narrower than the minimum, so 1 across clamped to the column, which is
-// exactly the single-column full-bleed row the list drew before #610.
+// catalog rect is the column's inner width (colW - 2*12 since #615 added the frame's own clearance
+// to the column padding, see garage/columnLayout.js), so on a 1440-wide window: solo → 1416px → 3
+// across at ~464px each; two players → 696px → 1 across at 696px; three or four → narrower than the
+// minimum, so 1 across clamped to the column, which is exactly the single-column full-bleed row the
+// list drew before #610.
 //
 // Whatever width a card lands at, the LEFT text block stays pinned at LABEL_W and the live-fire
 // PREVIEW STAGE absorbs every extra pixel (see _layout) — a wide card buys a longer shot/beam
@@ -192,9 +203,15 @@ export class WeaponCardList {
   // handle (the Garage passes its column's own build, mutated in place), so `refreshCaster()` after
   // a mount/chassis/colour change is all the re-sync there is. Omitting it draws no caster and is
   // exactly what the Weapon Lab does — that list is weapons-only, so it has no ability cards at all.
+  // #614: `unavailable(id, kind)` is the GENERAL form of the lock above — return null for a normal
+  // card, or `{ text, color }` to give it the identical scrim + centred label treatment with a
+  // caller-written reason. It applies to EVERY card kind (a colour held by another co-op player has
+  // no SCRAP price and isn't an item at all), and the weapon-cost path is untouched: `isLocked`
+  // still wins, and a list that passes neither behaves exactly as before.
   constructor(scene, {
     x, y, w, h, ids, sections = null, onSelect = null, onHover = null,
-    selectedId = null, isLocked = null, costOf = null, compact = false, caster = null,
+    selectedId = null, isLocked = null, costOf = null, unavailable = null,
+    compact = false, caster = null, focusColor = UI.focus,
   } = {}) {
     this.scene = scene;
     this.caster = caster;
@@ -204,6 +221,12 @@ export class WeaponCardList {
     this._selectedIds = null;
     this.isLocked = isLocked;
     this.costOf = costOf;
+    this.unavailable = unavailable;
+    // #615: the CURSOR ring's colour — cyan unless the caller owns a per-player identity to use
+    // instead. The Garage passes a BRIGHTENED variant of that column's mech colour
+    // (mechColors.js's legibleColor), never the raw swatch: a swatch is picked to read as paint on
+    // a mech, and a dark one (CHARCOAL, NAVY) makes an invisible 2px ring on a near-black panel.
+    this.focusColor = focusColor;
     this.compact = compact;
     this.cardH = compact ? COMPACT_CARD_H : CARD_H;
     this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
@@ -399,7 +422,7 @@ export class WeaponCardList {
   // Rebuild the card set (e.g. filtered to a slot's eligible items). Reuses nothing — cards
   // are cheap and this only fires on a slot change, not per frame. The given order is the
   // CANONICAL order; when lock info is available (#78) locked items sort to the bottom, so we
-  // stash the canonical ids for refreshLocks() to re-sort against on unlock.
+  // stash the canonical ids for refreshAvailability() to re-sort against on unlock.
   setIds(ids) {
     this.setSections([{ id: 'all', label: null, ids }]);
   }
@@ -423,7 +446,7 @@ export class WeaponCardList {
     this.cards = [];
     this._sections = [];
     this._focus = -1;
-    this._ids = [];   // canonical order, pre lock-sort — remembered for refreshLocks()/sameIds()
+    this._ids = [];   // canonical order, pre lock-sort — remembered for refreshAvailability()/sameIds()
     for (const sec of sections) {
       const kind = sec.kind ?? 'item';
       const ids = [...(sec.ids ?? [])];
@@ -515,9 +538,11 @@ export class WeaponCardList {
     // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
     // — sits on TOP of everything when the item is locked, hiding the live preview without
     // tearing it down (still simulated underneath so unlocking it needs no rebuild of state).
+    // #614: the SAME two objects are now the one "you can't pick this" state for any reason, not
+    // just an unpaid SCRAP price — see `_paintLock`. One scrim, one language, everywhere.
     const lockScrim = this.scene.add.rectangle(0, 0, 100, cardH, 0x05070a, 0.72).setOrigin(0, 0).setVisible(false);
     const lockLabel = this.scene.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: '#f5c542', align: 'center',
+      fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: LOCK_GOLD, align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
     // #610 (added scope): the bind glyph of whichever slot this item is currently mounted in — the
@@ -563,17 +588,28 @@ export class WeaponCardList {
     this._paintBind(card);
   }
 
-  // #65: apply/refresh a single card's locked look without rebuilding it. Call after a
+  // #65: apply/refresh a single card's unavailable look without rebuilding it. Call after a
   // purchase (or any balance change) to redraw locks in place — cheaper than setIds().
+  //
+  // #614: TWO reasons can now put a card behind the scrim, and they share it deliberately so the
+  // catalog speaks one "you can't pick this" language rather than inventing a second dim state:
+  //   1. the #65 SCRAP lock — item cards only, gold "🔒 LOCKED / N SCRAP",
+  //   2. the caller's general `unavailable(id, kind)` — any card kind, caller's own text/colour
+  //      (the Garage names the co-op player holding a colour, in that player's colour).
+  // The lock wins where both could apply, so the weapon-cost path is exactly what it always was.
   _paintLock(card) {
     // #611: only ITEM cards can be locked — a chassis or a colour has no SCRAP price, and asking
     // the caller's `isLocked` about one would be asking a weapon-shop question about a paint chip.
     const locked = card.kind === 'item' && (this.isLocked?.(card.id) ?? false);
-    card.lockScrim.setVisible(locked);
-    card.lockLabel.setVisible(locked);
+    const blocked = locked ? null : (this.unavailable?.(card.id, card.kind) ?? null);
+    const on = locked || !!blocked;
+    card.lockScrim.setVisible(on);
+    card.lockLabel.setVisible(on);
     if (locked) {
       const cost = this.costOf?.(card.id) ?? 0;
-      card.lockLabel.setText(`🔒 LOCKED\n${cost} SCRAP`);
+      card.lockLabel.setText(`🔒 LOCKED\n${cost} SCRAP`).setColor(LOCK_GOLD);
+    } else if (blocked) {
+      card.lockLabel.setText(blocked.text ?? '').setColor(blocked.color ?? LOCK_GOLD);
     }
   }
 
@@ -584,7 +620,9 @@ export class WeaponCardList {
   // rebuild (setIds(), e.g. a slot change or leaving/re-entering the garage), which already
   // applies orderByLock() against the live isLocked state — so a purchased item settles into
   // its canonical slot on the next real navigation, not mid-interaction.
-  refreshLocks() {
+  // #614: renamed from `refreshLocks` now that the scrim covers more than the SCRAP lock — the
+  // Garage calls it both after a purchase and whenever another player's colour changes.
+  refreshAvailability() {
     for (const c of this.cards) this._paintLock(c);
   }
 
@@ -596,7 +634,15 @@ export class WeaponCardList {
     const on = this._isSelected(card);
     const focused = this._focus >= 0 && this.cards[this._focus] === card;
     card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
-      .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : UI.panelEdge);
+      .setStrokeStyle(on || focused ? 2 : 1, focused ? this.focusColor : UI.panelEdge);
+  }
+
+  // #615: recolour the cursor in place — the Garage calls this when its column's player picks a new
+  // mech colour, so the ring follows the identity it stands for without rebuilding a single card.
+  setFocusColor(color) {
+    if (this.focusColor === color) return;
+    this.focusColor = color;
+    for (const c of this.cards) this._paintSelection(c);
   }
 
   _statLines(item, weapon) {

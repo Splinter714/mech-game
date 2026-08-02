@@ -22,6 +22,29 @@ import { weaponAbilityRows } from '../../ui/skillTiles.js';
 import { CONSOLE_TILES, tileRowWidth } from '../../data/hudLayout.js';
 
 export const COLUMN_PAD = 8;
+// #615 (Jackson: "need a MUCH more clear vertical boundary separator thing between garage panels
+// for multiple players" — then "add a real slight gutter too"). Columns used to be packed edge to
+// edge at `i * colW` with nothing drawn at the seam at all. Now each one carries a FRAME in its
+// player's own mech colour (GarageScene paints `gl.frame`), plus real physical separation:
+//
+//   FRAME_GUTTER — empty background from the column's own edge in to its frame. Two adjacent
+//                  frames are therefore 2 * FRAME_GUTTER = 10px apart. This is the gutter, and it
+//                  costs NOTHING: it comes entirely out of the column's existing COLUMN_PAD, which
+//                  was already dead space no content was using.
+//   FRAME_PAD    — clearance between the frame's stroke and the content inside it, so the cards
+//                  and the loadout plates aren't drawn touching the frame line. This one DOES cost
+//                  content: 2 * FRAME_PAD = 8px of width per column and 4px of height (the tile
+//                  block's own bottom anchor moves up by one).
+//
+// That 8px matters, so it is deliberately the smallest number that reads as clearance rather than
+// as a rendering mistake. Horizontal space here is already over-subscribed: the preview+tiles+READY
+// group is fixed at arena size and cannot shrink (see the overflow note on garageColumnLayout
+// below), so at two players on a 1280-wide screen it already overflows ~58px per side and this adds
+// 4 more. Widening the window remains the only fix; if the gutter ever has to pay for itself, take
+// it back out of FRAME_PAD (the frame can sit closer to the cards) before touching FRAME_GUTTER,
+// which is the part Jackson actually asked for.
+export const FRAME_GUTTER = 5;
+export const FRAME_PAD = 4;
 // #505 (fifth rework, playtest): the per-column header row that used to live here (the passive-
 // slot "avatar" icon top-left, the "READY?" pill top-right) is gone — the passive slot now rides
 // inside the shared ability row (`gl.tiles.abilities`, via weaponAbilityRows) and the "READY?"
@@ -70,7 +93,10 @@ export const TILE_GAP = CONSOLE_TILES.gap;
 export const TILE_N = CONSOLE_TILES.n;
 
 // Full column layout for a `w` x `h` column. Returns:
-//   innerW    — usable width inside the column's own padding
+//   innerW    — usable width inside the column's own padding (and, since #615, inside its frame)
+//   frame     — { x, y, w, h } the player-coloured border GarageScene strokes around the whole
+//               column (#615), inset from the column's edges by FRAME_GUTTER so two neighbouring
+//               frames are visibly separated
 //   catalog   — { x, y, w, h } for the WeaponCardList catalog
 //   tiles     — { weapons, abilities } — the exact rects weaponAbilityRows returned, ready to
 //               hand straight to drawSkillTile — always at the arena's full TILE_SIZE. The
@@ -131,15 +157,21 @@ export function garageColumnLayout(w, h, opts = {}) {
     pad = COLUMN_PAD, headerH = HEADER_H, gap = GAP,
     previewTileGap = PREVIEW_TILE_GAP, tileSize = TILE_SIZE, tileGap = TILE_GAP, tileN = TILE_N,
     labelBottomInset = LABEL_BOTTOM_INSET,
+    frameGutter = FRAME_GUTTER, framePad = FRAME_PAD,
   } = opts;
-  const innerW = Math.max(0, w - pad * 2);
+  // #615: everything INSIDE the frame is inset by one more `framePad` than it used to be, so the
+  // frame line has clearance from the content it wraps. `pad` alone still describes where the frame
+  // itself lives (frameGutter < pad, so the frame sits inside the column's old padding and the
+  // gutter between two columns is free); `edge` is where content now starts.
+  const edge = pad + framePad;
+  const innerW = Math.max(0, w - edge * 2);
   const tileBlockW = tileRowWidth(tileSize, tileN, tileGap);
   // The tile block is anchored to its own BOTTOM, flush with the column's own bottom padding (no
   // separate footer reserve any more, #505 sixth rework) — weaponAbilityRows lays out from that
   // bottom anchor upward and reports back `top`, whichever row ended up physically highest, so
   // this stays correct regardless of which row (weapon or ability) the shared layout currently
   // puts on top.
-  const blockBottom = Math.max(headerH + gap, h - pad);
+  const blockBottom = Math.max(headerH + gap, h - edge);
 
   // First pass at x=0 purely to measure the combined block's own square size (its `y`/`h`s don't
   // depend on x, only on width/bottom/maxSize) — the preview derives its sizing/position from this
@@ -158,7 +190,7 @@ export function garageColumnLayout(w, h, opts = {}) {
   // The group — square preview (matching the combined block's own height), the fixed-width tile
   // block, then this column's own READY button (#609) — centered as ONE unit.
   const pairW = previewSize + previewTileGap + tileBlockW + tileGap + readyW;
-  const pairX = pad + (innerW - pairW) / 2;
+  const pairX = edge + (innerW - pairW) / 2;
   const tileAreaX = pairX + previewSize + previewTileGap;
   const readyX = tileAreaX + tileBlockW + tileGap;
 
@@ -167,7 +199,7 @@ export function garageColumnLayout(w, h, opts = {}) {
   });
   const blockTop = weapons.length ? top : blockBottom;
 
-  const catalogY = headerH + gap;
+  const catalogY = headerH + gap + framePad;
   const catalogH = Math.max(70, blockTop - gap - catalogY);
 
   const previewCx = pairX + previewSize / 2;
@@ -182,7 +214,7 @@ export function garageColumnLayout(w, h, opts = {}) {
   // The full panel bounding box, spanning the column's own inner width (same x/w as the catalog
   // above it) so the click-blocker/top-border cover it edge to edge, with no leftover strip of
   // dead space either side or below.
-  const panel = { x: pad, y: panelTop, w: innerW, h: blockBottom - panelTop };
+  const panel = { x: edge, y: panelTop, w: innerW, h: blockBottom - panelTop };
 
   // #609: the READY button spans the WEAPON row's own top-to-bottom extent (bottom-flush with the
   // whole block), so it lines up with the squares immediately to its left instead of hovering at
@@ -192,7 +224,15 @@ export function garageColumnLayout(w, h, opts = {}) {
 
   return {
     innerW,
-    catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
+    // #615: the column's own frame rect, inset from all four column edges by `frameGutter` — the
+    // separation between two adjacent frames is that gutter twice over. GarageScene strokes it in
+    // the column's player colour; nothing else in this layout is positioned relative to it (the
+    // content is inset by `edge`, which is strictly larger), so it purely wraps what's already here.
+    frame: {
+      x: frameGutter, y: frameGutter,
+      w: Math.max(0, w - frameGutter * 2), h: Math.max(0, h - frameGutter * 2),
+    },
+    catalog: { x: edge, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
     preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
     ready: { x: readyX, y: readyTop, w: readyW, h: blockBottom - readyTop },

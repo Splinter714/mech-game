@@ -125,6 +125,57 @@ export function canPickSwatch(builds, editingIndex, color) {
   return !takenSwatches(builds, editingIndex).has(color);
 }
 
+// #614: WHICH other player holds `color` — the index of the first build (other than `editingIndex`)
+// whose resolved colour is `color`, or -1 if nobody does. `canPickSwatch` answers whether a swatch
+// is available; this answers who took it, which is what the greyed-out card has to NAME ("P2") so
+// the player can decide what to switch to instead. Same walk as `takenSwatches` by construction —
+// a colour is unavailable exactly when this returns >= 0 — so display and guard cannot disagree.
+export function swatchHolder(builds, editingIndex, color) {
+  const list = builds ?? [];
+  for (let i = 0; i < list.length; i++) {
+    if (i === editingIndex) continue;
+    if (mechColorFor(list[i], i) === color) return i;
+  }
+  return -1;
+}
+
+// ── Legible variants of an identity colour (#614/#615) ────────────────────────────────────────
+// A swatch is chosen to read as MECH PAINT on the battlefield, which is a different job from
+// reading as UI INK on a near-black panel: CHARCOAL (0x3a3d42) and NAVY (0x1f3f78) are deliberate,
+// good picks for a mech and all but invisible as a 2px cursor ring or a label over the dim
+// "unavailable" scrim. `legibleColor` derives the UI variant — same HUE, so it still reads as that
+// player's colour, with brightness guaranteed:
+//   • VALUE floored at MIN_V, so a dark pick is lifted to a bright one, and
+//   • SATURATION capped at MAX_S, so the floor actually reaches every channel (a fully saturated
+//     colour has a zero channel no matter how high its value is, which is what leaves NAVY dark).
+// Together those pin the darkest channel at MIN_V * (1 - MAX_S) ≈ 0.26 and the brightest at
+// MIN_V ≈ 0.85 — comfortably clear of the card panel (0x161b22) and the lock scrim beneath it —
+// while a colour that is ALREADY bright (AZURE, WHITE, LIME) comes back essentially untouched.
+// Pure RGB↔HSV here rather than Phaser's colour helpers: this module stays Phaser-free.
+const MIN_V = 0.85;
+const MAX_S = 0.70;
+
+export function legibleColor(color) {
+  const r = ((color >> 16) & 0xff) / 255, g = ((color >> 8) & 0xff) / 255, b = (color & 0xff) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  const v = Math.max(max, MIN_V);
+  const s = Math.min(max === 0 ? 0 : d / max, MAX_S);
+  // HSV → RGB.
+  const i = Math.floor(h * 6) % 6;
+  const f = h * 6 - Math.floor(h * 6);
+  const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  const [nr, ng, nb] = [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i];
+  const byte = (x) => Math.round(Math.min(1, Math.max(0, x)) * 255);
+  return (byte(nr) << 16) | (byte(ng) << 8) | byte(nb);
+}
+
 // ── The cycle picker's resolver (#487, second pass) ───────────────────────────────────────────
 // The garage swatch GRID read as garish, so the picker became a single CURRENT-COLOUR indicator
 // advanced by a button (gamepad + keyboard) and on-screen ‹ › arrows. This is the pure step: from
