@@ -750,6 +750,16 @@ export class WeaponCardList {
     // rather than as one uniform stride, and each card remembers its own content-space `top` so
     // focus-scrolling can address it directly. #610: within a section they now also wrap across
     // `cols` columns, and every section restarts at column 0 on a fresh row.
+    // #619: a row can ALSO be forced to break early, before it's full, at a WEAPON CATEGORY
+    // boundary — two different categories may never share a row, even with columns to spare.
+    // That means the per-card row/col assignment can no longer be closed-form (`k / cols`,
+    // `k % cols`): it's now a stateful walk that tracks the row currently being built and
+    // breaks it early on a category change. `card.weapon?.category` is undefined for
+    // ability/chassis/color cards, so two such cards never compare unequal to each other and
+    // this is a no-op outside the weapon section — it only ever fires between two WEAPON cards.
+    // Because a forced break can make a section use MORE rows than `Math.ceil(sec.count /
+    // cols)` predicts, the section's height is now the actual number of rows the walk produced,
+    // not that closed-form count.
     this._rows = [];
     let y = 0;
     for (const sec of this._sections) {
@@ -759,20 +769,34 @@ export class WeaponCardList {
         y += this.headerH;
       }
       sec.cardsTop = y;
+      const sectionStartRow = this._rows.length;
+      let col = 0;
+      let rowCategory;   // category of the row currently being built; undefined = unconstrained
       for (let k = 0; k < sec.count; k++) {
-        const r = Math.floor(k / cols), c = k % cols;
         const idx = sec.first + k;
-        if (c === 0) this._rows.push([]);
+        const card = this.cards[idx];
+        const category = card.weapon?.category;
+        // New row when: it's the section's first card, the current row is full, or this card's
+        // category differs from the row's (both defined — never true for non-weapon cards).
+        const breakRow = k === 0 || col >= cols
+          || (rowCategory !== undefined && category !== undefined && category !== rowCategory);
+        if (breakRow) {
+          this._rows.push([]);
+          col = 0;
+          rowCategory = category;
+        }
         const row = this._rows[this._rows.length - 1];
         row.push(idx);
-        const card = this.cards[idx];
+        const r = this._rows.length - 1 - sectionStartRow;
         card.row = this._rows.length - 1;
-        card.col = c;
-        this._layoutCard(card, c * (cardW + colGap), y + r * (cardH + this.cardGap), {
+        card.col = col;
+        this._layoutCard(card, col * (cardW + colGap), y + r * (cardH + this.cardGap), {
           cardW, cardH, nameX, stageX, stageW, stageMargin, muzzleInset,
         });
+        col++;
       }
-      y += Math.ceil(sec.count / cols) * (cardH + this.cardGap);
+      const rowsUsed = this._rows.length - sectionStartRow;
+      y += rowsUsed * (cardH + this.cardGap);
       if (sec.label) y += this.sectionGap;
     }
     this._maxScroll = Math.max(0, y - this.region.h);
