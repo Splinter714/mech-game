@@ -23,7 +23,7 @@ import { mechPreviewKeys, poseMechInto, vehiclePreviewKeys } from '../art/previe
 import { vehicleScaleFactor, MECH_SCALE_FACTOR, trueScaleBase } from '../data/unitScale.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { CHASSIS_IDS, PLAYER_CHASSIS_IDS } from '../data/chassis/index.js';
-import { WEAPON_IDS } from '../data/weapons.js';
+import { CATALOG_WEAPON_IDS } from '../data/weapons.js';
 import { getItem } from '../data/items.js';
 import { WeaponCardList } from '../ui/weaponCardList.js';
 import { saveAllMechs } from '../data/save.js';
@@ -834,7 +834,9 @@ export default class ArtPreviewScene extends Phaser.Scene {
 
   _buildWeapons() {
     const stills = [];
-    for (const id of WEAPON_IDS) {
+    // Jackson, 2026-08-01: "sort weapons by type (laser vs plasma, etc)" — same grouped order
+    // the Garage catalog uses (data/weapons.js's CATALOG_WEAPON_IDS), so the two don't disagree.
+    for (const id of CATALOG_WEAPON_IDS) {
       const item = getItem(id);
       stills.push({
         label: `${item?.name ?? id}\nmount + fx`,
@@ -884,7 +886,7 @@ export default class ArtPreviewScene extends Phaser.Scene {
     const backdrop = this.add.rectangle(0, listY, this.W, this.H - listY, 0x0d1014).setOrigin(0, 0);
     this.pinned.add([backdrop, bar, barText]);
     this.list = new WeaponCardList(this, {
-      x: PAD, y: listY, w: this.W - PAD * 2, h: listH - PAD, ids: WEAPON_IDS,
+      x: PAD, y: listY, w: this.W - PAD * 2, h: listH - PAD, ids: CATALOG_WEAPON_IDS,
     });
     this.list.root.setDepth(16);   // above `pinned` (15), which is above the scrolled gallery
     // Reserve the band so the stills above can't scroll underneath the catalog.

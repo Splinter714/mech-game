@@ -13,7 +13,7 @@ import {
 import { PLAYER_CHASSIS_IDS, CHASSIS } from '../data/chassis/index.js';
 import { Mech } from '../data/Mech.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
-import { WEAPON_IDS } from '../data/weapons.js';
+import { CATALOG_WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
@@ -195,7 +195,9 @@ export default class GarageScene extends Phaser.Scene {
     for (const key of PLAYER_MECH_KEYS) this.allMechs[key]?.repairAll();
     saveAllMechs(this.allMechs);
 
-    this.catalogIds = [...WEAPON_IDS];
+    // Jackson, 2026-08-01: "sort weapons by type (laser vs plasma, etc)" — CATALOG_WEAPON_IDS
+    // (data/weapons.js) is WEAPON_IDS grouped by category instead of file declaration order.
+    this.catalogIds = [...CATALOG_WEAPON_IDS];
     // #65: the permanently-unlocked catalog (meta-progression, persists across runs).
     this.unlocked = loadUnlocked();
     // #124: dev builds skip the unlock grind entirely.

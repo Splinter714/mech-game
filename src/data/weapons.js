@@ -123,6 +123,8 @@
 // Display names are generic sci-fi, deliberately *not* franchise jargon; the ids stay
 // stable so saved builds keep resolving.
 
+import { CATEGORY_IDS } from './categories.js';
+
 const DELIVERY_DEFAULTS = {
   hit: 'projectile', velocity: 500, path: 'straight', guidance: null,
   pattern: 'single', count: 1, spreadAngle: 0, fireRate: 0, splash: 0,
@@ -831,6 +833,18 @@ export const WEAPONS = {
 export const SHELVED_WEAPON_IDS = ['repulsorPulse', 'railLance'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
+
+// Jackson, 2026-08-01: "sort weapons by type (laser vs plasma, etc)". WEAPON_IDS is declaration
+// order, which used to roughly double as category order (weapons were written category-block by
+// category-block) — #618 broke that assumption by reassigning several weapons (causticLobber,
+// plasmaCannon, plasmaLance, flamethrower, napalm) to new categories WITHOUT moving their file
+// position, so declaration order and true category no longer agree. This is what both catalog
+// UIs (Garage, Weapon Lab) should actually render in: WEAPON_IDS grouped by CATEGORY_IDS' own
+// object-key order (categories.js), stable-sorted so weapons within a category keep their
+// existing relative order. Reordering CATEGORIES reorders the catalog for free.
+export const CATALOG_WEAPON_IDS = [...WEAPON_IDS].sort(
+  (a, b) => CATEGORY_IDS.indexOf(WEAPONS[a]?.category) - CATEGORY_IDS.indexOf(WEAPONS[b]?.category)
+);
 
 export function getWeapon(id) {
   return WEAPONS[id];

@@ -9,11 +9,11 @@
 export const CATEGORIES = {
   ballistic: { id: 'ballistic', label: 'Ballistic',     color: 0xffb24a },
   missile:   { id: 'missile',   label: 'Missile',       color: 0xff4fa3 },
-  // #618: label-only rename (Energy -> Laser Weapons) now that Plasma has split off into its
-  // own category below — `energy` still covers the laser family (pulseLaser/beamLaser/
+  // #618: label-only rename (Energy -> Laser) now that Plasma has split off into its own
+  // category below — `energy` still covers the laser family (pulseLaser/beamLaser/
   // chargeLance). The id/object key stays `energy` on purpose (it's load-bearing all over
   // weapons.js and saved builds); only the display text changes.
-  energy:    { id: 'energy',    label: 'Laser Weapons', color: 0x0088ff },
+  energy:    { id: 'energy',    label: 'Laser',         color: 0x0088ff },
   support:   { id: 'support',   label: 'Support',       color: 0x6dff9e },
   // #618: new category — reuses PLASMA_COAT_COLOR (scenes/arena/shieldOutline.js), the exact
   // violet already hand-tuned onto Plasma Coater's DoT specifically to read as "not the energy
