@@ -107,11 +107,23 @@ export const HALO_EDGE = 0x121821;
 export const HALO_EDGE_W = 1.0;
 
 // Per weapon-category glow ramps {halo, core, hot, edge}. Cores mirror CATEGORIES.color.
+// #618: plasma/fire added alongside the new categories. `neonFor` falls back to NEON.energy for
+// any catId missing here, so a plasma/fire-category weapon WITHOUT its own `projectileColor`
+// override (plasmaCannon, plasmaLance, napalm — causticLobber/plasmaCoater/flamethrower already
+// override) would otherwise glow the wrong hand-tuned colour (energy cyan) on its mount even
+// though its actual fired round is already the right colour (CATEGORIES[category].color, read
+// separately in data/delivery.js's makeProjectile) — the exact mount/projectile mismatch #583
+// fixed for flamethrower. Values run through the same `neonRamp()` formula (art/mounts/index.js)
+// used for per-weapon overrides, seeded with each category's own core color, to stay consistent
+// with the existing hand-tuned entries' style (that formula was checked against Plasma Coater's
+// hand-picked purple and reproduces it within ~6/255).
 export const NEON = {
   energy:    { halo: 0x1390c8, core: 0x38d9ff, hot: 0xe6fbff, edge: 0x7fe6ff },
   ballistic: { halo: 0xc8801a, core: 0xffb24a, hot: 0xffe6b0, edge: 0xffcf85 },
   missile:   { halo: 0xc81f72, core: 0xff4fa3, hot: 0xffd0e6, edge: 0xff8cc2 },
   support:   { halo: 0x1f9c54, core: 0x6dff9e, hot: 0xd6ffe6, edge: 0xa6ffc6 },
+  plasma:    { halo: 0x6e1fc9, core: 0xa04dff, hot: 0xf1e5ff, edge: 0xc38fff },
+  fire:      { halo: 0xa9571a, core: 0xff7a18, hot: 0xfff0e5, edge: 0xffbe8f },
 };
 export const neonFor = (catId) => NEON[catId] ?? NEON.energy;
 

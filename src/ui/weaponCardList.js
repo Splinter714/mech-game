@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
 import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
+import { ABILITY_TYPES } from '../data/abilities.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
 import { Audio } from '../audio/index.js';
@@ -493,7 +494,10 @@ export class WeaponCardList {
     return {
       id, kind: 'item', item, weapon, accent,
       name: item.name,
-      sub: weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : 'Ability',
+      // #618: abilities now read their type/bucket label (Mobility/Offense/Defense) from
+      // ABILITY_TYPES the same way a weapon reads CATEGORIES[...].label, instead of the flat
+      // hardcoded 'Ability' string.
+      sub: weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : (ABILITY_TYPES[id] ?? 'Ability'),
       stats: this._statLines(item, weapon),
     };
   }

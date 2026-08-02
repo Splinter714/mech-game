@@ -37,24 +37,19 @@ function pulseLaser(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   }
 }
 
-// Beam Laser — a LONG slim barrel with a big focusing LENS at the muzzle: reads as a
-// continuous-beam projector. Bright edge light runs the whole length.
-function beamLaser(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
-  const L = barrelLen('beamLaser', s, cap), w = 2.2 * s;
-  tag('barrel');
-  barrel(sg, T, bx, frontY - L / 2, w, L);
-  tag('color');
-  emissive(sg, () => rectC(sg, bx - w * 0.42, frontY - L / 2, w * 0.22, L, n.edge, 0.7)); // edge light down the barrel
-  tag('muzzle');
-  ellipseC(sg, bx, frontY - L * 0.9, w * 1.8, w * 1.1, T.deep);        // lens collar (belled tip)
-  tag('color');
-  glowDot(sg, bx, frontY - L, 3.4 * s, n);                            // big emitter lens
-}
-
 // Rail Lance — a HEAVY long rail rod: a thick barrel flanked by twin accelerator rails, a
 // blocky breech at the base and a bright charge glow at the tip. The sniper of the set.
 // The accelerator rails are `detail`, not `barrel`: they flank the tube rather than emit, and
 // nothing leaves the mount through them.
+// #618: Rail Lance the weapon is shelved (SHELVED_WEAPON_IDS, weapons.js) — its own bespoke
+// mount only still renders for the wall-turret enemy kind, which mounts `railLance` directly
+// and bypasses the catalog entirely. This same fn is now ALSO used for Beam Laser
+// (WEAPON_MOUNT_ART.beamLaser below adopts it per the owner's ask — "keep its weapon mount art
+// and use that art for the beam laser"), which is why Beam Laser's own old bespoke mount fn
+// (a slim barrel + focusing lens) was deleted rather than left dead. The `barrelLen('railLance',
+// ...)` call below stays hardcoded to this fn's own id regardless of which catalog key invokes
+// it, so BARREL_SPECS.beamLaser (barrelSpec.js) was updated to match this fn's own spec — see
+// its comment there.
 function railLance(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('railLance', s, cap), w = 2.8 * s, rail = 1.1 * s, off = 2.1 * s;
   tag('collar');
@@ -330,7 +325,11 @@ function clusterRocket(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
 
 export const WEAPON_MOUNT_ART = {
   // energy
-  pulseLaser, beamLaser, railLance, plasmaCannon, plasmaCoater, flamethrower,
+  // #618: beamLaser adopts railLance's own bespoke fn (Beam Laser's old fn was deleted). The
+  // railLance key is kept too, still pointing at the same fn, so the wall-turret enemy kind
+  // (which mounts the shelved railLance weapon directly, bypassing the catalog) keeps its own
+  // heavy-sniper mount silhouette instead of falling back to the generic energy category shape.
+  pulseLaser, beamLaser: railLance, railLance, plasmaCannon, plasmaCoater, flamethrower,
   // ballistic
   autocannon, machineGun, shotgun, napalm,
   // missile

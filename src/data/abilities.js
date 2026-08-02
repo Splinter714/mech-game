@@ -136,6 +136,20 @@ export const ABILITIES = {
   },
 };
 
+// #618: the type/bucket label shown under each ability's name in the garage catalog (mirrors
+// how CATEGORIES[weapon.category].label labels a weapon's card) — was previously hardcoded to
+// the flat string 'Ability' for every entry. Co-located here with ABILITIES, same pattern
+// categories.js uses for weapons.
+export const ABILITY_TYPES = {
+  dash: 'Mobility',
+  jumpBlast: 'Mobility',
+  shieldBurst: 'Offense',
+  droneLauncher: 'Offense',
+  cloak: 'Defense',
+  smokeScreen: 'Defense',
+  antiMissile: 'Defense',
+};
+
 export function getAbility(id) {
   return ABILITIES[id];
 }
