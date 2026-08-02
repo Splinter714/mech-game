@@ -37,15 +37,37 @@ import { AbilityCardPreview } from './abilityPreview.js';
 //   list.setRegion(x, y, w, h); // on resize
 //   list.destroy();
 //
+// #611: a section can also be a CUSTOM kind — `{ id, label, kind: 'chassis', cards: [desc] }` —
+// whose cards carry caller-supplied content instead of an item id (see `_buildCard` for the
+// descriptor shape). That is how the Garage's CHASSIS and COLOR pickers became ordinary cards in
+// this same grid, replacing the caller-owned block of rows that used to hang below the cards on
+// the deleted `setExtraHeight`/`onScroll` seams. Everything else — the state painter, hover moving
+// the cursor, grid navigation, the scroll/mask — is shared with the item cards by construction.
+//
 // #505 (second correction): `compact: true` (see COMPACT_* below) shrinks every card's
 // height/label width/emitter size for use inside a narrow Garage column — GarageScene's one
 // catalog per player, up to 4 on screen at once. The full-size default is unchanged and stays
 // what ArtPreviewScene's standalone Weapon Lab tab uses.
 
+// #611: ONE state palette for EVERY card, item or otherwise. Cyan means CURSOR and only cursor —
+// the gold that used to mean "equipped" here is gone, because it meant the exact opposite on the
+// chassis/color rows this list absorbed (they painted the cursor gold and the equipped pick cyan).
+// PauseMenuScene._highlight() paints its own row cursor cyan, so cyan-as-cursor is the house rule.
+//   idle             → panel      + 1px panelEdge
+//   selected         → panelSel   + 2px panelEdge   (neutral: no colour claims "equipped")
+//   focused / both   → panelSel   + 2px focus (cyan)
+// `panelSel` therefore has to carry "you have this" ON ITS OWN — a COLOR card has no bind glyph to
+// fall back on — so it is meaningfully brighter than `panel` rather than the ~5% lift (0x1b2430)
+// it was while gold did that job. One named constant, expected to be tuned in play.
 const UI = {
-  panel: 0x161b22, panelEdge: 0x2a333f, panelSel: 0x1b2430, stage: 0x0b0e12,
-  text: '#c8d2dd', dim: '#7c8794', sel: 0xefc14a, focus: 0x5ec8e0,
+  panel: 0x161b22, panelEdge: 0x2a333f, panelSel: 0x24303f, stage: 0x0b0e12,
+  text: '#c8d2dd', dim: '#7c8794', focus: 0x5ec8e0,
 };
+
+// The mounted-slot bind glyph (#610) keeps its gold: it is a LABEL naming a slot, not one of the
+// panel states above, and gold is still the garage's colour for that (the loadout tiles' own bind
+// glyphs, the locked-card cost label). #611's "no gold" rule is about the panel fill/stroke only.
+const BIND_GOLD = '#efc14a';
 
 const CARD_H = 96;
 const CARD_GAP = 12;
@@ -57,13 +79,15 @@ const LABEL_W = 200;     // left block: name + stats
 // 3-4 players, 3 solo on a 1280-wide window) instead of needing its own smaller card shape.
 // A region narrower than this still works — the card clamps down to the region width, which is
 // exactly the single-column full-bleed row the list drew before this change.
-// The number is a packing choice, not an arbitrary one: at 340 + a 12px column gap the grid lands
-// on 4 across a solo 1440-wide window and 3 across a solo 1280 (the issue's "3-4 solo"), 2 across a
-// two-player column at 1440, and exactly 1 — filling it almost to the pixel — in a four-player
-// column at that width, so the leftover strip at the right stays small at the sizes that matter.
-// It still leaves the live-fire stage (CARD_W - LABEL_W - stageGap - stageMargin) ~120px of travel
-// to animate in, which is what makes a short-range weapon read differently to a long one.
-const CARD_W = 340;
+// The number is a packing choice, not an arbitrary one. #611 widened it 340 → 465 (Jackson's pick,
+// "3 across at a solo 1440 window", chosen over a 2-across ~700px card). A garage column's catalog
+// rect is the column's inner width (colW - 2*8, see garage/columnLayout.js), so at a 1440-wide
+// window: solo → 1424px of room → 3 across (3×465 + 2×12 = 1419); two players → 704px → 1 across;
+// three or four → narrower than one natural card, so 1 across clamped to the column. The stage that
+// remains for the live-fire preview (CARD_W - LABEL_W - stageGap - stageMargin) is ~245px of travel,
+// which is what makes a short-range weapon read differently to a long one — and, since #611, what a
+// CHASSIS card poses its mech in.
+const CARD_W = 465;
 const CARD_COL_GAP = 12;
 
 // #505 (second correction): a `compact` list keeps the exact same live-fire-preview card shape
@@ -74,7 +98,10 @@ const CARD_COL_GAP = 12;
 const COMPACT_CARD_H = 60;
 const COMPACT_CARD_GAP = 6;
 const COMPACT_LABEL_W = 108;
-const COMPACT_CARD_W = 240;
+// #611: kept proportional to CARD_W's 340 → 465 widening (240 × 465/340 ≈ 328), even though nothing
+// builds a `compact` list any more — so if the compact path is ever revived it isn't silently the
+// only card shape still sized to the old grid.
+const COMPACT_CARD_W = 328;
 const COMPACT_CARD_COL_GAP = 6;
 
 // #607: a SECTIONED list — the Garage's catalog is now ONE continuous scrolling list with a
@@ -147,17 +174,17 @@ export class WeaponCardList {
   // section — what the Garage's tab-less catalog uses. `ids` (a single unlabelled section) is
   // unchanged and stays the Weapon Lab's usage. `onHover(id, index)` fires when the pointer
   // enters a card, so a caller can keep its own cursor model in step with the mouse (the Garage
-  // binds off whatever row is FOCUSED, and hovering is how a mouse focuses). `onScroll(scrollY)`
-  // fires on every scroll change, so a caller that parks its own content below the cards (see
-  // `setExtraHeight`) can move it in the same scroll space.
+  // binds off whatever row is FOCUSED, and hovering is how a mouse focuses).
+  // #611 deleted the `onScroll`/`setExtraHeight` pair: they existed solely so the Garage could park
+  // its CHASSIS/COLOR rows below the cards in this list's scroll space, and those are ordinary
+  // cards now.
   constructor(scene, {
-    x, y, w, h, ids, sections = null, onSelect = null, onHover = null, onScroll = null,
+    x, y, w, h, ids, sections = null, onSelect = null, onHover = null,
     selectedId = null, isLocked = null, costOf = null, compact = false,
   } = {}) {
     this.scene = scene;
     this.onSelect = onSelect;
     this.onHover = onHover;
-    this.onScroll = onScroll;
     this.selectedId = selectedId;
     this._selectedIds = null;
     this.isLocked = isLocked;
@@ -186,11 +213,6 @@ export class WeaponCardList {
     // #610 (added scope): item id → the bind glyph(s) of the slot(s) it's currently mounted in,
     // drawn at the top-right of each card's preview stage. Null/absent = nothing drawn.
     this._binds = null;
-    // #607: content height the CALLER draws below the cards, inside the same scroll space (the
-    // Garage's CHASSIS/COLOR rows). Counts toward maxScroll; the caller positions its own
-    // container off `onScroll`/`cardsHeight()`.
-    this._extraH = 0;
-    this._cardsH = 0;
     // #197: gates the auto-fire demo's automatic SOUND only (the visual shot/beam animation
     // always runs) — OFF by default. Loaded from localStorage so a returning session
     // remembers the owner's last choice, but a fresh browser/session (no stored value yet)
@@ -301,8 +323,9 @@ export class WeaponCardList {
 
   // #610: up/down between GRID ROWS. The column is preserved where the target row has one and
   // clamped to that row's last card otherwise (a section's final row can be short). Returns false
-  // when there is no row that way — the caller's cue that the cursor should leave this list
-  // entirely (the Garage steps off the bottom row into its own CHASSIS/COLOR rows).
+  // when there is no row that way — i.e. the cursor is already at the top/bottom of the whole
+  // catalog. (#611: it used to mean "step off into the caller's own trailing rows"; there is no
+  // such block any more, so the Garage just ignores the answer and the cursor clamps.)
   moveFocusRow(dir) {
     if (!this.cards.length) return false;
     if (this._focus < 0) { Audio.ui('menuNav'); this.setFocus(0); return true; }
@@ -332,48 +355,21 @@ export class WeaponCardList {
     return true;
   }
 
-  // First card of the LAST grid row — where a caller's cursor comes back in when it steps back up
-  // out of its own trailing content. Left-most, because that trailing block is left-aligned too.
-  lastRowFirstIndex() {
-    return this._rows.length ? this._rows[this._rows.length - 1][0] : 0;
-  }
-
   focusedId() { return this.cards[this._focus]?.id ?? null; }
+
+  // #611: WHAT the focused card is — 'item' for a weapon/ability, or whatever `kind` its custom
+  // section declared ('chassis'/'color' in the Garage). The caller needs this to know whether a
+  // slot-bind button applies at all, or whether A should confirm a chassis/colour pick instead.
+  focusedKind() { return this.cards[this._focus]?.kind ?? null; }
 
   indexOfId(id) { return this.cards.findIndex((c) => c.id === id); }
 
-  // ── #607: the seams a caller needs to run ONE continuous cursor across this list and its own
-  // trailing content (the Garage's CHASSIS/COLOR rows). ────────────────────────────────────────
-  cardCount() { return this.cards.length; }
-
-  focusIndex() { return this._focus; }
-
-  // Drop the focus highlight without moving scroll — the caller's cursor has left this list for
-  // its own trailing rows.
-  clearFocus() {
-    this._focus = -1;
-    for (const c of this.cards) this._paintSelection(c);
-  }
-
-  scrollY() { return this._scrollY; }
-
-  // Content-space y just past the last card — where the caller's own trailing block starts.
-  cardsHeight() { return this._cardsH; }
-
-  // Declare how tall the caller's trailing block is, so it scrolls as part of this list.
-  setExtraHeight(h) {
-    this._extraH = Math.max(0, h || 0);
-    this._layout();
-  }
-
-  // Scroll an arbitrary content-space rect into view (the caller's trailing rows).
-  scrollToContent(top, h) {
-    this._setScroll(scrollToShow(this._scrollY, top, h, this.region.h, this._maxScroll));
-  }
-
   // (#610 removed `sectionIdOf`/`sectionFirstIndex` along with the section-jump control they
   // existed for — D-pad left/right navigates the grid row now, and nothing asks which section a
-  // card is in any more.)
+  // card is in any more. #611 removed `cardCount`/`focusIndex`/`clearFocus`/`scrollY`/
+  // `cardsHeight`/`setExtraHeight`/`scrollToContent`/`lastRowFirstIndex` — the whole seam a caller
+  // needed to run one cursor across this list AND its own trailing block, now that there is no
+  // trailing block.)
 
   // #541: true when `ids` (pre lock-sort, the same shape setIds() takes) is identical — same
   // length, same order — to the canonical id list this list was last built from. Lets a caller
@@ -396,6 +392,11 @@ export class WeaponCardList {
   // null/absent `label` draws no header row (and takes no trailing section gap), so the single
   // unlabelled section `setIds` builds lays out exactly as the pre-#607 flat list did. Lock
   // sorting (#78) applies WITHIN each section, so a locked weapon never sorts out of its band.
+  //
+  // #611: a section may instead declare `{ kind, cards: [descriptor] }` — see `_buildCard` for the
+  // descriptor shape — for content this module has no item table for (the Garage's CHASSIS and
+  // COLOR pickers). Those sections skip `getItem`/lock-sorting entirely and keep the caller's own
+  // order; everything downstream (grid layout, cursor, hover, the state painter) is shared.
   setSections(sections) {
     for (const c of this.cards) {
       c.preview?.destroy();   // #534: drops the ability preview's own sprites before the card goes
@@ -408,27 +409,52 @@ export class WeaponCardList {
     this._focus = -1;
     this._ids = [];   // canonical order, pre lock-sort — remembered for refreshLocks()/sameIds()
     for (const sec of sections) {
+      const kind = sec.kind ?? 'item';
       const ids = [...(sec.ids ?? [])];
-      const meta = { id: sec.id, label: sec.label ?? null, first: this.cards.length, count: ids.length, headerText: null, top: 0 };
+      const descs = kind === 'item'
+        ? orderByLock(ids, this.isLocked).map((id) => this._itemDescriptor(id))
+        : (sec.cards ?? []).map((d) => ({ ...d, kind }));
+      const meta = { id: sec.id, label: sec.label ?? null, first: this.cards.length, count: descs.length, headerText: null, top: 0 };
       if (meta.label) {
         meta.headerText = this.scene.add.text(0, 0, meta.label, {
           fontFamily: 'monospace', fontSize: this.compact ? '9px' : '12px', color: UI.dim,
         });
         this.scroller.add(meta.headerText);
       }
-      for (const id of orderByLock(ids, this.isLocked)) this._buildCard(getItem(id), id);
+      for (const d of descs) this._buildCard(d);
       this._sections.push(meta);
-      this._ids.push(...ids);
+      this._ids.push(...(kind === 'item' ? ids : descs.map((d) => d.id)));
     }
     this._scrollY = 0;
     this._layout();
   }
 
-  _buildCard(item, id) {
-    const index = this.cards.length;   // #607: this card's flat index, for the onHover callback
+  // An item id, expressed in the same descriptor shape a custom (#611) card arrives in — so
+  // `_buildCard` has exactly one input format and the two kinds can't drift apart visually.
+  _itemDescriptor(id) {
+    const item = getItem(id);
     const weapon = isWeapon(id) ? item : null;
     // #506: abilities are their own visually distinct kind, with their own accent color.
-    const color = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : 0x7bd17b;
+    const accent = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : 0x7bd17b;
+    return {
+      id, kind: 'item', item, weapon, accent,
+      name: item.name,
+      sub: weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : 'Ability',
+      stats: this._statLines(item, weapon),
+    };
+  }
+
+  // Build one card from a descriptor:
+  //   { id, kind, name, sub, stats, accent, item?, weapon?, art? }
+  // `accent` colours the left edge strip and the `sub` line. `art` (#611) is the caller's own
+  // display objects for the preview stage — `{ objects: [...], place({x,y,w,h}) }`, where `place`
+  // is re-run on every layout with the stage rect in CARD-LOCAL coordinates. That is how a CHASSIS
+  // card poses a real mech and a COLOR card shows its big swatch, without this module knowing
+  // anything about mech art or the swatch palette.
+  _buildCard(desc) {
+    const index = this.cards.length;   // #607: this card's flat index, for the onHover callback
+    const { id, kind, item = null, weapon = null } = desc;
+    const color = desc.accent ?? 0xffffff;
     const c = this.scene.add.container(0, 0);
 
     // #505 (second correction): row geometry/font sizes scale down in `compact` mode (a narrow
@@ -450,14 +476,13 @@ export class WeaponCardList {
     const emitter = weapon
       ? this.scene.add.image(0, 0, mountIconKey(id)).setOrigin(0.5, MOUNT_BASE_OY).setRotation(Math.PI / 2)
       : null;
-    const name = this.scene.add.text(0, nameY, item.name, {
+    const name = this.scene.add.text(0, nameY, desc.name ?? '', {
       fontFamily: 'monospace', fontSize: nameSize, color: UI.text, wordWrap: { width: wrapW },
     });
-    const catLabel = weapon ? (CATEGORIES[weapon.category]?.label ?? weapon.category) : 'Ability';
-    const cat = this.scene.add.text(0, catY, catLabel, {
+    const cat = this.scene.add.text(0, catY, desc.sub ?? '', {
       fontFamily: 'monospace', fontSize: catSize, color: Phaser.Display.Color.IntegerToColor(color).rgba, wordWrap: { width: wrapW },
     });
-    const stats = this.scene.add.text(0, statsY, this._statLines(item, weapon), {
+    const stats = this.scene.add.text(0, statsY, desc.stats ?? '', {
       fontFamily: 'monospace', fontSize: statsSize, color: UI.dim, lineSpacing: this.compact ? 1 : 2, wordWrap: { width: wrapW },
     });
     const fxG = this.scene.add.graphics();
@@ -465,7 +490,11 @@ export class WeaponCardList {
     // puff sprites) that sits BELOW fxG, matching the arena's own depth order — smoke is ground
     // FX, the caster and its blasts draw over it. Vector work goes straight into fxG alongside
     // the weapon cards', so a card is still exactly one Graphics redraw per frame.
-    const preview = weapon ? null : new AbilityCardPreview(this.scene, id, item, color, this.cards.length);
+    const preview = kind === 'item' && !weapon
+      ? new AbilityCardPreview(this.scene, id, item, color, this.cards.length) : null;
+    // #611: a custom card's own stage content (a posed chassis mech, a colour swatch), created by
+    // the caller and reparented into this card so it scrolls, masks and layers with everything else.
+    const art = desc.art ?? null;
 
     // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
     // — sits on TOP of everything when the item is locked, hiding the live preview without
@@ -481,17 +510,17 @@ export class WeaponCardList {
     // unless the caller's `setBinds` names this id, so an unmounted card shows nothing — it is
     // deliberately NOT a "which slots could take this" hint.
     const bindText = this.scene.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: this.compact ? '9px' : '11px', color: '#efc14a',
+      fontFamily: 'monospace', fontSize: this.compact ? '9px' : '11px', color: BIND_GOLD,
     }).setOrigin(1, 0).setVisible(false);
 
     // emitter sits under fxG so projectiles/beams render over the muzzle; the bind glyph sits over
     // the live preview so a passing shot can't hide it; the lock overlay sits above everything.
-    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats,
+    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), ...(art?.objects ?? []), name, cat, stats,
       ...(preview ? [preview.layer] : []), fxG, bindText, lockScrim, lockLabel]);
     this.scroller.add(c);
 
     const card = {
-      id, item, weapon, color, container: c, panel, stage, emitter, name, cat, stats, fxG,
+      id, kind, item, weapon, color, art, container: c, panel, stage, emitter, name, cat, stats, fxG,
       lockScrim, lockLabel, preview, bindText,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
@@ -499,12 +528,15 @@ export class WeaponCardList {
 
     if (this.onSelect) {
       panel.setInteractive({ useHandCursor: true });
+      // #607/#611: hovering a card is how the MOUSE moves the shared cursor — the Garage binds
+      // whatever card is FOCUSED into whichever slot button gets pressed, so the pointer has to
+      // drive that same focus rather than a separate hover-only highlight. That is also why there
+      // is no hover paint of its own: the caller's `onHover` moves the cursor, and the cursor's
+      // own repaint is the feedback. It applies to EVERY card, chassis and colour included (#611).
       panel.on('pointerover', () => {
-        // #607: hovering a card is how the MOUSE moves the shared row cursor — the Garage binds
-        // whatever row is focused into whichever slot button gets pressed, so the pointer has to
-        // drive that same focus rather than a separate hover-only highlight.
+        Audio.ui('menuNav');
         this.onHover?.(id, index);
-        if (!this._isSelected(card)) { panel.setFillStyle(UI.panelSel); Audio.ui('menuNav'); }
+        this._paintSelection(card);
       });
       panel.on('pointerout', () => this._paintSelection(card));
       panel.on('pointerdown', () => this.onSelect(id));
@@ -518,7 +550,9 @@ export class WeaponCardList {
   // #65: apply/refresh a single card's locked look without rebuilding it. Call after a
   // purchase (or any balance change) to redraw locks in place — cheaper than setIds().
   _paintLock(card) {
-    const locked = this.isLocked?.(card.id) ?? false;
+    // #611: only ITEM cards can be locked — a chassis or a colour has no SCRAP price, and asking
+    // the caller's `isLocked` about one would be asking a weapon-shop question about a paint chip.
+    const locked = card.kind === 'item' && (this.isLocked?.(card.id) ?? false);
     card.lockScrim.setVisible(locked);
     card.lockLabel.setVisible(locked);
     if (locked) {
@@ -538,11 +572,15 @@ export class WeaponCardList {
     for (const c of this.cards) this._paintLock(c);
   }
 
+  // #611: THE one state painter, for every card kind. See the UI palette above for the table it
+  // implements. Selected and focused are two independent facts that can coincide, and only the
+  // cursor is ever coloured — a selected-but-not-focused card says so with its brighter fill and a
+  // thicker but still NEUTRAL edge.
   _paintSelection(card) {
     const on = this._isSelected(card);
     const focused = this._focus >= 0 && this.cards[this._focus] === card;
     card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
-      .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : on ? UI.sel : UI.panelEdge);
+      .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : UI.panelEdge);
   }
 
   _statLines(item, weapon) {
@@ -622,8 +660,7 @@ export class WeaponCardList {
       y += Math.ceil(sec.count / cols) * (cardH + this.cardGap);
       if (sec.label) y += this.sectionGap;
     }
-    this._cardsH = y;
-    this._maxScroll = Math.max(0, y + this._extraH - this.region.h);
+    this._maxScroll = Math.max(0, y - this.region.h);
     this._setScroll(this._scrollY);
   }
 
@@ -645,6 +682,9 @@ export class WeaponCardList {
     // #534: an ability has no muzzle to fire from, so its preview gets the WHOLE stage rect —
     // the effect is centred in it rather than launched from one edge.
     card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
+    // #611: a custom card's own stage content gets the same rect, in card-local coords — re-placed
+    // on every layout so it follows a column-count change exactly like the emitter/ability preview.
+    card.art?.place?.({ x: stageX, y: 8, w: Math.max(20, stageW), h: cardH - 16 });
     card.lockScrim.setSize(cardW, cardH);
     card.lockLabel.setPosition(cardW / 2, cardH / 2);
     // #610 (added scope): the mounted-slot glyph rides the TOP-RIGHT corner of the preview stage —
@@ -657,9 +697,6 @@ export class WeaponCardList {
   _setScroll(y) {
     this._scrollY = Phaser.Math.Clamp(y, 0, this._maxScroll);
     this.scroller.y = -this._scrollY;
-    // #607: lets a caller keep its own trailing content (see setExtraHeight) in the same scroll
-    // space — it isn't inside `scroller`, so it has to be moved explicitly.
-    this.onScroll?.(this._scrollY);
   }
 
   update(_time, delta) {
@@ -692,6 +729,9 @@ export class WeaponCardList {
   // ── Per-card firing sim (identical to what the arena fires; see data/delivery.js) ──────
 
   _updateCard(card, dt, delta) {
+    // #611: only ITEM cards animate. A chassis card's mech is a still pose and a colour card's
+    // swatch is a flat rect — neither has a delivery sim, an ability effect or a Graphics to redraw.
+    if (card.kind !== 'item') return;
     if (card.weapon) this._tickWeapon(card, delta);
     else card.preview?.update(dt);   // #534: ability cards run their own effect loop instead
     this._advance(card, dt, delta);

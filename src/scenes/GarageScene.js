@@ -68,15 +68,14 @@ import { WeaponCardList } from '../ui/weaponCardList.js';
 // This still deploys onto the same four persistent build slots (data/rosters.js's mech1..mech4,
 // PLAYER_MECH_KEYS) and publishes the same registry keys (`coopMechKeys`/`coopPlayerCount`) the
 // arena reads.
+// #611 dropped `focus` (gold) from here: it was the cursor colour on the hand-drawn chassis/colour
+// ROWS, the exact inverse of what the catalog cards next to them meant by the same two colours.
+// Those rows are cards now and the card list owns the one state painter — cyan is the cursor,
+// everywhere. Gold survives in this scene only where it isn't a selection state: the READY button's
+// palette below, and the locked-card cost label the card list draws.
 const UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', bad: '#e2533a', good: '#7bd17b',
-  panelEdge: 0x2a333f, btn: 0x222b35, btnHover: 0x2c3744,
-  // #533: the pad/keyboard row-navigation cursor on the merged chassis+color tab's list rows —
-  // gold, matching the loadout tiles' own `selected` (pad-cursor) highlight in skillTiles.js's
-  // TILE_UI.sel, so "gold ring = the D-pad cursor is here" reads the same across both surfaces.
-  // Deliberately distinct from `accent` (cyan), which this list already uses for "this IS the
-  // equipped chassis/color" — the two states (cursor vs. equipped) can now coincide or differ.
-  focus: 0xefc14a,
+  panelEdge: 0x2a333f,
 };
 
 // #609: the per-column READY button's own palette — deliberately the SAME green/gold/grey language
@@ -101,17 +100,18 @@ const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS];
 // #607 (supersedes #529's tab system, #532's tabs-in-the-Ready-row, #533's select-then-place and
 // #540's A-bind/B-unbind + D-pad destination-slot cursor; restores the spirit of #539). The
 // per-column TAB STRIP is gone entirely — `ui/labTabs.js` is deleted and `col.labTab` with it.
-// In its place each column has ONE continuous scrolling catalog, in this fixed order top to
-// bottom. The first two sections are bands inside the shared WeaponCardList (its #607 `sections`
-// support); the last two are the column's own chassis/color row lists, parked below the cards in
-// the SAME scroll space (WeaponCardList's `setExtraHeight`/`onScroll` seams).
+// In its place each column has ONE continuous scrolling catalog: ABILITIES, WEAPONS, CHASSIS,
+// COLOR, in that fixed order top to bottom. #611 made all FOUR of them ordinary sections of the
+// shared WeaponCardList (#607's `sections` support, plus that issue's custom-kind sections) — the
+// last two used to be this scene's own hand-drawn row lists, hung below the cards in the same
+// scroll space on seams that no longer exist.
 //
 // Nav: D-pad up/down runs ONE cursor continuously down all four sections; D-pad left/right moves
 // across the catalog's own grid row (#610 — it used to jump section to section, and that snap is
-// gone entirely along with the tabs it stood in for). Binding: with a catalog row focused you press the BUTTON OF THE SLOT you
+// gone entirely along with the tabs it stood in for). Binding: with a catalog card focused you press the BUTTON OF THE SLOT you
 // want it in — LT/LB/RB/RT for the four weapons and X/Y for the two abilities, exactly their
 // in-arena fire binds (SKILL_BINDS/ABILITY_BINDS). LB/RB are free precisely because tab-cycling
-// is gone. A confirms a CHASSIS or COLOR row only — deliberately no A-bind fallback in the item
+// is gone. A confirms a CHASSIS or COLOR card only — deliberately no A-bind fallback in the item
 // sections. There is no unbind gesture at all: you replace a slot by binding something else
 // there (Ready already demands a full loadout, #532).
 // (#610 removed `CATALOG_SECTIONS` — nothing addresses the catalog by section any more now that
@@ -129,11 +129,30 @@ const PAD_BIND_SLOTS = [...Object.entries(SKILL_BINDS), ...Object.entries(ABILIT
 // for them is clicking the arm's own loadout tile (see _drawColTile).
 const KEY_EVENT_NAMES = { Q: 'Q', E: 'E', 1: 'ONE', 4: 'FOUR' };
 
-// Chassis + color row geometry — both render below the cards in the one continuous catalog,
-// chassis rows first, color rows below (#607; the geometry itself is #532's, unchanged).
-const CHASSIS_ROW_H = 40, CHASSIS_ROW_GAP = 4;
-const COLOR_ROW_H = 22, COLOR_ROW_GAP = 3;
-const LIST_SECTION_HEADER_H = 14, LIST_SECTION_GAP = 10;
+// #611: CHASSIS and COLOR are CARDS in the shared catalog grid now, not this scene's own rows
+// parked below it — so their old row geometry (CHASSIS_ROW_H/COLOR_ROW_H/LIST_SECTION_*) is gone
+// along with _buildChassisList/_buildColorList/_syncExtraScroll and WeaponCardList's
+// setExtraHeight/onScroll seams. A card's shape comes from the card list; all this scene supplies
+// is each card's CONTENT (see _chassisCards/_colorCards).
+//
+// A colour has no natural string id the way a weapon or a chassis does — it's a raw hex number —
+// so these two give it one, stable both ways, for the card list's id-keyed selection/focus model.
+const COLOR_CARD_PREFIX = 'color:';
+const colorCardId = (hex) => `${COLOR_CARD_PREFIX}${hex.toString(16).padStart(6, '0')}`;
+const colorOfCardId = (id) => parseInt(String(id).slice(COLOR_CARD_PREFIX.length), 16);
+
+// The two stat lines a CHASSIS card shows, mirroring a weapon card's own two: what it's made of,
+// then how it moves. Armor/HP are summed from the built per-location table (data/chassis/index.js
+// distributes a whole-chassis total across the locations), so these are the real numbers the arena
+// fields rather than a hand-copied figure.
+function chassisStatLines(def) {
+  const sum = (field) => Object.values(def.locations).reduce((a, l) => a + (l[field] || 0), 0);
+  const m = def.movement;
+  return [
+    `armor ${sum('maxArmor')} · hp ${sum('maxHp')}`,
+    `spd ${m.maxSpeed} · turn ${m.turnRate} · slew ${m.turretSlew}`,
+  ].join('\n');
+}
 
 // #505 (fifth rework, playtest): the standalone header band that used to sit under the shared tab
 // bar (SCRAP/last-run readout + the "another controller can join" hint) is gone as its own block.
@@ -286,13 +305,11 @@ export default class GarageScene extends Phaser.Scene {
   _relayoutColumns() {
     // catalogList is its own top-level container (see _buildColumn — it does not live inside
     // col.layer), so destroying col.layer alone would leak it along with the wheel/pointer
-    // listeners it registers on the scene's input plugin. chassisColorMaskG (#532) is likewise
-    // never added to col.layer — it's an unparented mask source (see _buildChassisColorMask) — so
-    // it needs its own destroy too. (#607: the per-column tab strip container that also needed
-    // one here is gone with the tab system.)
+    // listeners it registers on the scene's input plugin. (#607: the per-column tab strip container
+    // that also needed one here is gone with the tab system. #611: so is the chassis/color clip
+    // mask — those rows are cards inside catalogList's own scroller and mask now, and go with it.)
     for (const col of this.cols) {
       col?.catalogList?.destroy();
-      col?.chassisColorMaskG?.destroy();
       col?.layer?.destroy(true);
     }
     this.cols = [];
@@ -307,14 +324,14 @@ export default class GarageScene extends Phaser.Scene {
   // system it drew.)
   _buildColumn(i) {
     const layer = this.add.container(i * this.colW, this.colTop);
-    // #607: ONE cursor runs the whole catalog, and it lives in one of two places — `focusZone`
-    // says which. 'catalog' means the WeaponCardList owns it (its own internal `_focus`, spanning
-    // the ABILITIES and WEAPONS bands); 'list' means it's down in this column's own CHASSIS/COLOR
-    // rows, at `listFocus` (a single index across both: chassis rows first, color rows after).
+    // #611: ONE cursor runs the whole catalog and the WeaponCardList owns it outright — all four
+    // sections (ABILITIES, WEAPONS, CHASSIS, COLOR) are bands of cards in its own grid, so #607's
+    // `focusZone`/`listFocus` pair (which tracked whether the cursor had stepped out of the card
+    // list into this scene's own trailing rows) is gone with the rows it existed for.
     // Per-column, not scene-global — same as every other piece of per-player state here, so each
-    // joined player keeps their own scroll position and own focused row (#505).
+    // joined player keeps their own scroll position and own focused card (#505).
     // The #529 `labTab` and #540 `selectedSlot` destination-slot cursor are both gone.
-    const col = { index: i, layer, focusZone: 'catalog', listFocus: 0 };
+    const col = { index: i, layer };
     this.cols[i] = col;
     col.mech = this.allMechs[PLAYER_MECH_KEYS[i]];
     col.textureKey = `garageMech${i}`;
@@ -331,7 +348,6 @@ export default class GarageScene extends Phaser.Scene {
     // The colour-select swatch+label are gone from the visual layout entirely (still functional —
     // see the D-pad/arrow-key handling below).
     const gl = garageColumnLayout(w, h, { pad });
-    col.rects = { catalog: gl.catalog, pad, innerW: gl.innerW };
 
     // #505 sixth rework (playtest, folds in #528): a thin top-edge border on the panel — a visible
     // dividing line between it and the scrollable weapon catalog above — plus an invisible click-
@@ -383,17 +399,24 @@ export default class GarageScene extends Phaser.Scene {
     // #541 by construction: setIds/setSections (the only things that reset scroll) simply never
     // run again for the life of the column, so browsing position survives everything.
     // The highlighted cards are now every item mounted ANYWHERE in this column's build.
+    // #611: CHASSIS and COLOR join as two more sections of that same one-time build, in that fixed
+    // order last (each starting a fresh grid row, #610). They are custom-kind sections — this scene
+    // supplies their card CONTENT (a posed mech, a big swatch) and the card list supplies
+    // everything else, so they get the identical card shape, state painting, hover-moves-cursor
+    // and grid navigation the item cards have instead of their own parallel implementations.
     col.catalogList = new WeaponCardList(this, {
       x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: false,
       sections: [
         { id: 'ability', label: 'ABILITIES', ids: Object.keys(ABILITIES) },
         { id: 'weapon', label: 'WEAPONS', ids: this.catalogIds },
+        { id: 'chassis', label: 'CHASSIS', kind: 'chassis', cards: this._chassisCards(col) },
+        { id: 'color', label: 'COLOR', kind: 'color', cards: this._colorCards(col) },
       ],
-      onSelect: (id) => this._clickCatalogItem(col, id),
+      onSelect: (id) => this._clickCatalogCard(col, id),
       onHover: (_id, index) => this._focusCatalogRow(col, index, { scroll: false }),
-      onScroll: () => this._syncExtraScroll(col),
       // #506: abilities have no SCRAP-unlock data at all (shop.js's catalog is weapon-only) —
-      // always unlocked and free to mount, so only a weapon id is ever gated here.
+      // always unlocked and free to mount, so only a weapon id is ever gated here. (Chassis/colour
+      // cards never reach this at all — the card list only asks about item-kind cards.)
       isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
     });
@@ -404,22 +427,8 @@ export default class GarageScene extends Phaser.Scene {
     // scrolled-out (masked but still input-live) card, regardless of which was constructed first.
     col.catalogList.root.setDepth(-1);
 
-    // The CHASSIS and COLOR sections — a plain clickable row per PLAYER_CHASSIS_IDS entry (with a
-    // small live art preview, #532 change 5), then a plain clickable row per MECH_SWATCHES entry
-    // (with its name, #532 change 4). Both live INSIDE col.layer (unlike catalogList, which needs
-    // its own container for WeaponCardList's scroll/mask machinery) since they're simple,
-    // custom-drawn lists; a shared clip mask keeps them inside the catalog rect.
-    // #607: they are no longer a TAB that swaps places with the card list — they are the LAST TWO
-    // SECTIONS of the one continuous catalog, parked directly below the cards in the same scroll
-    // space. Their rows are laid out in that block's OWN coordinates (0 = the CHASSIS header) and
-    // the two containers are then translated as a unit by _syncExtraScroll, which the card list
-    // calls on every scroll change.
-    const colorStartY = this._buildChassisList(col, catalogRect);
-    const extraH = this._buildColorList(col, catalogRect, colorStartY);
-    this._buildChassisColorMask(col, catalogRect);
-    col.catalogList.setExtraHeight(extraH + CHASSIS_ROW_GAP);
-    this._syncExtraScroll(col);
-    // Start the cursor at the top of the list, and light up whatever this build already carries.
+    // Start the cursor at the top of the list, and light up whatever this build already carries
+    // (mounted items, the current chassis, the current colour — all one selection set since #611).
     col.catalogList.setFocus(0);
     this._refreshCatalogSelection(col);
 
@@ -442,9 +451,9 @@ export default class GarageScene extends Phaser.Scene {
     // blend, same baked `_shield` rasters (scenes/arena/shieldOutline.js is the one place that knows
     // how a shield is drawn, per #302), just driven by the showroom driver instead of a live pool:
     // every player mech gets the 100-point baseline unconditionally at deploy, so the lab shows what
-    // it will look like wearing it. Only the MAIN lab preview gets one — the little chassis-picker
-    // thumbnails (_buildChassisList) deliberately don't: at ~26px their whole job is comparing three
-    // silhouettes, and a blue rim on each would blur exactly the difference the rows exist to show.
+    // it will look like wearing it. Only the MAIN lab preview gets one — the chassis-card previews
+    // (_chassisCards) deliberately don't: their whole job is comparing three silhouettes, and a blue
+    // rim on each would blur exactly the difference those cards exist to show.
     //
     // The shells go into `col.layer` between the preview panel and the mech art, so the mech's own
     // parts still cover all of each duplicate except the rim — hence the three adds in this order
@@ -485,115 +494,83 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshReady(col);
   }
 
-  // ── #607: the one continuous catalog's scroll glue ────────────────────────────────────────────
-  // The CHASSIS/COLOR rows aren't inside WeaponCardList's own scroller (they're this scene's own
-  // objects, in col.layer), so they have to be translated by hand to stay in the same scroll
-  // space as the cards. Called on every scroll change, via the list's `onScroll`.
-  _syncExtraScroll(col) {
-    if (!col?.chassisListLayer) return;
-    const rect = col.rects.catalog;
-    const top = rect.y + col.catalogList.cardsHeight() - col.catalogList.scrollY();
-    col.chassisListLayer.y = top;
-    col.colorListLayer.y = top;
-    // These rows scroll now, so a row scrolled out of the catalog rect lands somewhere else on
-    // screen still input-live (the clip mask hides it but doesn't stop hit-testing — the same
-    // trap `col.panelBlocker` exists for on the card side). Gate each row's hit area on actually
-    // being inside the rect.
-    for (const row of this._extraRows(col)) {
-      const y0 = top + row.top;
-      if (row.rect.input) row.rect.input.enabled = y0 + row.h > rect.y && y0 < rect.y + rect.h;
-    }
-  }
-
-  // Every row below the cards, as ONE list: chassis rows first, then color rows — the order
-  // `col.listFocus` indexes into.
-  _extraRows(col) {
-    return [...(col.chassisRows ?? []), ...(col.colorSwatchRefs ?? [])];
-  }
-
-  // ── CHASSIS + COLOR sections ─────────────────────────────────────────────────────────────────
-  // A plain clickable row per PLAYER_CHASSIS_IDS entry (mediumPlayer/strikerPlayer/colossusPlayer
-  // — cosmetic-only variants, identical stats, see data/chassis/player/*.js). Re-enables the
-  // chassis switcher that #248 (commit 7a3893a) disabled, scoped to just these three cosmetic
-  // picks rather than the old light/medium/heavy weight-class switch.
+  // ── CHASSIS + COLOR cards (#611) ─────────────────────────────────────────────────────────────
+  // These two used to be hand-drawn ROW LISTS this scene owned, parked below the card grid in the
+  // catalog's scroll space via WeaponCardList's `setExtraHeight`/`onScroll` seams — with their own
+  // clip mask, their own hit-area gating, their own hover paint, their own focus model
+  // (`focusZone`/`listFocus`) and their own selected/focused colour convention, which happened to
+  // be the exact INVERSE of the cards'. All of that is gone. They are ordinary cards in the one
+  // grid now, so every one of those concerns is answered once, by the card list, for all four
+  // sections at once. What is left here is only what genuinely differs: each card's CONTENT.
   //
-  // #532 (change 5): each row now also shows a small RENDERED ART PREVIEW of that chassis, not
-  // just its name — reusing the exact same sprite assembly the main mech-preview panel builds
-  // from (art/mechView.js's makeMechParts/poseMechParts), just baked at a smaller scale from a
-  // throwaway, unmounted Mech in that chassis, rather than inventing a new rendering approach.
-  // Baked once per column (its own texture keys, `${col.textureKey}_chassisRow_<id>`) since the
-  // three chassis shapes never change during a Garage visit.
-  // #607: every y here is relative to the START OF THE CHASSIS/COLOR BLOCK (0 = the CHASSIS
-  // header), not to the catalog rect — the block's screen position is whatever the shared scroll
-  // puts it at, and _syncExtraScroll applies that by moving the two containers as a unit.
-  // Returns the y just below the chassis rows (where the color section starts).
-  _buildChassisList(col, rect) {
-    const rowH = CHASSIS_ROW_H, gap = CHASSIS_ROW_GAP;
-    col.chassisListLayer = this.add.container(0, 0);
-    const header = this.add.text(rect.x, 0, 'CHASSIS', {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-    }).setOrigin(0, 0);
-    col.chassisListLayer.add(header);
-    const rowsY = LIST_SECTION_HEADER_H;
-    const previewScale = (rowH - 8) / 230;
-    col.chassisRows = PLAYER_CHASSIS_IDS.map((id, idx) => {
-      const y = rowsY + idx * (rowH + gap);
-      const r = this.add.rectangle(rect.x, y, rect.w, rowH, UI.btn).setOrigin(0, 0)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
+  // Both builders run BEFORE the WeaponCardList is constructed (see _buildColumn) and hand it the
+  // display objects; the list reparents them into the card containers, and calls each `place`
+  // with the card's preview-stage rect on every layout.
+
+  // One card per PLAYER_CHASSIS_IDS entry (mediumPlayer/strikerPlayer/colossusPlayer — cosmetic-
+  // only variants, identical stats, see data/chassis/player/*.js). Re-enables the chassis switcher
+  // that #248 (commit 7a3893a) disabled, scoped to just these three cosmetic picks rather than the
+  // old light/medium/heavy weight-class switch.
+  //
+  // #532 (change 5), carried over intact: the preview is a REAL rendered mech, from the exact same
+  // sprite assembly the main mech-preview panel builds from (art/mechView.js's makeMechParts/
+  // poseMechParts), baked from a throwaway unmounted Mech in that chassis. It sits in the card's
+  // preview stage — the same place a weapon card fires its live shot into — so the card's anatomy
+  // (name + stats left, preview right) is the weapon card's. Baked once per column (its own texture
+  // keys) since the three chassis shapes never change during a Garage visit.
+  _chassisCards(col) {
+    return PLAYER_CHASSIS_IDS.map((id) => {
+      const def = CHASSIS[id];
       const previewMech = new Mech({ chassisId: id, color: col.mech.color });
-      const previewKey = `${col.textureKey}_chassisRow_${id}`;
-      buildMechTextures(this, previewKey, previewMech,
+      const key = `${col.textureKey}_chassisCard_${id}`;
+      buildMechTextures(this, key, previewMech,
         playerMechArt(col.index, { hullFrames: HULL_FRAMES, accent: mechColorFor(previewMech, col.index) }));
-      const previewX = rect.x + 22, previewY = y + rowH / 2;
-      const preview = makeMechParts(this, previewKey, { x: previewX, y: previewY, scale: previewScale, isPlayer: true });
-      poseMechParts(preview, previewMech, -Math.PI / 2, previewScale, previewX, previewY, {});
-      const t = this.add.text(rect.x + 46, y + rowH / 2, CHASSIS[id].name, {
-        fontFamily: 'monospace', fontSize: '13px', color: UI.text,
-      }).setOrigin(0, 0.5);
-      r.on('pointerover', () => { if (col.mech.chassisId !== id) r.setFillStyle(UI.btnHover); });
-      r.on('pointerout', () => this._refreshChassisList(col));
-      r.on('pointerdown', () => this._selectChassis(col, id));
-      col.chassisListLayer.add([r, ...preview.children, t]);
-      // #607: `top`/`h` are what the shared cursor scrolls to and what _syncExtraScroll gates the
-      // row's hit area on.
-      return { id, rect: r, text: t, top: y, h: rowH };
-    });
-    col.layer.add(col.chassisListLayer);
-    return rowsY + PLAYER_CHASSIS_IDS.length * (rowH + gap) + LIST_SECTION_GAP;
-  }
-
-  // A static clip mask over the catalog rect (#532). #607: it is now load-bearing rather than a
-  // safeguard — these rows genuinely scroll (they're the last two sections of the one continuous
-  // catalog), so this is what keeps them from drawing outside the catalog area, exactly like
-  // WeaponCardList's own mask does for the cards. Built once per column; the rect is fixed at
-  // column-build time, so unlike the card list's mask this never needs repainting.
-  _buildChassisColorMask(col, rect) {
-    // Not added to the display list (scene.make, not scene.add) — a mask source only needs its
-    // rendered pixels, never its own visible copy. Kept on `col` so _relayoutColumns can destroy
-    // it along with everything else this column owns, same as WeaponCardList's own maskG.
-    col.chassisColorMaskG = this.make.graphics();
-    col.chassisColorMaskG.fillStyle(0xffffff)
-      .fillRect(col.layer.x + rect.x, col.layer.y + rect.y, rect.w, rect.h);
-    const mask = col.chassisColorMaskG.createGeometryMask();
-    col.chassisListLayer.setMask(mask);
-    col.colorListLayer.setMask(mask);
-  }
-
-  // `idx` is this row's position in the COMBINED chassis+color row list (chassis rows first,
-  // color rows after — see _extraRows/_navRow); chassis rows occupy [0, chassisRows.length).
-  // #607: the cursor only counts as being HERE when `focusZone` says so — it's one cursor shared
-  // with the card list above, so a focused card must leave these rows unhighlighted.
-  _refreshChassisList(col) {
-    col.chassisRows.forEach((row, idx) => {
-      const on = col.mech.chassisId === row.id;
-      const focused = col.focusZone === 'list' && col.listFocus === idx;
-      row.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
-        .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
-      row.text.setColor(on ? UI.accent : UI.text);
+      const parts = makeMechParts(this, key, { x: 0, y: 0, scale: 1, isPlayer: true });
+      return {
+        id,
+        name: def.name,
+        sub: `${def.weightClass} chassis`,
+        stats: chassisStatLines(def),
+        accent: mechColorFor(col.mech, col.index),
+        art: {
+          objects: parts.children,
+          // Centred in the stage and scaled to fit its short side, the same shape of math the main
+          // lab preview uses. makeMechParts positions the hull/turret directly; poseMechParts owns
+          // the four pivoting parts (and their muzzle-glow overlays), so both are re-applied here.
+          place: ({ x, y, w, h }) => {
+            const scale = Math.max(0.02, (Math.min(w, h) - 12) / 230);
+            const cx = x + w / 2, cy = y + h / 2;
+            for (const s of parts.children) s.setScale(scale);
+            parts.hull.setPosition(cx, cy);
+            parts.turret.setPosition(cx, cy);
+            poseMechParts(parts, previewMech, -Math.PI / 2, scale, cx, cy, {});
+          },
+        },
+      };
     });
   }
 
-  // Directly pick chassis `id` (chassis-list row click).
+  // One card per MECH_SWATCHES entry: a LARGE swatch filling the preview stage, plus the colour's
+  // name (data/mechColors.js MECH_SWATCH_NAMES) — deliberately NOT a tinted mech preview, which was
+  // offered and declined (#611). Same cycleSwatch model the D-pad/arrow-key path already drives
+  // (_cycleColor, unchanged below) backs a direct card click too.
+  _colorCards(col) {
+    return MECH_SWATCHES.map((hex, idx) => {
+      const sw = this.add.rectangle(0, 0, 10, 10, hex).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
+      return {
+        id: colorCardId(hex),
+        name: MECH_SWATCH_NAMES[idx],
+        sub: '', stats: '',
+        accent: hex,
+        art: {
+          objects: [sw],
+          place: ({ x, y, w, h }) => sw.setPosition(x + 6, y + 6).setSize(Math.max(4, w - 12), Math.max(4, h - 12)),
+        },
+      };
+    });
+  }
+
+  // Directly pick chassis `id` (chassis-card click, or A on the focused chassis card).
   _selectChassis(col, id) {
     if (col.mech.chassisId === id) return;
     col.mech.setChassis(id);
@@ -601,56 +578,7 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
-    this._refreshChassisList(col);
-  }
-
-  // ── The COLOR section ───────────────────────────────────────────────────────────────────────
-  // #532 (change 4): the swatch GRID is gone — this is now a navigable list of ROWS, each showing
-  // the color's NAME (data/mechColors.js MECH_SWATCH_NAMES) alongside its swatch, so the picker is
-  // identifiable at a glance instead of a bare grid of colour tiles. Same cycleSwatch model the
-  // D-pad/arrow-key path already drives (_cycleColor, unchanged below) backs a direct row click too.
-  // `startY` is where _buildChassisList's own rows ended (plus its section gap), in the same
-  // block-relative coordinates (#607). Returns the block's TOTAL height, which the card list
-  // needs to size the shared scroll range (`setExtraHeight`).
-  _buildColorList(col, rect, startY) {
-    col.colorListLayer = this.add.container(0, 0);
-    const header = this.add.text(rect.x, startY, 'COLOR', {
-      fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-    }).setOrigin(0, 0);
-    col.colorListLayer.add(header);
-    const rowsY = startY + LIST_SECTION_HEADER_H;
-    const rowH = COLOR_ROW_H, gap = COLOR_ROW_GAP;
-    col.colorSwatchRefs = MECH_SWATCHES.map((hex, idx) => {
-      const y = rowsY + idx * (rowH + gap);
-      const r = this.add.rectangle(rect.x, y, rect.w, rowH, UI.btn).setOrigin(0, 0)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const sw = this.add.rectangle(rect.x + 6, y + rowH / 2, rowH - 6, rowH - 6, hex).setOrigin(0, 0.5)
-        .setStrokeStyle(1, UI.panelEdge);
-      const t = this.add.text(rect.x + rowH + 14, y + rowH / 2, MECH_SWATCH_NAMES[idx], {
-        fontFamily: 'monospace', fontSize: '12px', color: UI.text,
-      }).setOrigin(0, 0.5);
-      r.on('pointerover', () => { if (col.mech.color !== hex) r.setFillStyle(UI.btnHover); });
-      r.on('pointerout', () => this._refreshColorList(col));
-      r.on('pointerdown', () => this._selectColor(col, hex));
-      col.colorListLayer.add([r, sw, t]);
-      return { hex, rect: r, text: t, top: y, h: rowH };
-    });
-    col.layer.add(col.colorListLayer);
-    return rowsY + MECH_SWATCHES.length * (rowH + gap);
-  }
-
-  // Color rows sit AFTER every chassis row in the combined list — index `col.chassisRows.length +
-  // idx` — see _refreshChassisList's own note.
-  _refreshColorList(col) {
-    const current = mechColorFor(col.mech, col.index);
-    const focusBase = col.chassisRows.length;
-    col.colorSwatchRefs.forEach((swatch, idx) => {
-      const on = swatch.hex === current;
-      const focused = col.focusZone === 'list' && col.listFocus === focusBase + idx;
-      swatch.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
-        .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
-      swatch.text.setColor(on ? UI.accent : UI.text);
-    });
+    this._refreshCatalogSelection(col);
   }
 
   // Directly pick a swatch (color-list click) — same distinctness rules as _cycleColor (no two
@@ -668,7 +596,7 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     col.headerLabel?.setColor(hexColor(hex));
-    this._refreshColorList(col);
+    this._refreshCatalogSelection(col);
   }
 
   _artFor(col) {
@@ -765,6 +693,10 @@ export default class GarageScene extends Phaser.Scene {
   // same weapon can read `RT` in one player's column and nothing in another's. An item somehow
   // mounted in two slots shows BOTH glyphs, space-separated in ALL_SLOTS order, rather than
   // silently picking one.
+  //
+  // #611: the selection set also carries this column's current CHASSIS and COLOUR, because those
+  // are cards in the same list now — one "what this build already has" fact, one highlight, one
+  // painter. Only weapon/ability cards get a bind glyph; a chassis or colour isn't in a slot.
   _refreshCatalogSelection(col) {
     if (!col?.catalogList) return;
     const mounted = new Set();
@@ -778,6 +710,8 @@ export default class GarageScene extends Phaser.Scene {
       const glyph = (pad ? bind?.pad : bind?.key) ?? '';
       if (glyph) binds[id] = binds[id] ? `${binds[id]} ${glyph}` : glyph;
     }
+    mounted.add(col.mech.chassisId);
+    mounted.add(colorCardId(mechColorFor(col.mech, col.index)));
     col.catalogList.setSelected(mounted);
     col.catalogList.setBinds(binds);
   }
@@ -788,87 +722,54 @@ export default class GarageScene extends Phaser.Scene {
   // crossing every boundary; D-pad left/right (_navCatalogCol, #610) moves across the catalog's own
   // grid row — #607's section snap is gone with the single-column layout it stood in for. There is no
   // destination-slot cursor at all — a bind names its slot by WHICH BUTTON was pressed
-  // (_bindFocused), and A only confirms a chassis/color row (_confirm).
+  // (_bindFocused), and A only confirms a chassis/color card (_confirm).
+  //
+  // #611: all four sections are card sections now, so the cursor is simply the card list's own —
+  // the `focusZone`/`listFocus` bookkeeping, and _navRow's hand-written crossing from the last grid
+  // row into a separate block below it, are gone. Up/down and left/right are one call each.
 
-  // Move the cursor to a card, wherever it currently is. Also what a mouse hover does.
+  // Move the cursor to a card, wherever it currently is. Also what a mouse hover does — on EVERY
+  // card, chassis and colour included (#611: they used to only tint on hover, never move the
+  // cursor, which meant a slot-bind button acted on some other card than the one under the mouse).
   _focusCatalogRow(col, idx, opts = {}) {
     if (!col || idx < 0) return;
-    col.focusZone = 'catalog';
     col.catalogList.setFocus(idx, opts);
-    this._refreshExtraFocus(col);
   }
 
-  _refreshExtraFocus(col) {
-    if (!col.chassisRows || !col.colorSwatchRefs) return;   // called before the block exists yet
-    this._refreshChassisList(col);
-    this._refreshColorList(col);
-  }
-
-  // Move the cursor onto chassis/color row `idx` (index across BOTH, chassis first), taking it
-  // off the card list and scrolling it into view.
-  _focusExtraRow(col, idx) {
-    col.focusZone = 'list';
-    col.listFocus = idx;
-    col.catalogList.clearFocus();
-    Audio.ui('menuNav');
-    this._refreshExtraFocus(col);
-    const row = this._extraRows(col)[idx];
-    if (row) col.catalogList.scrollToContent(col.catalogList.cardsHeight() + row.top, row.h);
-  }
-
-  // Up/down — one continuous run through every ROW in the column: the catalog's grid rows first
-  // (#610 — a row is now several cards wide, so "down" is down a whole row, not one card), then
-  // the chassis/color rows. Clamped at both ends (it's a list, not a carousel).
+  // Up/down — one continuous run through every GRID ROW in the column, across all four section
+  // bands (#610 — a row is several cards wide, so "down" is down a whole row, not one card).
+  // Clamped at both ends by the card list itself (it's a list, not a carousel).
   _navRow(col, dir) {
-    if (!col) return;
-    const rows = this._extraRows(col);
-    if (col.focusZone === 'catalog') {
-      // moveFocusRow returns false only when there is no grid row that way — which is exactly
-      // when stepping DOWN should cross into the chassis/color rows below.
-      if (col.catalogList.moveFocusRow(dir)) return;
-      if (dir > 0 && rows.length) this._focusExtraRow(col, 0);
-      return;
-    }
-    const j = col.listFocus + dir;
-    if (j < 0) {   // back up off the first chassis row into the last grid row
-      col.focusZone = 'catalog';
-      Audio.ui('menuNav');
-      col.catalogList.setFocus(col.catalogList.lastRowFirstIndex());
-      this._refreshExtraFocus(col);
-      return;
-    }
-    if (j >= rows.length) return;
-    this._focusExtraRow(col, j);
+    col?.catalogList.moveFocusRow(dir);
   }
 
   // #610: left/right — move across the catalog's own grid row, stopping at either edge (the card
-  // list owns that rule; see moveFocusCol). Down in the CHASSIS/COLOR rows there is nothing to
-  // move across — those stay a single column, navigated with up/down only — so this no-ops there.
+  // list owns that rule; see moveFocusCol). In a one-card-wide co-op column that correctly does
+  // nothing at all.
   _navCatalogCol(col, dir) {
-    if (!col || col.focusZone !== 'catalog') return;
-    col.catalogList.moveFocusCol(dir);
+    col?.catalogList.moveFocusCol(dir);
   }
 
-  // A — confirms the focused CHASSIS or COLOR row, and ONLY that. Deliberately does nothing in
+  // A — confirms the focused CHASSIS or COLOR card, and ONLY that. Deliberately does nothing in
   // the ABILITIES/WEAPONS bands: there is no A-bind fallback (#607), those bind off their slot's
   // own button instead.
   _confirm(col) {
-    if (!col || col.focusZone !== 'list') return;
-    if (col.listFocus < col.chassisRows.length) {
-      this._selectChassis(col, col.chassisRows[col.listFocus].id);
-      return;
-    }
-    const swatch = col.colorSwatchRefs[col.listFocus - col.chassisRows.length];
-    if (swatch) this._selectColor(col, swatch.hex);
+    if (!col) return;
+    const kind = col.catalogList.focusedKind();
+    const id = col.catalogList.focusedId();
+    if (id == null) return;
+    if (kind === 'chassis') this._selectChassis(col, id);
+    else if (kind === 'color') this._selectColor(col, colorOfCardId(id));
   }
 
   // #607: THE bind. `loc` came from whichever slot button was pressed (pad LT/LB/RB/RT/X/Y, the
   // keyboard mirror, or a click on that slot's own tile) — so a weapon button pressed while an
-  // ability row is focused (or the reverse) does NOTHING rather than mis-mounting, and a
-  // chassis/color row can't be bound into a slot at all. A locked weapon buys instead of mounting,
-  // the same gate a card click used to carry.
+  // ability card is focused (or the reverse) does NOTHING rather than mis-mounting. A locked weapon
+  // buys instead of mounting, the same gate a card click used to carry.
+  // #611: the focused card can now be a CHASSIS or COLOR one, and neither is mountable — the kind
+  // check is what keeps a slot button from trying to mount a paint chip.
   _bindFocused(col, loc) {
-    if (!col || col.focusZone !== 'catalog') return;
+    if (!col || col.catalogList.focusedKind() !== 'item') return;
     const id = col.catalogList.focusedId();
     if (id == null) return;
     if ((isWeapon(id) ? 'weapon' : 'ability') !== slotKind(loc)) return;
@@ -882,11 +783,19 @@ export default class GarageScene extends Phaser.Scene {
     return col.mech.usedSlots(loc) >= 1 ? col.mech.mounts[loc][0] : null;
   }
 
-  // #607: clicking a card no longer mounts anything — it just moves the cursor there (the mouse's
-  // equivalent of D-pad-ing onto the row). The bind then comes from pressing that slot's button,
+  // #607: clicking an ITEM card no longer mounts anything — it just moves the cursor there (the
+  // mouse's equivalent of D-pad-ing onto it). The bind then comes from pressing that slot's button,
   // or clicking that slot's tile.
-  _clickCatalogItem(col, id) {
-    this._focusCatalogRow(col, col.catalogList.indexOfId(id), { scroll: false });
+  // #611: a CHASSIS or COLOR card has no such second step — there is no slot to name — so clicking
+  // one is the pick itself, exactly as clicking its old row was. Same split A already makes
+  // (_confirm), just from the mouse.
+  _clickCatalogCard(col, id) {
+    const idx = col.catalogList.indexOfId(id);
+    if (idx < 0) return;
+    this._focusCatalogRow(col, idx, { scroll: false });
+    const kind = col.catalogList.focusedKind();
+    if (kind === 'chassis') this._selectChassis(col, id);
+    else if (kind === 'color') this._selectColor(col, colorOfCardId(id));
   }
 
   // Mount/replace whatever is in `loc`. #607: re-binding the item already in an ability slot is
@@ -970,8 +879,8 @@ export default class GarageScene extends Phaser.Scene {
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     // The PLAYER # label is painted in the identity colour — repaint it in place.
     col.headerLabel?.setColor(hexColor(next));
-    // Keep the COLOR section's own row highlight in sync — it's always on screen now (#607).
-    this._refreshColorList(col);
+    // Keep the COLOR section's own card highlight in sync — it's always in the catalog now (#607/#611).
+    this._refreshCatalogSelection(col);
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
@@ -1105,7 +1014,7 @@ export default class GarageScene extends Phaser.Scene {
   //   D-pad left/right   move across that grid row (_navCatalogCol). No slot cursor: #540's D-pad
   //                      destination-slot cursor is gone, made redundant by the binds above; and
   //                      #607's section snap is gone with #610's grid.
-  //   A                  confirms a CHASSIS or COLOR row only (_confirm) — no A-bind fallback.
+  //   A                  confirms a CHASSIS or COLOR card only (_confirm) — no A-bind fallback.
   //   B                  nothing. There is no unbind gesture (#607): you replace a slot by
   //                      binding something else into it.
   // SELECT and START both toggle ready — START is freed up for this in the Garage specifically
