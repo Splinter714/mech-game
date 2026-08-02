@@ -32,6 +32,11 @@
 // So this bar is now just the Deploy/Ready button (+ any `actions`) — kept as a real (empty) list
 // rather than deleted outright since nextTabScene/attachPadTabCycle still read it, and a future
 // scene-navigation tab is a one-line add here if one is ever needed again.
+//
+// #609: even the Deploy button is optional now — omit `onDeploy` and none is drawn. The Garage
+// takes that path (its ready/deploy control moved into each player's own column, because in co-op
+// every player needs one), so there it really is just the background band with the caller's own
+// SCRAP readout riding in it; AudioScene/ArtPreviewScene still pin a Deploy button here.
 import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
 
@@ -46,8 +51,11 @@ const TAB_UI = {
 
 export const TAB_BAR_H = 52;   // logical px
 
-// #505 (fifth rework): exported so a caller (GarageScene's SCRAP readout) can position its own
-// chrome relative to the pinned Deploy/Ready button without duplicating its magic numbers.
+// #505 (fifth rework): exported so a caller can position its own chrome relative to the pinned
+// Deploy/Ready button without duplicating its magic numbers. #609: the Garage — the one caller
+// that used to need DEPLOY_W for exactly that (its SCRAP readout sat just left of the button) —
+// no longer draws the pinned button at all, so its SCRAP text simply hugs the bar's own right
+// margin instead. AudioScene/ArtPreviewScene still draw the button.
 export const DEPLOY_W = 160;
 export const DEPLOY_MARGIN = 16;
 
@@ -84,11 +92,11 @@ export function attachPadTabCycle(scene, active) {
 // button: in co-op the Garage's Deploy becomes "▶ P1 READY" while player 1 is building, which
 // IS the handoff step. Keeping it on the existing button is deliberate — the garage is already
 // tight at narrow widths (#330/#342) and a new primary control would make that worse.
-// `deployReady` (#529): the button now visually reflects a READY state, not just its label text
-// — the Garage's per-column ready checkmark icon was removed, and this pinned button (which
-// already doubled as the ready toggle for the keyboard/mouse player) is the one place that state
-// shows now. Paints the button in the same good/green used elsewhere for "ready"/"ON" rather
-// than the plain accent/sel "click to act" colour; `false` (the default) keeps the old look.
+// `deployReady` (#529): the button visually reflects a READY state, not just its label text —
+// painted in the same good/green used elsewhere for "ready"/"ON" rather than the plain accent/sel
+// "click to act" colour; `false` (the default) keeps the old look. (#609: no caller passes this
+// any more — the Garage, the only screen with a ready state, draws its own per-column buttons in
+// that same language now. Kept, since it is the natural way for a future pinned button to show one.)
 export function buildTabBar(scene, {
   active, onDeploy, canDeploy = true, deployLabel = '▶ DEPLOY', deployReady = false, actions = [],
 } = {}) {
@@ -137,6 +145,11 @@ export function buildTabBar(scene, {
   // Deploy, pinned right. Greyed + inert when the build is incomplete (canDeploy === false).
   // #529: when READY (`deployReady`), it paints in the good/green "ON" colour instead of the
   // plain accent/sel — a visual state, not just the label text swap this already did.
+  // #609: OPT-IN — a caller that passes no `onDeploy` gets no button drawn at all, rather than a
+  // permanently greyed-out one. The Garage is that caller now: its ready/deploy action moved down
+  // into each player's own column (every player needs one, not just column 0), so the top row has
+  // no pinned button left and the width it used to reserve on the right is free.
+  if (!onDeploy) return { height: TAB_BAR_H, layer };
   const depW = DEPLOY_W;
   const dx = W - depW - DEPLOY_MARGIN;
   const enabled = canDeploy && !!onDeploy;

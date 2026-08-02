@@ -50,6 +50,18 @@ export const PREVIEW_TILE_GAP = GAP + TILE_PLATE_HALO_REACH * 2;
 // of the label text (the text itself, via GarageScene's `setOrigin(0.5, 0)`, then reads a few
 // pixels above that bottom edge instead of clipping it).
 export const LABEL_BOTTOM_INSET = 20;
+// #609: every column now carries its OWN READY button (the single pinned top-right Deploy/Ready
+// button is gone), sitting immediately to the RIGHT of the loadout tile block and flush with that
+// block's own bottom edge — Jackson: "to the right of the hud preview near the bottom, but on the
+// right." It joins the preview+tiles group as a THIRD member centred as one unit (preview | tiles
+// | READY) rather than floating in whatever margin happens to be left over: at two players that
+// margin is only a few pixels wide, so "the leftover space" is not a place a button can live.
+//
+// Its size and its separation from the tiles are the WEAPON ROW'S OWN — one more square, one more
+// `tileGap` along, continuing that row's rhythm rather than introducing a third rectangle size to
+// the panel. That also makes it the cheapest possible shape horizontally, which matters: the
+// preview+tiles pair alone already fills a two-player column almost exactly (see the overflow note
+// on garageColumnLayout below).
 // The loadout block's tile size/gap/count are pinned to the arena's own dial (CONSOLE_TILES),
 // not a Garage-local constant — "the same size as it is in arena" means literally the same
 // pixels, so there is nothing left here to independently tune.
@@ -76,6 +88,10 @@ export const TILE_N = CONSOLE_TILES.n;
 //               blocker/top-border are sized to, so a scrolled-out (masked but still input-live)
 //               catalog card underneath can never catch a click meant for the panel or the dead
 //               space around it (Refs #528)
+//   ready     — { x, y, w, h } for this column's own READY button (#609): one more square in the
+//               weapon row — same size as its tiles, one `tileGap` past the last of them, and
+//               spanning that row's own vertical extent, so it sits flush with the bottom of the
+//               block rather than floating beside it
 //   label     — { cx, y } — where the player-number label sits, centered horizontally on the
 //               preview and anchored INSIDE it, near its bottom edge (#505 playtest follow-up:
 //               "move the PLAYER N label to sit inside the preview box, at its bottom" — it used
@@ -98,12 +114,18 @@ export const TILE_N = CONSOLE_TILES.n;
 // tiles), so the panel/border/blocker owns that buffer directly — the ability row reads with the
 // same small breathing room above it that the weapon row already has below it.
 //
-// The preview+tiles pair is centered as ONE unit within the column's inner width. At a narrow
-// column width (more players, smaller colW — see GarageScene's `colW = W / session.count`) the
-// pair's fixed width (full arena tile size + square preview) can exceed the column's own inner
-// width; this deliberately does NOT shrink the tiles or the preview to compensate (that would
-// contradict "the same size as it is in arena") — `pairX` simply goes negative and the group
-// overflows the column visually. See columnLayout.test.js for the width this becomes a problem at.
+// The preview+tiles+READY group is centered as ONE unit within the column's inner width. At a
+// narrow column width (more players, smaller colW — see GarageScene's `colW = W / session.count`)
+// the group's fixed width (full arena tile size + square preview + the #609 ready button) can
+// exceed the column's own inner width; this deliberately does NOT shrink the tiles or the preview
+// to compensate (that would contradict "the same size as it is in arena") — `pairX` simply goes
+// negative and the group overflows the column visually, exactly as it already did before the ready
+// button joined it. #609 does move that threshold, though, and it is worth knowing where: the
+// preview+tiles pair alone is ~615px, so it fitted a TWO-player column on a 1280-wide screen with
+// about 9px to spare; adding the ready square (+~116px) means two players on a screen that narrow
+// now overflow ~58px either side, where before they just barely fitted. Three and four players
+// overflowed already. Widening the window is the fix; shrinking the tiles is the thing this file
+// is explicitly not allowed to do.
 export function garageColumnLayout(w, h, opts = {}) {
   const {
     pad = COLUMN_PAD, headerH = HEADER_H, gap = GAP,
@@ -128,11 +150,17 @@ export function garageColumnLayout(w, h, opts = {}) {
   const probeTop = probe.weapons.length ? probe.top : blockBottom;
   const previewSize = blockBottom - probeTop;
 
-  // The pair — square preview (matching the combined block's own height), then the fixed-width
-  // tile block — centered as ONE unit.
-  const pairW = previewSize + previewTileGap + tileBlockW;
+  // #609: the READY button is one more square in the weapon row's own rhythm — the same size the
+  // row's tiles actually came out at (measured off the probe, not assumed to be `tileSize`, since
+  // `tileRow` can shrink below `maxSize`), one `tileGap` past the last of them.
+  const readyW = opts.readyW ?? (probe.weapons.length ? probe.weapons[0].w : tileSize);
+
+  // The group — square preview (matching the combined block's own height), the fixed-width tile
+  // block, then this column's own READY button (#609) — centered as ONE unit.
+  const pairW = previewSize + previewTileGap + tileBlockW + tileGap + readyW;
   const pairX = pad + (innerW - pairW) / 2;
   const tileAreaX = pairX + previewSize + previewTileGap;
+  const readyX = tileAreaX + tileBlockW + tileGap;
 
   const { weapons, abilities, top } = weaponAbilityRows(tileAreaX, tileBlockW, {
     bottom: blockBottom, maxSize: tileSize,
@@ -156,11 +184,18 @@ export function garageColumnLayout(w, h, opts = {}) {
   // dead space either side or below.
   const panel = { x: pad, y: panelTop, w: innerW, h: blockBottom - panelTop };
 
+  // #609: the READY button spans the WEAPON row's own top-to-bottom extent (bottom-flush with the
+  // whole block), so it lines up with the squares immediately to its left instead of hovering at
+  // some independent height. `weapons` is only ever empty defensively — fall back to a plain
+  // ability-row-height button anchored to the same bottom.
+  const readyTop = weapons.length ? weapons[0].y : blockBottom - 46;
+
   return {
     innerW,
     catalog: { x: pad, y: catalogY, w: innerW, h: catalogH },
     tiles: { weapons, abilities },
     preview: { cx: previewCx, cy: previewCy, w: previewSize, h: previewSize },
+    ready: { x: readyX, y: readyTop, w: readyW, h: blockBottom - readyTop },
     panel,
     label: { cx: previewCx, y: previewCy + previewSize / 2 - labelBottomInset },
   };
