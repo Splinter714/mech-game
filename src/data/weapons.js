@@ -810,6 +810,53 @@ export const WEAPONS = {
       force: { radius: 190, strength: 320, sign: 1, coneDeg: 110 },
     },
   }),
+
+  // ── LIGHTNING (#622) ── two genuinely new mechanics: a hitscan bolt that CHAINS between
+  // multiple enemies, and a lobbed pair of hazards that LINK and pulse damage along the
+  // connection. Jackson: "chain lightning, maybe some lobbable pylons that link and pulse for
+  // a bit or something" — both pitched with the real feasibility tradeoff before he confirmed. ──
+  chainBolt: w({   // hitscan bolt: hits the nearest enemy in your aim, then jumps to the
+    // nearest OTHER live enemy within `chain.jumpRange` of the last hit point (excluding
+    // enemies already hit this shot), up to `chain.maxJumps`, damage falling off each jump.
+    // See scenes/arena/firing.js `_fireHitscan`'s chain branch (calls `_fireChainBolt`) for the
+    // hop resolution and data/delivery.js `nearestChainTarget` for the pure nearest-candidate pick.
+    // Damage: pitched meaningfully higher than a comparable single-target hitscan sniper (Rail
+    // Lance, 52 damage/shot, same single-pattern hitscan structure and a similar 1650ms cadence)
+    // so a Chain Bolt that only connects with ONE enemy (no second target in jumpRange) doesn't
+    // read as strictly worse than just mounting Rail Lance — 60 vs Rail Lance's 52 is a real,
+    // if modest, edge on a single target, with the chain entirely upside beyond that: a 3-target
+    // chain (falloff 0.7) deals 60 + 42 + 29.4 = 131.4 total, spread across three separate
+    // enemies rather than stacked on one.
+    id: 'chainBolt', name: 'Chain Bolt', category: 'lightning',
+    damage: 60, range: { min: 0, opt: 380, max: 600 },
+    ammoMax: 4, cycleTime: 1650,   // mirrors Rail Lance's single-shot hitscan cadence
+    delivery: {
+      hit: 'hitscan', pattern: 'single',
+      chain: { maxJumps: 3, jumpRange: 300, falloff: 0.7 },
+    },
+  }),
+  linkPylons: w({   // one pull lobs EXACTLY 2 pylon charges a short, fixed distance (arc
+    // numbers lifted from the shelved Proximity Mines toss — `timedCharge` above — same
+    // path:'arcing'/velocity/arcBump so the throw reads the same way). Once BOTH land and arm
+    // they draw a persistent connecting line (drawBeam) and PULSE damage to any enemy near that
+    // line, on an interval, for a limited lifetime. If one of the pair dies/expires first the
+    // survivor goes inert — see scenes/arena/projectiles.js `_updatePylonLinks`/`_plantHazard`.
+    // NOT N-pylon cross-linking — exactly 2 per cast (his confirmed simplification).
+    // Ammo: a multi-charge magazine rather than single-cast, since this is a WEAPON not an
+    // ability — mirrors Gravity Well's old 3-round mag / 2000ms cadence exactly.
+    id: 'linkPylons', name: 'Link Pylons', category: 'lightning',
+    // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead
+    // of resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card
+    // math, same convention as Gravity Well.
+    damage: 8, range: { min: 0, opt: 150, max: 190 },
+    ammoMax: 3, cycleTime: 2000,   // mirrors Gravity Well's old 3-round mag / cadence
+    delivery: {
+      hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
+      fixedRange: true, arcBump: 1.3,
+      pattern: 'spread', count: 2, spreadAngle: 40,
+      hazard: { kind: 'pylon', radius: 70, pulseDamage: 8, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
+    },
+  }),
 };
 
 // Shelve list — weapon ids listed here stay fully intact in WEAPONS above (data, art, sfx,

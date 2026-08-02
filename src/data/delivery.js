@@ -76,6 +76,21 @@ export function segmentPointDistance(ax, ay, bx, by, px, py) {
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
 }
+
+// #622: Chain Bolt's hop pick — the nearest candidate to (x,y) within `jumpRange`, excluding
+// anything already in `excluded` (a Set of the same object references the caller's own
+// candidate array holds — identity, not a shape check, so the caller's live enemy handles work
+// directly). Pure geometry, mirroring `traceHitscan`/`traceHitscanPiercing` (data/beamTrace.js):
+// the scene supplies its own live, already-filtered candidate list; this just picks the next hop.
+export function nearestChainTarget(x, y, jumpRange, candidates, excluded) {
+  let best = null, bestDist = Infinity;
+  for (const c of candidates) {
+    if (excluded.has(c)) continue;
+    const d = Math.hypot(c.x - x, c.y - y);
+    if (d <= jumpRange && d < bestDist) { best = c; bestDist = d; }
+  }
+  return best;
+}
 // #243: each of these is the DEFAULT for a per-weapon `delivery` field of the same spirit —
 // clusterSpacing / streamSpacing / spreadAngle / spreadJitterDelay — so any weapon can retune
 // its own clump tightness, lane gap, fan width, or emission-stagger chaos without touching the
