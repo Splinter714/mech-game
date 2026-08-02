@@ -72,22 +72,29 @@ const BIND_GOLD = '#efc14a';
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
-// #610: the card's NATURAL width. The list is a responsive GRID now — it fits as many cards of
-// this exact width across the region as will go (min 1), leaving whatever is left over at the
-// right rather than stretching the cards to fill it. That is the whole point: a card looks
-// IDENTICAL at every player count, and a narrow co-op column simply fits fewer across (1 at
-// 3-4 players, 3 solo on a 1280-wide window) instead of needing its own smaller card shape.
-// A region narrower than this still works — the card clamps down to the region width, which is
-// exactly the single-column full-bleed row the list drew before this change.
-// The number is a packing choice, not an arbitrary one. #611 widened it 340 → 465 (Jackson's pick,
-// "3 across at a solo 1440 window", chosen over a 2-across ~700px card). A garage column's catalog
-// rect is the column's inner width (colW - 2*8, see garage/columnLayout.js), so at a 1440-wide
-// window: solo → 1424px of room → 3 across (3×465 + 2×12 = 1419); two players → 704px → 1 across;
-// three or four → narrower than one natural card, so 1 across clamped to the column. The stage that
-// remains for the live-fire preview (CARD_W - LABEL_W - stageGap - stageMargin) is ~245px of travel,
-// which is what makes a short-range weapon read differently to a long one — and, since #611, what a
-// CHASSIS card poses its mech in.
-const CARD_W = 465;
+// The card's MINIMUM width — the one dial that decides how many cards go across.
+//
+// #610 made the list a responsive grid packed at a FIXED card width, leaving whatever didn't
+// divide evenly as dead space at the right. #611's follow-up replaced that: the minimum width
+// decides the COLUMN COUNT only, and the cards then STRETCH to consume the region exactly.
+//   n     = max(1, floor((avail + colGap) / (CARD_MIN_W + colGap)))
+//   cardW = (avail - (n - 1) * colGap) / n
+// So the count steps at thresholds and there is never a leftover gutter. There is deliberately
+// NO maximum (Jackson's explicit pick over capping the stretch, having been told a low column
+// count means very wide cards): at a 2-across window a card really is ~500-570px, and that is
+// the intended look rather than a bug to clamp.
+//
+// 380 is Jackson's number, chosen over ~465 (the fixed width this replaced) and ~340 (the
+// pre-#611 width): it gives 3 across from ~1170px of room and 4 from ~1560px. A garage column's
+// catalog rect is the column's inner width (colW - 2*8, see garage/columnLayout.js), so on a
+// 1440-wide window: solo → 1424px → 3 across at ~467px each; two players → 704px → 1 across at
+// 704px; three or four → narrower than the minimum, so 1 across clamped to the column, which is
+// exactly the single-column full-bleed row the list drew before #610.
+//
+// Whatever width a card lands at, the LEFT text block stays pinned at LABEL_W and the live-fire
+// PREVIEW STAGE absorbs every extra pixel (see _layout) — a wide card buys a longer shot/beam
+// travel and a bigger chassis pose, never a 400px-wide name field.
+const CARD_MIN_W = 380;
 const CARD_COL_GAP = 12;
 
 // #505 (second correction): a `compact` list keeps the exact same live-fire-preview card shape
@@ -98,10 +105,12 @@ const CARD_COL_GAP = 12;
 const COMPACT_CARD_H = 60;
 const COMPACT_CARD_GAP = 6;
 const COMPACT_LABEL_W = 108;
-// #611: kept proportional to CARD_W's 340 → 465 widening (240 × 465/340 ≈ 328), even though nothing
-// builds a `compact` list any more — so if the compact path is ever revived it isn't silently the
-// only card shape still sized to the old grid.
-const COMPACT_CARD_W = 328;
+// Kept proportional to the full-size width through every re-tune (240 at 340, 328 at 465, and now
+// 268 at 380 — 328 × 380/465 ≈ 268), even though nothing builds a `compact` list any more, so if
+// the compact path is ever revived it isn't silently the only card shape still sized to an old
+// grid. It is a MINIMUM now too: a compact list stretches its cards to fill exactly like the
+// full-size one does.
+const COMPACT_CARD_MIN_W = 268;
 const COMPACT_CARD_COL_GAP = 6;
 
 // #607: a SECTIONED list — the Garage's catalog is now ONE continuous scrolling list with a
@@ -192,8 +201,9 @@ export class WeaponCardList {
     this.compact = compact;
     this.cardH = compact ? COMPACT_CARD_H : CARD_H;
     this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
-    // #610: the grid's fixed card width + the gap BETWEEN columns (cardGap stays the vertical one).
-    this.cardNaturalW = compact ? COMPACT_CARD_W : CARD_W;
+    // #611 follow-up: the grid's MINIMUM card width (what decides the column count — the cards
+    // themselves stretch to fill, see _layout) + the gap BETWEEN columns (cardGap stays vertical).
+    this.cardMinW = compact ? COMPACT_CARD_MIN_W : CARD_MIN_W;
     this.colGap = compact ? COMPACT_CARD_COL_GAP : CARD_COL_GAP;
     this.labelW = compact ? COMPACT_LABEL_W : LABEL_W;
     this.emitSize = compact ? COMPACT_EMIT_SIZE : EMIT_SIZE;
@@ -614,23 +624,35 @@ export class WeaponCardList {
   // `compact` mode alongside cardH/labelW/emitSize (see the constructor) — the shape (label
   // block, live-fire stage, emitter at the muzzle) is unchanged, only the numbers are smaller.
   //
-  // #610: as many cards of the card's own NATURAL width (CARD_W) as fit across the region, left-
-  // aligned, with the leftover at the right — never stretched to fill, so the card is pixel-for-
-  // pixel the same object at every player count. Left-aligned rather than centred so the grid
-  // stays flush with the section headers and with whatever the caller parks below it (the
-  // Garage's full-width CHASSIS/COLOR rows). A region narrower than one natural card clamps the
-  // card down to the region, which is exactly the full-bleed single column this used to draw.
+  // #611 follow-up: the column COUNT is driven by CARD_MIN_W (how many minimum-width cards fit
+  // across the region, min 1) and the cards then STRETCH to consume that region exactly — no
+  // fixed width, no leftover gutter at the right. #610's fixed-width packing left a dead strip at
+  // every width between two thresholds, which is the whole reason this changed. The grid stays
+  // left-aligned/full-bleed so it lines up with the section headers and with whatever the caller
+  // parks below it. A region narrower than one minimum card is 1 column clamped to the region —
+  // the same full-bleed single row this drew before #610, and it falls straight out of the
+  // formula rather than needing its own case.
+  //
+  // cardW is floored so panel edges, the stage rect and the bind glyph all land on whole pixels;
+  // that leaves at most (cols - 1) px unconsumed at the far right, which is invisible.
   _layout() {
     const cardH = this.cardH;
     const colGap = this.colGap;
-    const cols = Math.max(1, Math.floor((this.region.w + colGap) / (this.cardNaturalW + colGap)));
-    const cardW = Math.min(this.cardNaturalW, this.region.w);
+    const avail = Math.max(0, this.region.w);
+    const cols = Math.max(1, Math.floor((avail + colGap) / (this.cardMinW + colGap)));
+    const cardW = Math.max(20, Math.floor((avail - (cols - 1) * colGap) / cols));
     const nameX = this.compact ? 6 : 20;
     const stageGap = this.compact ? 4 : 8;
     const stageMargin = this.compact ? 6 : 12;
     const muzzleInset = this.compact ? 8 : 14;
     const stageX = this.labelW + stageGap;
-    const stageW = cardW - stageX - stageMargin;
+    // The text column is a FIXED labelW at every card width, so the preview stage is what absorbs
+    // the stretch: a 700px 1-across card buys ~480px of shot travel / a bigger chassis pose, not a
+    // 500px-wide name field (the name/category/stats all word-wrap at labelW - 24, set once at
+    // build time). Clamped once here rather than at each use in _layoutCard, so every consumer of
+    // the stage rect — panel, ability preview, custom `art.place`, bind glyph — agrees on the same
+    // number when a 4-player column is narrower than the label block itself.
+    const stageW = Math.max(20, cardW - stageX - stageMargin);
     // #607: cards flow section by section (header row, then that section's cards, then a gap)
     // rather than as one uniform stride, and each card remembers its own content-space `top` so
     // focus-scrolling can address it directly. #610: within a section they now also wrap across
@@ -667,31 +689,44 @@ export class WeaponCardList {
   // One card's geometry at content-space `x`,`y`. Split out of _layout (#607) purely because cards
   // no longer flow at a uniform stride — the section loop decides each position and hands it here
   // (#610: an `x` too, now that a row holds several cards).
+  //
+  // #611 follow-up: `cardW` now varies CONTINUOUSLY (it stretches to fill the region, see _layout)
+  // instead of ever being one of two fixed numbers, so nothing below may assume a particular width.
+  // Everything that grows with the card hangs off `stageW`; everything on the left is pinned to the
+  // fixed `nameX`/`labelW`, and the two full-width overlays (lock scrim, lock label) take `cardW`
+  // directly.
   _layoutCard(card, x, y, geom) {
     const { cardW, cardH, nameX, stageX, stageW, muzzleInset } = geom;
+    const stageH = cardH - 16;
     card.top = y;
     card.container.setPosition(x, y);
     card.panel.setSize(cardW, cardH);
-    card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), cardH - 16);
+    card.stage.setPosition(stageX, 8).setSize(stageW, stageH);
     card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
     card.muzzleX = stageX + muzzleInset;
-    card.muzzleY = 8 + (cardH - 16) / 2;
+    card.muzzleY = 8 + stageH / 2;
+    // The live-fire travel distance — the stage minus the muzzle inset and a right-hand margin. A
+    // wider card is a LONGER shot/beam here, which is exactly where the stretch should land.
     card.stageW = Math.max(20, stageW - muzzleInset - 8);
     // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
     card.emitter?.setDisplaySize(this.emitSize, this.emitSize).setPosition(card.muzzleX - this.emitBack, card.muzzleY);
     // #534: an ability has no muzzle to fire from, so its preview gets the WHOLE stage rect —
     // the effect is centred in it rather than launched from one edge.
-    card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
+    card.preview?.setStage(stageX, 8, stageW, stageH);
     // #611: a custom card's own stage content gets the same rect, in card-local coords — re-placed
-    // on every layout so it follows a column-count change exactly like the emitter/ability preview.
-    card.art?.place?.({ x: stageX, y: 8, w: Math.max(20, stageW), h: cardH - 16 });
+    // on every layout so it follows a column-count change (and now a width change) exactly like the
+    // emitter/ability preview. The CHASSIS card's `place` re-scales and re-poses its mech to the
+    // rect's short side, and the COLOR card's swatch is sized straight off `w`/`h`, so both track a
+    // stretched card without any width knowledge of their own (see GarageScene's _chassisCards /
+    // _colorCards).
+    card.art?.place?.({ x: stageX, y: 8, w: stageW, h: stageH });
     card.lockScrim.setSize(cardW, cardH);
     card.lockLabel.setPosition(cardW / 2, cardH / 2);
     // #610 (added scope): the mounted-slot glyph rides the TOP-RIGHT corner of the preview stage —
     // "the right side of the preview area", but clear of the stage's vertical middle, which is
     // exactly where every shot/beam travels. Origin (1, 0), so it stays pinned to that corner at
-    // any stage width, down to the narrowest one-card-across co-op column.
-    card.bindText.setPosition(stageX + Math.max(20, stageW) - (this.compact ? 4 : 6), 8 + (this.compact ? 3 : 5));
+    // any stage width — from the narrowest 4-player column up to a stretched 1-across card.
+    card.bindText.setPosition(stageX + stageW - (this.compact ? 4 : 6), 8 + (this.compact ? 3 : 5));
   }
 
   _setScroll(y) {
