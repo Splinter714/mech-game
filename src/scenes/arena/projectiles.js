@@ -778,11 +778,11 @@ export const ProjectilesMixin = {
       force: h.force || null,
       // #621: EMP Trap's payload — see `_updateHazards`'s mine branch for what this changes.
       disable: h.disable || null,
-      // #622: Link Pylons' payload — `pairId` (from the round, stamped by firing.js's
-      // `fireWeapon`/`_spawnProjectile`) is how `_updatePylonLinks` finds this pylon's actual
-      // PARTNER (the other charge from the SAME trigger pull) rather than just the nearest other
-      // pylon on the field. `pulseDamage`/`pulseInterval` are the static per-weapon numbers
-      // (data/weapons.js `linkPylons`); null/unused for every other hazard kind.
+      // #622/#623: Link Pylons' payload — `pairId` (from the round, stamped by firing.js's
+      // `fireWeapon`/`_spawnProjectile`) is how `_updatePylonLinks` finds every OTHER pylon from
+      // the SAME trigger pull (the whole launch group, up to 5 as of #623) rather than just the
+      // nearest other pylon on the field. `pulseDamage`/`pulseInterval` are the static per-weapon
+      // numbers (data/weapons.js `linkPylons`); null/unused for every other hazard kind.
       pairId: p.pairId ?? null,
       pulseDamage: h.pulseDamage ?? null,
       pulseInterval: h.pulseInterval ?? null,
@@ -877,45 +877,67 @@ export const ProjectilesMixin = {
     this._updatePylonLinks(dt);   // #622: Link Pylons' connecting line + line-pulse damage
   },
 
-  // #622: Link Pylons — a SEPARATE per-frame pass (rather than folded into the per-hazard loop
-  // above) because linking is a property of the PAIR, not of either pylon individually, and
-  // doing it per-hazard would either double-process every pair (both members finding each other
-  // and both ticking their own pulse) or need extra bookkeeping to avoid that. Groups every live,
-  // ARMED 'pylon' hazard by `pairId`; a group of exactly 2 is a genuine live pair — draws their
-  // persistent connecting line (the same `drawBeam` primitive every other beam uses) and, on
-  // `pulseInterval`, damages any live enemy within `radius` of the LINE SEGMENT between them
+  // #622/#623: Link Pylons — a SEPARATE per-frame pass (rather than folded into the per-hazard
+  // loop above) because linking is a property of the GROUP, not of any one pylon individually,
+  // and doing it per-hazard would either double-process every link (every member finding its
+  // neighbours and each ticking its own pulse) or need extra bookkeeping to avoid that. Groups
+  // every live, ARMED 'pylon' hazard by `pairId` (one id per trigger pull — firing.js's
+  // `fireWeapon` stamps the same id on every round a pull emits, so a #623 5-pylon volley still
+  // shares one group id despite spawning 5 separate rounds).
+  // #623: a group of 2+ is a genuine web — draw a connecting segment (the same `drawBeam`
+  // primitive every other beam uses) between EVERY pair of currently-alive members, not just an
+  // original fixed pair. With up to 5 members that's up to C(5,2)=10 segments; a pylon dying/
+  // expiring independently just drops out of `group` next frame, shrinking the web rather than
+  // collapsing it outright. On `pulseInterval`, any live enemy within `radius` of ANY segment
   // (point-to-segment distance via `segmentPointDistance`, data/delivery.js — already imported
-  // above and already used for swept projectile-hit detection, so this reuses rather than
-  // reinvents the geometry). A group of 1 (partner already dead/expired, or never landed) is a
-  // LONE pylon — it draws nothing here and pulses nothing; it just sits out its own `life` via
-  // the ordinary per-hazard countdown above. Flying enemies are exempt from the pulse, mirroring
-  // the mine branch's `!e.flying` filter above — a ground-planted electric line shouldn't zap
-  // something flying over it.
+  // above and already used for swept projectile-hit detection, reused rather than reinvented)
+  // takes exactly ONE pulse — `.some()` short-circuits on the first segment in range instead of
+  // summing every nearby strand, so a target caught near multiple strands isn't hit multiple
+  // times. A group of 1 (every other member already dead/expired) is a LONE pylon — it draws
+  // nothing and pulses nothing, same rule as before, just now reachable by attrition from 5
+  // instead of from 2; a group of 0 needs no handling here at all (it simply never appears in
+  // `byGroup`, matching the ordinary per-hazard expiry above). Flying enemies are exempt from the
+  // pulse, mirroring the mine branch's `!e.flying` filter above — a ground-planted electric web
+  // shouldn't zap something flying over it.
   _updatePylonLinks(dt) {
-    const byPair = new Map();
+    const byGroup = new Map();
     for (const hz of this.hazards) {
       if (hz.kind !== 'pylon' || hz.dead || hz.armIn > 0 || hz.pairId == null) continue;
-      const list = byPair.get(hz.pairId);
-      if (list) list.push(hz); else byPair.set(hz.pairId, [hz]);
+      const list = byGroup.get(hz.pairId);
+      if (list) list.push(hz); else byGroup.set(hz.pairId, [hz]);
     }
-    for (const pair of byPair.values()) {
-      if (pair.length < 2) continue;   // lone pylon: no link, no pulse
-      const [a, b] = pair;
-      drawBeam(this.groundFx, a.x, a.y, b.x, b.y, a.color, 1, false, this.time.now, 1, 0);
-      // The pulse clock lives on `a` alone (whichever of the pair sorts first) — ticking it on
-      // both would double the damage every interval.
-      a._pylonPulseIn = (a._pylonPulseIn ?? a.pulseInterval ?? 0.5) - dt;
-      if (a._pylonPulseIn > 0) continue;
-      a._pylonPulseIn += a.pulseInterval ?? 0.5;
-      const candidates = a.owner === 'enemy'
+    for (const group of byGroup.values()) {
+      if (group.length < 2) continue;   // lone pylon: no link, no pulse
+      // Every pair of currently-alive members gets its own connecting segment.
+      const segments = [];
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) segments.push([group[i], group[j]]);
+      }
+      for (const [a, b] of segments) {
+        drawBeam(this.groundFx, a.x, a.y, b.x, b.y, a.color, 1, false, this.time.now, 1, 0);
+      }
+      // The pulse clock lives on the group's first member alone — ticking it per-member would
+      // multiply the damage by however many pylons are still alive.
+      const head = group[0];
+      head._pylonPulseIn = (head._pylonPulseIn ?? head.pulseInterval ?? 0.5) - dt;
+      if (head._pylonPulseIn > 0) continue;
+      head._pylonPulseIn += head.pulseInterval ?? 0.5;
+      const candidates = head.owner === 'enemy'
         ? livePlayersOf(this)
         : this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
       for (const c of candidates) {
-        if (segmentPointDistance(a.x, a.y, b.x, b.y, c.x, c.y) >= a.radius) continue;
-        if (a.owner === 'enemy') this._damagePlayerAt(a.pulseDamage, c, { weaponId: a.weaponId });
-        else this._damageEnemyAt(c, c.x, c.y, a.pulseDamage, a.color, false, { weaponId: a.weaponId });
+        // Dedupe: a target near several strands of the same web still takes exactly one pulse —
+        // stop at the first segment within range rather than summing every match.
+        const hit = segments.some(([a, b]) => segmentPointDistance(a.x, a.y, b.x, b.y, c.x, c.y) < head.radius);
+        if (!hit) continue;
+        if (head.owner === 'enemy') this._damagePlayerAt(head.pulseDamage, c, { weaponId: head.weaponId });
+        else this._damageEnemyAt(c, c.x, c.y, head.pulseDamage, head.color, false, { weaponId: head.weaponId });
       }
-      this._impactFx((a.x + b.x) / 2, (a.y + b.y) / 2, a.color, 'beam', 0, a.weaponId);
+      // One flash at the web's centroid rather than one per segment (up to 10 for a full 5-pylon
+      // mesh) — reads the pulse just as clearly without the redundant overdraw.
+      const cx = group.reduce((s, hz) => s + hz.x, 0) / group.length;
+      const cy = group.reduce((s, hz) => s + hz.y, 0) / group.length;
+      this._impactFx(cx, cy, head.color, 'beam', 0, head.weaponId);
     }
   },
 
