@@ -643,8 +643,12 @@ export default class GarageScene extends Phaser.Scene {
     return legibleColor(mechColorFor(col.mech, col.index));
   }
 
+  // Jackson, 2026-08-01: "single player doesn't need the colored outline around the whole
+  // garage" — there's nothing to distinguish it FROM with only one column. Solo just clears
+  // whatever was drawn (covers dropping from 2 players back to 1) and returns.
   _paintColumnFrame(col) {
     if (!col?.frame || !col.frameRect) return;
+    if (this.session.count < 2) { col.frame.clear(); return; }
     const { x, y, w, h } = col.frameRect;
     col.frame.clear()
       .lineStyle(COLUMN_FRAME.width, mechColorFor(col.mech, col.index), COLUMN_FRAME.alpha)
