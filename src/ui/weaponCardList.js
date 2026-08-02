@@ -55,7 +55,12 @@ import { AbilityCardPreview } from './abilityPreview.js';
 // PauseMenuScene._highlight() paints its own row cursor cyan, so cyan-as-cursor is the house rule.
 //   idle             → panel      + 1px panelEdge
 //   selected         → panelSel   + 2px panelEdge   (neutral: no colour claims "equipped")
-//   focused / both   → panelSel   + 2px focus (cyan)
+//   focused / both   → panelSel   + 2px focus
+// #615 REVISES the cursor colour only: `focus` below is still cyan, but it is now just the DEFAULT
+// (what the standalone Weapon Lab, which has no player identity to draw from, keeps). The Garage
+// overrides it per column with that player's own mech colour — solo included — so a cursor always
+// says WHOSE it is. See `focusColor`/`setFocusColor`. Everything else about the table above is
+// unchanged: selected is still a neutral thicker edge, and only the cursor is ever coloured.
 // `panelSel` therefore has to carry "you have this" ON ITS OWN — a COLOR card has no bind glyph to
 // fall back on — so it is meaningfully brighter than `panel` rather than the ~5% lift (0x1b2430)
 // it was while gold did that job. One named constant, expected to be tuned in play.
@@ -91,10 +96,11 @@ const LABEL_W = 200;     // left block: name + stats
 //
 // 380 is Jackson's number, chosen over ~465 (the fixed width this replaced) and ~340 (the
 // pre-#611 width): it gives 3 across from ~1170px of room and 4 from ~1560px. A garage column's
-// catalog rect is the column's inner width (colW - 2*8, see garage/columnLayout.js), so on a
-// 1440-wide window: solo → 1424px → 3 across at ~467px each; two players → 704px → 1 across at
-// 704px; three or four → narrower than the minimum, so 1 across clamped to the column, which is
-// exactly the single-column full-bleed row the list drew before #610.
+// catalog rect is the column's inner width (colW - 2*12 since #615 added the frame's own clearance
+// to the column padding, see garage/columnLayout.js), so on a 1440-wide window: solo → 1416px → 3
+// across at ~464px each; two players → 696px → 1 across at 696px; three or four → narrower than the
+// minimum, so 1 across clamped to the column, which is exactly the single-column full-bleed row the
+// list drew before #610.
 //
 // Whatever width a card lands at, the LEFT text block stays pinned at LABEL_W and the live-fire
 // PREVIEW STAGE absorbs every extra pixel (see _layout) — a wide card buys a longer shot/beam
@@ -205,7 +211,7 @@ export class WeaponCardList {
   constructor(scene, {
     x, y, w, h, ids, sections = null, onSelect = null, onHover = null,
     selectedId = null, isLocked = null, costOf = null, unavailable = null,
-    compact = false, caster = null,
+    compact = false, caster = null, focusColor = UI.focus,
   } = {}) {
     this.scene = scene;
     this.caster = caster;
@@ -216,6 +222,11 @@ export class WeaponCardList {
     this.isLocked = isLocked;
     this.costOf = costOf;
     this.unavailable = unavailable;
+    // #615: the CURSOR ring's colour — cyan unless the caller owns a per-player identity to use
+    // instead. The Garage passes a BRIGHTENED variant of that column's mech colour
+    // (mechColors.js's legibleColor), never the raw swatch: a swatch is picked to read as paint on
+    // a mech, and a dark one (CHARCOAL, NAVY) makes an invisible 2px ring on a near-black panel.
+    this.focusColor = focusColor;
     this.compact = compact;
     this.cardH = compact ? COMPACT_CARD_H : CARD_H;
     this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
@@ -411,7 +422,7 @@ export class WeaponCardList {
   // Rebuild the card set (e.g. filtered to a slot's eligible items). Reuses nothing — cards
   // are cheap and this only fires on a slot change, not per frame. The given order is the
   // CANONICAL order; when lock info is available (#78) locked items sort to the bottom, so we
-  // stash the canonical ids for refreshLocks() to re-sort against on unlock.
+  // stash the canonical ids for refreshAvailability() to re-sort against on unlock.
   setIds(ids) {
     this.setSections([{ id: 'all', label: null, ids }]);
   }
@@ -435,7 +446,7 @@ export class WeaponCardList {
     this.cards = [];
     this._sections = [];
     this._focus = -1;
-    this._ids = [];   // canonical order, pre lock-sort — remembered for refreshLocks()/sameIds()
+    this._ids = [];   // canonical order, pre lock-sort — remembered for refreshAvailability()/sameIds()
     for (const sec of sections) {
       const kind = sec.kind ?? 'item';
       const ids = [...(sec.ids ?? [])];
@@ -623,7 +634,15 @@ export class WeaponCardList {
     const on = this._isSelected(card);
     const focused = this._focus >= 0 && this.cards[this._focus] === card;
     card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
-      .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : UI.panelEdge);
+      .setStrokeStyle(on || focused ? 2 : 1, focused ? this.focusColor : UI.panelEdge);
+  }
+
+  // #615: recolour the cursor in place — the Garage calls this when its column's player picks a new
+  // mech colour, so the ring follows the identity it stands for without rebuilding a single card.
+  setFocusColor(color) {
+    if (this.focusColor === color) return;
+    this.focusColor = color;
+    for (const c of this.cards) this._paintSelection(c);
   }
 
   _statLines(item, weapon) {

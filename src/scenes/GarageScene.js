@@ -84,6 +84,16 @@ const UI = {
 // #609: the per-column READY button's own palette — deliberately the SAME green/gold/grey language
 // the pinned tab-bar button used (ui/tabBar.js's goodBg/good/sel/off), so the control reads
 // identically to the one it replaces; only its position and its count (one per player) changed.
+// #615: the per-column FRAME — Jackson asked for "a MUCH more clear vertical boundary separator
+// thing between garage panels for multiple players," and chose a full border in that player's own
+// mech colour over a neutral thick rule or a coloured edge-bar: the point is not only "where is the
+// split" but "whose panel is this", reusing the identity colour the PLAYER N label already carries.
+// Two frames can never match — data/mechColors.js's takenSwatches guarantees no two live players
+// hold the same swatch (and #614 now surfaces that rule in the picker itself). Drawn in the RAW
+// swatch, not the brightened cursor variant: a frame is a big shape on a dark background and reads
+// fine dark, where a 2px ring does not.
+const COLUMN_FRAME = { width: 2, alpha: 0.9, radius: 10 };
+
 const READY_UI = {
   bg: 0x222b35, bgHover: 0x2c3744, readyBg: 0x1c3a24,
   edge: 0x2a333f, sel: 0xefc14a, good: 0x7bd17b,
@@ -356,6 +366,14 @@ export default class GarageScene extends Phaser.Scene {
     // see the D-pad/arrow-key handling below).
     const gl = garageColumnLayout(w, h, { pad });
 
+    // #615: this column's own frame, added FIRST so every other element in the layer draws over it.
+    // It wraps the whole column (catalog + loadout panel), inset from the column's edges by the
+    // layout's own gutter — see columnLayout.js for what that gutter costs.
+    col.frameRect = gl.frame;
+    col.frame = this.add.graphics();
+    col.layer.add(col.frame);
+    this._paintColumnFrame(col);
+
     // #505 sixth rework (playtest, folds in #528): a thin top-edge border on the panel — a visible
     // dividing line between it and the scrollable weapon catalog above — plus an invisible click-
     // blocker sized to the panel's FULL extent (`gl.panel`, flush with the column's own bottom
@@ -437,6 +455,11 @@ export default class GarageScene extends Phaser.Scene {
       // the pick); until now it was refused SILENTLY, with the card looking exactly as pickable as
       // any other. It reads `this.cols` live, so it re-evaluates correctly on every repaint.
       unavailable: (id, kind) => (kind === 'color' ? this._colorUnavailable(col, colorOfCardId(id)) : null),
+      // #615: this column's cursor is THIS player's colour, not the shared cyan — solo included
+      // ("the cursor is always your colour"). Brightened for legibility rather than used raw; see
+      // _cursorColor. Every card in the column is covered by this one option, which is exactly what
+      // #611 folding the chassis/colour rows into this list bought.
+      focusColor: this._cursorColor(col),
     });
     // #505 sixth rework: catalogList owns its own top-level container (see the comment above), a
     // SIBLING of col.layer at the scene root rather than a child of it — so col.layer's default
@@ -600,6 +623,42 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCatalogSelection(col);
   }
 
+  // ── Player identity paint (#615) ─────────────────────────────────────────────────────────────
+  // Three surfaces carry a column's player colour: the PLAYER N label (since #505), the column
+  // FRAME and the catalog CURSOR (both new here). All three are repainted together by
+  // _refreshColumnIdentity, which is what every colour-change path calls.
+  //
+  // Deliberately NOT included: the loadout tiles. They have a `selected` cursor state in the shared
+  // skillTiles code, but the Garage has passed `selected: false` on every tile since #607 removed
+  // the destination-slot cursor — there is no tile cursor left to colour. If one ever comes back,
+  // it should take `_cursorColor(col)` too. (#613's mounted-card bind glyph is left alone on
+  // purpose: whether it goes gold or cyan is still an open question, and freeing cyan here is the
+  // very thing that reopened it.)
+
+  // The cursor ring's colour for a column: this player's mech colour, brightened. A raw swatch is
+  // tuned to read as PAINT on a mech in the arena, which is a different job from reading as a thin
+  // ring on a near-black card — CHARCOAL and NAVY both vanish. legibleColor (data/mechColors.js)
+  // keeps the hue and floors the brightness, so identity survives and visibility is guaranteed.
+  _cursorColor(col) {
+    return legibleColor(mechColorFor(col.mech, col.index));
+  }
+
+  _paintColumnFrame(col) {
+    if (!col?.frame || !col.frameRect) return;
+    const { x, y, w, h } = col.frameRect;
+    col.frame.clear()
+      .lineStyle(COLUMN_FRAME.width, mechColorFor(col.mech, col.index), COLUMN_FRAME.alpha)
+      .strokeRoundedRect(x, y, w, h, COLUMN_FRAME.radius);
+  }
+
+  // Every surface that shows WHOSE column this is, repainted in place from the live mech colour.
+  _refreshColumnIdentity(col) {
+    if (!col) return;
+    col.headerLabel?.setColor(hexColor(mechColorFor(col.mech, col.index)));
+    this._paintColumnFrame(col);
+    col.catalogList?.setFocusColor(this._cursorColor(col));
+  }
+
   // ── Colour availability (#614) ───────────────────────────────────────────────────────────────
   // The joined columns' builds in PLAYER ORDER — the `builds` argument every data/mechColors.js
   // distinctness query takes. activeIndices is contiguous 0..count-1, so an entry's array position
@@ -645,7 +704,7 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     col.catalogList?.refreshCaster();   // #612: Cloak's greyscale bake is derived from the new pixels
-    col.headerLabel?.setColor(hexColor(hex));
+    this._refreshColumnIdentity(col);   // #615: label + frame + cursor all follow the new colour
     this._refreshCatalogSelection(col);
     // #614: this column just freed one colour and claimed another — every OTHER column's colour
     // cards have to re-scrim/un-scrim to match, live.
@@ -934,8 +993,9 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     col.catalogList?.refreshCaster();   // #612: same re-pose/re-bake as the direct colour pick
-    // The PLAYER # label is painted in the identity colour — repaint it in place.
-    col.headerLabel?.setColor(hexColor(next));
+    // The PLAYER # label, the column frame and the catalog cursor are all painted in the identity
+    // colour (#505 / #615) — repaint them in place.
+    this._refreshColumnIdentity(col);
     // Keep the COLOR section's own card highlight in sync — it's always in the catalog now (#607/#611).
     this._refreshCatalogSelection(col);
     this._refreshColorAvailability();   // #614: same cross-column re-scrim as the direct pick
