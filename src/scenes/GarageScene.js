@@ -220,6 +220,20 @@ export default class GarageScene extends Phaser.Scene {
       this.input.keyboard.on(`keydown-${ev}`, () => this._bindFocused(this.cols[0], loc));
     }
 
+    // #607 follow-up: the live `inputMode` sources for THIS scene, so the loadout tiles' bind
+    // glyphs follow whatever the player is actually holding (see `_noteInputMode`/`_colMode`).
+    // Any key, any mouse press and any real mouse MOVEMENT count as keyboard+mouse; any button on
+    // pad 0 counts as pad. Deliberately Phaser's own gamepad event and not this scene's PadEdges:
+    // `PadEdges.pressed()` consumes the edge it reports, so a second scan for "did anything
+    // happen" would eat the presses the bind/nav handlers below are waiting for. The left stick's
+    // own contribution rides along in update(), where it's already being polled past a deadzone.
+    this.input.keyboard.on('keydown', () => this._noteInputMode('kbm'));
+    this.input.on('pointermove', () => this._noteInputMode('kbm'));
+    this.input.on('pointerdown', () => this._noteInputMode('kbm'));
+    this.input.gamepad?.on('down', (pad) => { if ((pad?.index ?? 0) === 0) this._noteInputMode('pad'); });
+    this.registry.events.on('changedata-inputMode', this._onInputModeChanged, this);
+    this.events.once('shutdown', () => this.registry.events.off('changedata-inputMode', this._onInputModeChanged, this));
+
     // #523: ESC always opens the shared pause menu. #529: openStats lets the pause menu's
     // dev-only STATS row reach back into THIS scene's StatsOverlay instance (outside dev,
     // this._statsOverlay is undefined and the optional chain just no-ops).
@@ -662,14 +676,49 @@ export default class GarageScene extends Phaser.Scene {
   // ABILITY_BINDS, so "press LB to put this in that slot" is readable off the tile itself.
   // Clicking a tile is the mouse's version of pressing its button — it binds whatever catalog row
   // is currently focused (hovering a card is how the mouse focuses one).
+  //
+  // #607 playtest follow-up (Jackson: "in the garage, current bindings should be visible on the
+  // weapon/ability row (towards the right side of the preview row)"): `bindEdge` moves the glyph
+  // off the top of the tile and onto its right edge at mid-height, on all six tiles. Garage-only —
+  // the arena HUD's tiles keep that edge for the live ammo/cooldown column (see skillTiles.js).
+  // The glyph also MATCHES THE INPUT DEVICE now (`_colMode`) instead of always showing the pad's.
   _tileOpts(col, loc) {
     const id = this._mountedIn(col, loc);
     const bind = SKILL_BINDS[loc] ?? ABILITY_BINDS[loc];
+    const pad = this._colMode(col) === 'pad';
     return {
-      loc, itemId: id, selected: false, bindGlyph: bind?.pad ?? '',
+      loc, itemId: id, selected: false, bindEdge: true,
+      bindGlyph: (pad ? bind?.pad : bind?.key) ?? '',
       emptyLabel: slotKind(loc) === 'weapon' ? 'weapon' : 'ability',
       subtitle: id ? getItem(id).name : '',
     };
+  }
+
+  // #607 follow-up: which glyph set a column's tiles show — the exact rule HudScene's `_panelMode`
+  // applies to an arena panel. Column 0 is the keyboard+mouse player and follows the live
+  // `inputMode`; every later column is a gamepad-only player by construction (input/Controls.js
+  // only ever gives player 0 the keyboard), so showing them Q/E/LMB would be showing them keys
+  // they cannot press.
+  _colMode(col) {
+    if (col.index > 0) return 'pad';
+    return this.registry.get('inputMode') === 'pad' ? 'pad' : 'kbm';
+  }
+
+  // #607 follow-up: keep `inputMode` live while the player is standing IN the Garage. Until now
+  // only the arena wrote it (scenes/arena/locomotion.js, off the primary player's per-frame
+  // intent), so someone who picked up a controller — or put one down — between sorties kept
+  // seeing the other device's glyphs until they deployed. Guarded on an actual CHANGE: Phaser's
+  // registry fires `changedata` on every set, equal value or not, and the mouse-move source below
+  // fires constantly.
+  _noteInputMode(mode) {
+    if (this.registry.get('inputMode') !== mode) this.registry.set('inputMode', mode);
+  }
+
+  // Repaint every column's glyphs when the mode flips. Hung off the registry's own change event
+  // rather than called from `_noteInputMode` directly, so a write from anywhere else (a scene
+  // still running underneath, a future caller) repaints too.
+  _onInputModeChanged() {
+    for (const col of this.cols) if (col) this._refreshAllTiles(col);
   }
 
   _drawColTile(col, rect) {
@@ -1033,6 +1082,10 @@ export default class GarageScene extends Phaser.Scene {
       // direction control in this scene.
       const ls = e.pad()?.leftStick;
       const dir = ls ? dominantDir(ls.x, ls.y) : null;
+      // #607 follow-up: the stick half of this column's `inputMode` signal (the button half is the
+      // gamepad `down` listener in create()). Already past `dominantDir`'s deadzone, so idle
+      // stick drift can't flip the tiles' glyphs to the pad's.
+      if (i === 0 && dir) this._noteInputMode('pad');
       const step = this.stickRepeat[i].step(dir, time);
       if (step === 'left') this._navSection(col, -1);
       else if (step === 'right') this._navSection(col, 1);
