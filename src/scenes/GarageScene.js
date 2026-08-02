@@ -20,7 +20,7 @@ import {
 import { RUN_CURRENCY_KEY } from '../data/events.js';
 import { PadEdges, PAD, SKILL_BINDS, ABILITY_BINDS } from '../input/Controls.js';
 import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
-import { stepIndex, dominantDir, DirRepeater } from '../ui/padNav.js';
+import { dominantDir, DirRepeater } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { buildTabBar, TAB_BAR_H, DEPLOY_MARGIN } from '../ui/tabBar.js';
@@ -106,14 +106,16 @@ const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS];
 // support); the last two are the column's own chassis/color row lists, parked below the cards in
 // the SAME scroll space (WeaponCardList's `setExtraHeight`/`onScroll` seams).
 //
-// Nav: D-pad up/down runs ONE cursor continuously down all four sections; D-pad left/right jumps
-// section to section. Binding: with a catalog row focused you press the BUTTON OF THE SLOT you
+// Nav: D-pad up/down runs ONE cursor continuously down all four sections; D-pad left/right moves
+// across the catalog's own grid row (#610 — it used to jump section to section, and that snap is
+// gone entirely along with the tabs it stood in for). Binding: with a catalog row focused you press the BUTTON OF THE SLOT you
 // want it in — LT/LB/RB/RT for the four weapons and X/Y for the two abilities, exactly their
 // in-arena fire binds (SKILL_BINDS/ABILITY_BINDS). LB/RB are free precisely because tab-cycling
 // is gone. A confirms a CHASSIS or COLOR row only — deliberately no A-bind fallback in the item
 // sections. There is no unbind gesture at all: you replace a slot by binding something else
 // there (Ready already demands a full loadout, #532).
-const CATALOG_SECTIONS = ['ability', 'weapon', 'chassis', 'color'];
+// (#610 removed `CATALOG_SECTIONS` — nothing addresses the catalog by section any more now that
+// left/right walks a grid row instead of snapping between sections.)
 
 // #607: which slot each pad button binds into — derived from the SAME tables the arena fires
 // from, so "press the button you'd shoot it with" can't drift out of sync with the arena binds.
@@ -218,12 +220,13 @@ export default class GarageScene extends Phaser.Scene {
     // garage") — the exact same actions column 0's own PadEdges drives off DPAD_LEFT/RIGHT/UP/
     // DOWN in update() below, just off keyboard events instead of a per-frame pad poll.
     // #607: UP/DOWN run the one continuous catalog cursor (_navRow, now crossing section
-    // boundaries); LEFT/RIGHT jump section to section (_navSection) — they no longer move a
-    // destination-slot cursor, because #540's slot cursor is gone (the button you press IS the
-    // slot). ENTER/SPACE mirror the pad's A: confirm a chassis/color row, nothing in the item
-    // sections.
-    this.input.keyboard.on('keydown-LEFT', () => this._navSection(this.cols[0], -1));
-    this.input.keyboard.on('keydown-RIGHT', () => this._navSection(this.cols[0], 1));
+    // boundaries); they no longer move a destination-slot cursor, because #540's slot cursor is
+    // gone (the button you press IS the slot). ENTER/SPACE mirror the pad's A: confirm a
+    // chassis/color row, nothing in the item sections.
+    // #610: LEFT/RIGHT move ACROSS the catalog's grid row (_navCatalogCol); #607's section snap is
+    // gone with the single-column layout that needed it.
+    this.input.keyboard.on('keydown-LEFT', () => this._navCatalogCol(this.cols[0], -1));
+    this.input.keyboard.on('keydown-RIGHT', () => this._navCatalogCol(this.cols[0], 1));
     this.input.keyboard.on('keydown-UP', () => this._navRow(this.cols[0], -1));
     this.input.keyboard.on('keydown-DOWN', () => this._navRow(this.cols[0], 1));
     this.input.keyboard.on('keydown-ENTER', () => this._confirm(this.cols[0]));
@@ -720,8 +723,14 @@ export default class GarageScene extends Phaser.Scene {
   // Repaint every column's glyphs when the mode flips. Hung off the registry's own change event
   // rather than called from `_noteInputMode` directly, so a write from anywhere else (a scene
   // still running underneath, a future caller) repaints too.
+  // #610 (added scope): the catalog CARDS carry a device-matched bind glyph too now, so they
+  // repaint on the same signal as the tiles.
   _onInputModeChanged() {
-    for (const col of this.cols) if (col) this._refreshAllTiles(col);
+    for (const col of this.cols) {
+      if (!col) continue;
+      this._refreshAllTiles(col);
+      this._refreshCatalogSelection(col);
+    }
   }
 
   _drawColTile(col, rect) {
@@ -747,19 +756,37 @@ export default class GarageScene extends Phaser.Scene {
   // every item mounted anywhere in this column's build, rather than the one item in the one
   // selected slot. Nothing here ever rebuilds the card list, so nothing here can reset scroll —
   // which is #541's guarantee, now structural instead of conditional.
+  //
+  // #610 (added scope, Jackson: "current bindings should be visible ... towards the right side of
+  // the preview row" — the CARDS, which is what he meant; the same ask was first read as the
+  // loadout tiles and both now stay): the same walk that decides WHETHER a card is mounted also
+  // yields WHICH SLOT, so the card can show that slot's own bind glyph on its preview stage.
+  // Device-matched via `_colMode` exactly like the tiles, and per-column like the highlight — the
+  // same weapon can read `RT` in one player's column and nothing in another's. An item somehow
+  // mounted in two slots shows BOTH glyphs, space-separated in ALL_SLOTS order, rather than
+  // silently picking one.
   _refreshCatalogSelection(col) {
+    if (!col?.catalogList) return;
     const mounted = new Set();
+    const binds = {};
+    const pad = this._colMode(col) === 'pad';
     for (const loc of ALL_SLOTS) {
       const id = this._mountedIn(col, loc);
-      if (id) mounted.add(id);
+      if (!id) continue;
+      mounted.add(id);
+      const bind = SKILL_BINDS[loc] ?? ABILITY_BINDS[loc];
+      const glyph = (pad ? bind?.pad : bind?.key) ?? '';
+      if (glyph) binds[id] = binds[id] ? `${binds[id]} ${glyph}` : glyph;
     }
     col.catalogList.setSelected(mounted);
+    col.catalogList.setBinds(binds);
   }
 
   // ── #607: ONE cursor, four sections, bind-by-slot-button ──────────────────────────────────────
   // Supersedes #533's select-then-place and #540's two-axis slot-cursor model wholesale. D-pad
   // up/down (_navRow) runs a single cursor straight down ABILITIES → WEAPONS → CHASSIS → COLOR,
-  // crossing every boundary; D-pad left/right (_navSection) jumps section to section. There is no
+  // crossing every boundary; D-pad left/right (_navCatalogCol, #610) moves across the catalog's own
+  // grid row — #607's section snap is gone with the single-column layout it stood in for. There is no
   // destination-slot cursor at all — a bind names its slot by WHICH BUTTON was pressed
   // (_bindFocused), and A only confirms a chassis/color row (_confirm).
 
@@ -789,24 +816,24 @@ export default class GarageScene extends Phaser.Scene {
     if (row) col.catalogList.scrollToContent(col.catalogList.cardsHeight() + row.top, row.h);
   }
 
-  // Up/down — one continuous run through every row in the column, cards and chassis/color rows
-  // alike. Clamped at both ends (it's a list, not a carousel), same as the card list's own
-  // moveFocus has always been.
+  // Up/down — one continuous run through every ROW in the column: the catalog's grid rows first
+  // (#610 — a row is now several cards wide, so "down" is down a whole row, not one card), then
+  // the chassis/color rows. Clamped at both ends (it's a list, not a carousel).
   _navRow(col, dir) {
     if (!col) return;
-    const n = col.catalogList.cardCount();
     const rows = this._extraRows(col);
     if (col.focusZone === 'catalog') {
-      // Stepping off the LAST card is what crosses into the chassis/color rows below.
-      if (dir > 0 && col.catalogList.focusIndex() >= n - 1 && rows.length) { this._focusExtraRow(col, 0); return; }
-      col.catalogList.moveFocus(dir);
+      // moveFocusRow returns false only when there is no grid row that way — which is exactly
+      // when stepping DOWN should cross into the chassis/color rows below.
+      if (col.catalogList.moveFocusRow(dir)) return;
+      if (dir > 0 && rows.length) this._focusExtraRow(col, 0);
       return;
     }
     const j = col.listFocus + dir;
-    if (j < 0) {   // back up off the first chassis row into the last card
+    if (j < 0) {   // back up off the first chassis row into the last grid row
       col.focusZone = 'catalog';
       Audio.ui('menuNav');
-      col.catalogList.setFocus(n - 1);
+      col.catalogList.setFocus(col.catalogList.lastRowFirstIndex());
       this._refreshExtraFocus(col);
       return;
     }
@@ -814,26 +841,12 @@ export default class GarageScene extends Phaser.Scene {
     this._focusExtraRow(col, j);
   }
 
-  // Which of CATALOG_SECTIONS the cursor is sitting in right now.
-  _currentSection(col) {
-    if (col.focusZone === 'list') {
-      return col.listFocus < col.chassisRows.length
-        ? CATALOG_SECTIONS.indexOf('chassis') : CATALOG_SECTIONS.indexOf('color');
-    }
-    const id = col.catalogList.sectionIdOf(Math.max(0, col.catalogList.focusIndex()));
-    const at = CATALOG_SECTIONS.indexOf(id);
-    return at >= 0 ? at : 0;
-  }
-
-  // Left/right — jump to the next/previous section's first row, wrapping.
-  _navSection(col, dir) {
-    if (!col) return;
-    const next = stepIndex(this._currentSection(col), dir, CATALOG_SECTIONS.length);
-    const id = CATALOG_SECTIONS[next];
-    if (id === 'chassis') { this._focusExtraRow(col, 0); return; }
-    if (id === 'color') { this._focusExtraRow(col, col.chassisRows.length); return; }
-    Audio.ui('menuNav');
-    this._focusCatalogRow(col, col.catalogList.sectionFirstIndex(id));
+  // #610: left/right — move across the catalog's own grid row, stopping at either edge (the card
+  // list owns that rule; see moveFocusCol). Down in the CHASSIS/COLOR rows there is nothing to
+  // move across — those stay a single column, navigated with up/down only — so this no-ops there.
+  _navCatalogCol(col, dir) {
+    if (!col || col.focusZone !== 'catalog') return;
+    col.catalogList.moveFocusCol(dir);
   }
 
   // A — confirms the focused CHASSIS or COLOR row, and ONLY that. Deliberately does nothing in
@@ -1087,9 +1100,11 @@ export default class GarageScene extends Phaser.Scene {
   //                      FIRES that slot in the arena (SKILL_BINDS). LB/RB are available because
   //                      tab-cycling is gone with the tabs themselves.
   //   X / Y              the same, for the two ability slots (ABILITY_BINDS).
-  //   D-pad up/down      ONE cursor down the whole catalog, across section boundaries (_navRow).
-  //   D-pad left/right   jump to the next/previous SECTION (_navSection). No slot cursor: #540's
-  //                      D-pad destination-slot cursor is gone, made redundant by the binds above.
+  //   D-pad up/down      ONE cursor down the whole catalog, across section boundaries (_navRow) —
+  //                      a "row" being a whole GRID row of cards since #610.
+  //   D-pad left/right   move across that grid row (_navCatalogCol). No slot cursor: #540's D-pad
+  //                      destination-slot cursor is gone, made redundant by the binds above; and
+  //                      #607's section snap is gone with #610's grid.
   //   A                  confirms a CHASSIS or COLOR row only (_confirm) — no A-bind fallback.
   //   B                  nothing. There is no unbind gesture (#607): you replace a slot by
   //                      binding something else into it.
@@ -1119,12 +1134,12 @@ export default class GarageScene extends Phaser.Scene {
       let bindLoc = null;
       for (const b of PAD_BIND_SLOTS) if (e.pressed(b.button) && !bindLoc) bindLoc = b.loc;
       if (bindLoc) { this._bindFocused(col, bindLoc); continue; }
-      if (e.pressed(PAD.DPAD_LEFT)) { this._navSection(col, -1); continue; }
-      if (e.pressed(PAD.DPAD_RIGHT)) { this._navSection(col, 1); continue; }
+      if (e.pressed(PAD.DPAD_LEFT)) { this._navCatalogCol(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_RIGHT)) { this._navCatalogCol(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
       if (e.pressed(PAD.DPAD_DOWN)) { this._navRow(col, 1); continue; }
       if (e.pressed(PAD.A)) { this._confirm(col); continue; }
-      // The left stick mirrors the D-pad exactly (up/down row-nav, left/right section jump), with
+      // The left stick mirrors the D-pad exactly (up/down row-nav, left/right across the grid row), with
       // the same auto-repeat cadence padNav.js's DirRepeater already gives every other held-
       // direction control in this scene.
       const ls = e.pad()?.leftStick;
@@ -1134,8 +1149,8 @@ export default class GarageScene extends Phaser.Scene {
       // stick drift can't flip the tiles' glyphs to the pad's.
       if (i === 0 && dir) this._noteInputMode('pad');
       const step = this.stickRepeat[i].step(dir, time);
-      if (step === 'left') this._navSection(col, -1);
-      else if (step === 'right') this._navSection(col, 1);
+      if (step === 'left') this._navCatalogCol(col, -1);
+      else if (step === 'right') this._navCatalogCol(col, 1);
       else if (step === 'up') this._navRow(col, -1);
       else if (step === 'down') this._navRow(col, 1);
     }

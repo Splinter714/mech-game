@@ -10,7 +10,7 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_
 // #224 (temporary): both flags gate the Weapon Lab preview's trajectory/impact cues below —
 // see sfxParams.js for the full list of gated call sites and how to revert.
 import { scheduleFireCues } from '../audio/fireCues.js';
-import { stepIndex, scrollToShow } from './padNav.js';
+import { scrollToShow } from './padNav.js';
 import { orderByLock } from './catalogOrder.js';
 // #534: the ability half of the live preview. Weapon cards live-fire through the shared delivery
 // sim; ability cards replay their own real effect (shared FX specs, the real intercept selector,
@@ -20,7 +20,8 @@ import { AbilityCardPreview } from './abilityPreview.js';
 
 // Shared weapon/ability card list — the SINGLE implementation behind both the standalone
 // Weapon Lab tab and the garage catalog, so the two can't drift. It renders a scrollable
-// column of cards inside a bounded region; each weapon card auto-fires a live shot/beam
+// GRID of cards inside a bounded region (#610 — as many fixed-width cards across as fit, see
+// _layout; it was a strictly single column before); each weapon card auto-fires a live shot/beam
 // preview using the same delivery sim + art primitives the arena uses, and (#534) each ability
 // card loops its real effect on the same principle — shared blast specs, the real intercept
 // selector, the real smoke art, the real drone AI (ui/abilityPreview.js). Optional `onSelect(id)`
@@ -32,6 +33,7 @@ import { AbilityCardPreview } from './abilityPreview.js';
 //   list.setIds(newIds);        // refilter (e.g. eligible items for a slot)
 //   list.setSections([{ id, label, ids }, …]);   // #607: ONE continuous list, labelled bands
 //   list.setSelected(id);       // #607: or a Set/array of ids
+//   list.setBinds({ id: 'RT' }); // #610: mounted-slot glyph on a card's preview stage
 //   list.setRegion(x, y, w, h); // on resize
 //   list.destroy();
 //
@@ -48,6 +50,21 @@ const UI = {
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
+// #610: the card's NATURAL width. The list is a responsive GRID now — it fits as many cards of
+// this exact width across the region as will go (min 1), leaving whatever is left over at the
+// right rather than stretching the cards to fill it. That is the whole point: a card looks
+// IDENTICAL at every player count, and a narrow co-op column simply fits fewer across (1 at
+// 3-4 players, 3 solo on a 1280-wide window) instead of needing its own smaller card shape.
+// A region narrower than this still works — the card clamps down to the region width, which is
+// exactly the single-column full-bleed row the list drew before this change.
+// The number is a packing choice, not an arbitrary one: at 340 + a 12px column gap the grid lands
+// on 4 across a solo 1440-wide window and 3 across a solo 1280 (the issue's "3-4 solo"), 2 across a
+// two-player column at 1440, and exactly 1 — filling it almost to the pixel — in a four-player
+// column at that width, so the leftover strip at the right stays small at the sizes that matter.
+// It still leaves the live-fire stage (CARD_W - LABEL_W - stageGap - stageMargin) ~120px of travel
+// to animate in, which is what makes a short-range weapon read differently to a long one.
+const CARD_W = 340;
+const CARD_COL_GAP = 12;
 
 // #505 (second correction): a `compact` list keeps the exact same live-fire-preview card shape
 // (mount emitter + real shot/beam sim + name/category/stats) at a much smaller footprint, so it
@@ -57,6 +74,8 @@ const LABEL_W = 200;     // left block: name + stats
 const COMPACT_CARD_H = 60;
 const COMPACT_CARD_GAP = 6;
 const COMPACT_LABEL_W = 108;
+const COMPACT_CARD_W = 240;
+const COMPACT_CARD_COL_GAP = 6;
 
 // #607: a SECTIONED list — the Garage's catalog is now ONE continuous scrolling list with a
 // labelled band per section (ABILITIES, then WEAPONS) instead of the per-column tab system
@@ -64,6 +83,9 @@ const COMPACT_LABEL_W = 108;
 // in the same scroll space as the cards; `SECTION_GAP` is the breathing room after a section's
 // last card. An UNLABELLED single section (what `setIds` builds — the Weapon Lab's usage) draws
 // no header and takes no gap, so that path lays out byte-identically to before.
+// #610: a section also always STARTS A FRESH GRID ROW — ABILITIES never shares a row with
+// WEAPONS. A section whose card count isn't a multiple of the column count simply leaves the
+// gap at the end of its last row, which is the accepted trade for that clean break.
 const SECTION_HEADER_H = 20;
 const COMPACT_SECTION_HEADER_H = 15;
 const SECTION_GAP = 12;
@@ -143,6 +165,9 @@ export class WeaponCardList {
     this.compact = compact;
     this.cardH = compact ? COMPACT_CARD_H : CARD_H;
     this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
+    // #610: the grid's fixed card width + the gap BETWEEN columns (cardGap stays the vertical one).
+    this.cardNaturalW = compact ? COMPACT_CARD_W : CARD_W;
+    this.colGap = compact ? COMPACT_CARD_COL_GAP : CARD_COL_GAP;
     this.labelW = compact ? COMPACT_LABEL_W : LABEL_W;
     this.emitSize = compact ? COMPACT_EMIT_SIZE : EMIT_SIZE;
     this.emitBack = compact ? COMPACT_EMIT_BACK : EMIT_BACK;
@@ -154,6 +179,13 @@ export class WeaponCardList {
     this._focus = -1;      // pad focus cursor (#70); -1 = none (the Weapon Lab never sets one)
     this.cards = [];
     this._sections = [];
+    // #610: the grid's rows, as arrays of card indices — what left/right (within a row) and
+    // up/down (between rows) navigate. Rebuilt by _layout(), so a resize that changes the column
+    // count re-rows everything without touching the cards themselves.
+    this._rows = [];
+    // #610 (added scope): item id → the bind glyph(s) of the slot(s) it's currently mounted in,
+    // drawn at the top-right of each card's preview stage. Null/absent = nothing drawn.
+    this._binds = null;
     // #607: content height the CALLER draws below the cards, inside the same scroll space (the
     // Garage's CHASSIS/COLOR rows). Counts toward maxScroll; the caller positions its own
     // container off `onScroll`/`cardsHeight()`.
@@ -231,10 +263,25 @@ export class WeaponCardList {
     return this._selectedIds ? this._selectedIds.has(card.id) : card.id === this.selectedId;
   }
 
+  // #610 (added scope): declare which slot each mounted item lives in, as `{ [itemId]: 'RT' }` —
+  // whatever glyph string the caller wants drawn (it owns the pad-vs-keyboard choice, since only
+  // it knows which device that column's player is holding). An id that isn't in the map draws
+  // nothing at all. Pass null/{} to clear. Companion to setSelected, which already carries the
+  // "this item is mounted somewhere" half of the same fact.
+  setBinds(binds) {
+    this._binds = binds || null;
+    for (const c of this.cards) this._paintBind(c);
+  }
+
+  _paintBind(card) {
+    const glyph = this._binds?.[card.id] ?? '';
+    card.bindText.setText(glyph).setVisible(!!glyph);
+  }
+
   // ── Pad focus cursor (#70) — optional; only the garage drives it. ──────────────────────
   // setFocus(i) highlights card i (null/-1 clears) and, by default, auto-scrolls it into view;
-  // moveFocus steps it (clamped, no wrap — it's a scrolling list); focusedId() is what A / a
-  // slot bind acts on. setIds() clears the focus, so a refilter needs a fresh setFocus.
+  // moveFocusRow/moveFocusCol step it through the GRID (#610); focusedId() is what a slot bind
+  // acts on. setIds() clears the focus, so a refilter needs a fresh setFocus.
   // #541: `{ scroll: false }` moves the focus cursor (and its highlight) WITHOUT touching
   // scroll — the garage uses this when re-seeding focus on the still-mounted item after a slot
   // switch that didn't change the underlying id list, so browsing position is never disturbed
@@ -252,10 +299,43 @@ export class WeaponCardList {
     }
   }
 
-  moveFocus(delta) {
-    if (!this.cards.length) return;
+  // #610: up/down between GRID ROWS. The column is preserved where the target row has one and
+  // clamped to that row's last card otherwise (a section's final row can be short). Returns false
+  // when there is no row that way — the caller's cue that the cursor should leave this list
+  // entirely (the Garage steps off the bottom row into its own CHASSIS/COLOR rows).
+  moveFocusRow(dir) {
+    if (!this.cards.length) return false;
+    if (this._focus < 0) { Audio.ui('menuNav'); this.setFocus(0); return true; }
+    const card = this.cards[this._focus];
+    const row = this._rows[card.row + dir];
+    if (!row) return false;
     Audio.ui('menuNav');   // #178: short quiet blip — pad/keyboard catalog browsing
-    this.setFocus(this._focus < 0 ? 0 : stepIndex(this._focus, delta, this.cards.length, { wrap: false }));
+    this.setFocus(row[Math.min(card.col, row.length - 1)]);
+    return true;
+  }
+
+  // #610: left/right WITHIN the focused card's grid row — this replaces #607's section-snap
+  // entirely. It STOPS at either edge of the row rather than wrapping onto the row above/below:
+  // the grid is deliberately ragged (every section starts a fresh row, so a section's last row is
+  // usually short), and wrapping there would silently carry the cursor across a section divider.
+  // "Left/right moves within the row, up/down changes row" stays literally true this way — and in
+  // a narrow one-card-wide co-op column left/right correctly does nothing at all.
+  moveFocusCol(dir) {
+    if (!this.cards.length) return false;
+    if (this._focus < 0) { Audio.ui('menuNav'); this.setFocus(0); return true; }
+    const card = this.cards[this._focus];
+    const row = this._rows[card.row];
+    const next = row?.[card.col + dir];
+    if (next == null) return false;
+    Audio.ui('menuNav');
+    this.setFocus(next);
+    return true;
+  }
+
+  // First card of the LAST grid row — where a caller's cursor comes back in when it steps back up
+  // out of its own trailing content. Left-most, because that trailing block is left-aligned too.
+  lastRowFirstIndex() {
+    return this._rows.length ? this._rows[this._rows.length - 1][0] : 0;
   }
 
   focusedId() { return this.cards[this._focus]?.id ?? null; }
@@ -291,16 +371,9 @@ export class WeaponCardList {
     this._setScroll(scrollToShow(this._scrollY, top, h, this.region.h, this._maxScroll));
   }
 
-  // Which section card `i` belongs to, and where a section's first card sits — the two queries a
-  // section-jump control (#607's D-pad left/right) needs.
-  sectionIdOf(i) {
-    const sec = this._sections.find((s) => i >= s.first && i < s.first + s.count);
-    return sec?.id ?? null;
-  }
-
-  sectionFirstIndex(id) {
-    return this._sections.find((s) => s.id === id)?.first ?? 0;
-  }
+  // (#610 removed `sectionIdOf`/`sectionFirstIndex` along with the section-jump control they
+  // existed for — D-pad left/right navigates the grid row now, and nothing asks which section a
+  // card is in any more.)
 
   // #541: true when `ids` (pre lock-sort, the same shape setIds() takes) is identical — same
   // length, same order — to the canonical id list this list was last built from. Lets a caller
@@ -402,15 +475,24 @@ export class WeaponCardList {
       fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: '#f5c542', align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
-    // emitter sits under fxG so projectiles/beams render over the muzzle; the lock overlay
-    // sits above everything.
+    // #610 (added scope): the bind glyph of whichever slot this item is currently mounted in — the
+    // same gold as the "you have this" panel highlight it accompanies, because it is the second
+    // half of that one fact (the highlight says WHETHER, this says WHICH SLOT). Empty and hidden
+    // unless the caller's `setBinds` names this id, so an unmounted card shows nothing — it is
+    // deliberately NOT a "which slots could take this" hint.
+    const bindText = this.scene.add.text(0, 0, '', {
+      fontFamily: 'monospace', fontSize: this.compact ? '9px' : '11px', color: '#efc14a',
+    }).setOrigin(1, 0).setVisible(false);
+
+    // emitter sits under fxG so projectiles/beams render over the muzzle; the bind glyph sits over
+    // the live preview so a passing shot can't hide it; the lock overlay sits above everything.
     c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), name, cat, stats,
-      ...(preview ? [preview.layer] : []), fxG, lockScrim, lockLabel]);
+      ...(preview ? [preview.layer] : []), fxG, bindText, lockScrim, lockLabel]);
     this.scroller.add(c);
 
     const card = {
       id, item, weapon, color, container: c, panel, stage, emitter, name, cat, stats, fxG,
-      lockScrim, lockLabel, preview,
+      lockScrim, lockLabel, preview, bindText,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     };
@@ -430,6 +512,7 @@ export class WeaponCardList {
     this.cards.push(card);
     this._paintSelection(card);
     this._paintLock(card);
+    this._paintBind(card);
   }
 
   // #65: apply/refresh a single card's locked look without rebuilding it. Call after a
@@ -489,12 +572,21 @@ export class WeaponCardList {
     return [parts.join(' · '), `dmg ${weapon.damage} · rng ${weapon.range.max} · ${cadence} · ammo ${ammo}`].join('\n');
   }
 
-  // Flow cards into a single column within the region; compute max scroll. Margins shrink in
+  // Flow cards into a responsive GRID within the region; compute max scroll. Margins shrink in
   // `compact` mode alongside cardH/labelW/emitSize (see the constructor) — the shape (label
   // block, live-fire stage, emitter at the muzzle) is unchanged, only the numbers are smaller.
+  //
+  // #610: as many cards of the card's own NATURAL width (CARD_W) as fit across the region, left-
+  // aligned, with the leftover at the right — never stretched to fill, so the card is pixel-for-
+  // pixel the same object at every player count. Left-aligned rather than centred so the grid
+  // stays flush with the section headers and with whatever the caller parks below it (the
+  // Garage's full-width CHASSIS/COLOR rows). A region narrower than one natural card clamps the
+  // card down to the region, which is exactly the full-bleed single column this used to draw.
   _layout() {
-    const cardW = this.region.w;
     const cardH = this.cardH;
+    const colGap = this.colGap;
+    const cols = Math.max(1, Math.floor((this.region.w + colGap) / (this.cardNaturalW + colGap)));
+    const cardW = Math.min(this.cardNaturalW, this.region.w);
     const nameX = this.compact ? 6 : 20;
     const stageGap = this.compact ? 4 : 8;
     const stageMargin = this.compact ? 6 : 12;
@@ -503,7 +595,9 @@ export class WeaponCardList {
     const stageW = cardW - stageX - stageMargin;
     // #607: cards flow section by section (header row, then that section's cards, then a gap)
     // rather than as one uniform stride, and each card remembers its own content-space `top` so
-    // focus-scrolling and a caller's section jump can both address it directly.
+    // focus-scrolling can address it directly. #610: within a section they now also wrap across
+    // `cols` columns, and every section restarts at column 0 on a fresh row.
+    this._rows = [];
     let y = 0;
     for (const sec of this._sections) {
       sec.top = y;
@@ -512,10 +606,20 @@ export class WeaponCardList {
         y += this.headerH;
       }
       sec.cardsTop = y;
-      for (let k = 0; k < sec.count; k++) this._layoutCard(this.cards[sec.first + k], y + k * (cardH + this.cardGap), {
-        cardW, cardH, nameX, stageX, stageW, stageMargin, muzzleInset,
-      });
-      y += sec.count * (cardH + this.cardGap);
+      for (let k = 0; k < sec.count; k++) {
+        const r = Math.floor(k / cols), c = k % cols;
+        const idx = sec.first + k;
+        if (c === 0) this._rows.push([]);
+        const row = this._rows[this._rows.length - 1];
+        row.push(idx);
+        const card = this.cards[idx];
+        card.row = this._rows.length - 1;
+        card.col = c;
+        this._layoutCard(card, c * (cardW + colGap), y + r * (cardH + this.cardGap), {
+          cardW, cardH, nameX, stageX, stageW, stageMargin, muzzleInset,
+        });
+      }
+      y += Math.ceil(sec.count / cols) * (cardH + this.cardGap);
       if (sec.label) y += this.sectionGap;
     }
     this._cardsH = y;
@@ -523,12 +627,13 @@ export class WeaponCardList {
     this._setScroll(this._scrollY);
   }
 
-  // One card's geometry at content-space `y`. Split out of _layout (#607) purely because cards no
-  // longer flow at a uniform stride — the section loop decides each y and hands it here.
-  _layoutCard(card, y, geom) {
+  // One card's geometry at content-space `x`,`y`. Split out of _layout (#607) purely because cards
+  // no longer flow at a uniform stride — the section loop decides each position and hands it here
+  // (#610: an `x` too, now that a row holds several cards).
+  _layoutCard(card, x, y, geom) {
     const { cardW, cardH, nameX, stageX, stageW, muzzleInset } = geom;
     card.top = y;
-    card.container.setPosition(0, y);
+    card.container.setPosition(x, y);
     card.panel.setSize(cardW, cardH);
     card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), cardH - 16);
     card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
@@ -542,6 +647,11 @@ export class WeaponCardList {
     card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
     card.lockScrim.setSize(cardW, cardH);
     card.lockLabel.setPosition(cardW / 2, cardH / 2);
+    // #610 (added scope): the mounted-slot glyph rides the TOP-RIGHT corner of the preview stage —
+    // "the right side of the preview area", but clear of the stage's vertical middle, which is
+    // exactly where every shot/beam travels. Origin (1, 0), so it stays pinned to that corner at
+    // any stage width, down to the narrowest one-card-across co-op column.
+    card.bindText.setPosition(stageX + Math.max(20, stageW) - (this.compact ? 4 : 6), 8 + (this.compact ? 3 : 5));
   }
 
   _setScroll(y) {
