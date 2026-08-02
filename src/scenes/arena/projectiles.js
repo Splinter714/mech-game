@@ -30,6 +30,19 @@ const RETARGET_RADIUS = HIT_RADIUS * 2;
 // within a forward cone.
 const FIELD_VIS_SAMPLES = 24;
 
+// #624: Link Pylons' bounded-degree graph — replaces #623's per-volley full mesh. No pylon may
+// carry more than this many simultaneous links, field-wide, regardless of which volley or player
+// planted it. See `_updatePylonLinks`/`_recomputePylonLinkGraph` for the greedy nearest-neighbor
+// construction that respects this cap.
+const PYLON_LINK_CAP = 3;
+
+// #624: a candidate pair farther apart than this is never linked, even if both pylons still have
+// open slots. Picked a bit past `linkPylons`' own salvoSpread (110px, data/weapons.js) so pylons
+// from the SAME volley reliably link to each other, but well short of the weapon's own range.opt/
+// max (350/450px) so it doesn't trivially bridge two volleys lobbed at very different spots on
+// the field. Starting number, his to retune live like every other tunable in this file.
+const MAX_LINK_RANGE = 220;
+
 // #72: is a round an incendiary? Flame damage is multiplied against soft cover (terrain.js
 // FLAME_COVER_MULT) so the flamethrower ('flame' particles) and napalm ('fire' canisters +
 // their burning ground) are the premier forest-clearing tools.
@@ -778,11 +791,14 @@ export const ProjectilesMixin = {
       force: h.force || null,
       // #621: EMP Trap's payload — see `_updateHazards`'s mine branch for what this changes.
       disable: h.disable || null,
-      // #622/#623: Link Pylons' payload — `pairId` (from the round, stamped by firing.js's
-      // `fireWeapon`/`_spawnProjectile`) is how `_updatePylonLinks` finds every OTHER pylon from
-      // the SAME trigger pull (the whole launch group, up to 5 as of #623) rather than just the
-      // nearest other pylon on the field. `pulseDamage`/`pulseInterval` are the static per-weapon
-      // numbers (data/weapons.js `linkPylons`); null/unused for every other hazard kind.
+      // #622/#623/#624: Link Pylons' payload. `pairId` (from the round, stamped by firing.js's
+      // `fireWeapon`/`_spawnProjectile`) used to be how `_updatePylonLinks` found every OTHER
+      // pylon from the SAME trigger pull to mesh with. #624 made linking field-wide and
+      // capacity-based instead of per-launch-group (any live, armed pylon can link to any other,
+      // no ownership/origin check), so `pairId` no longer drives any linking decision — kept here
+      // only as inert per-pylon provenance (which pull planted it), unused by any current reader.
+      // `pulseDamage`/`pulseInterval` are the static per-weapon numbers (data/weapons.js
+      // `linkPylons`); null/unused for every other hazard kind.
       pairId: p.pairId ?? null,
       pulseDamage: h.pulseDamage ?? null,
       pulseInterval: h.pulseInterval ?? null,
@@ -877,68 +893,114 @@ export const ProjectilesMixin = {
     this._updatePylonLinks(dt);   // #622: Link Pylons' connecting line + line-pulse damage
   },
 
-  // #622/#623: Link Pylons — a SEPARATE per-frame pass (rather than folded into the per-hazard
-  // loop above) because linking is a property of the GROUP, not of any one pylon individually,
-  // and doing it per-hazard would either double-process every link (every member finding its
-  // neighbours and each ticking its own pulse) or need extra bookkeeping to avoid that. Groups
-  // every live, ARMED 'pylon' hazard by `pairId` (one id per trigger pull — firing.js's
-  // `fireWeapon` stamps the same id on every round a pull emits, so a #623 5-pylon volley still
-  // shares one group id despite spawning 5 separate rounds).
-  // #623: a group of 2+ is a genuine web — draw a connecting segment (the same `drawBeam`
-  // primitive every other beam uses) between EVERY pair of currently-alive members, not just an
-  // original fixed pair. With up to 5 members that's up to C(5,2)=10 segments; a pylon dying/
-  // expiring independently just drops out of `group` next frame, shrinking the web rather than
-  // collapsing it outright. On `pulseInterval`, any live enemy within `radius` of ANY segment
-  // (point-to-segment distance via `segmentPointDistance`, data/delivery.js — already imported
-  // above and already used for swept projectile-hit detection, reused rather than reinvented)
-  // takes exactly ONE pulse — `.some()` short-circuits on the first segment in range instead of
-  // summing every nearby strand, so a target caught near multiple strands isn't hit multiple
-  // times. A group of 1 (every other member already dead/expired) is a LONE pylon — it draws
-  // nothing and pulses nothing, same rule as before, just now reachable by attrition from 5
-  // instead of from 2; a group of 0 needs no handling here at all (it simply never appears in
-  // `byGroup`, matching the ordinary per-hazard expiry above). Flying enemies are exempt from the
-  // pulse, mirroring the mine branch's `!e.flying` filter above — a ground-planted electric web
-  // shouldn't zap something flying over it.
+  // #624: Link Pylons — replaces #623's per-volley (`pairId`-grouped) full mesh with ONE
+  // field-wide, bounded-degree graph. Any live, armed 'pylon' hazard can link to any other,
+  // regardless of which volley or player planted it — the only gates are the per-pylon cap
+  // (`PYLON_LINK_CAP`) and the max link distance (`MAX_LINK_RANGE`).
+  //
+  // The graph is NOT recomputed every frame — only when the live+armed pylon SET has grown
+  // since the last check (tracked via `_pylonArmedSet`, a Set of hazard object refs so a
+  // simultaneous death elsewhere can never mask a genuine new arrival). That's "a new volley's
+  // pylons finished arming." Because a volley's 5 pylons typically finish arming a beat apart
+  // (staggered launch + a shared but independently-counted armDelay), this can fire a handful of
+  // times in quick succession for one volley rather than exactly once — harmless, since each
+  // recompute is a full, deterministic rebuild from the CURRENT armed set: the graph converges to
+  // its final shape once the volley's last pylon arms, and the interim graphs are superseded a
+  // frame or two later, not something a player can perceive. Pure attrition (a pylon dying/
+  // expiring with nothing new arming) never triggers a recompute — see the pruning pass below for
+  // how that's handled instead, cheaply, every frame.
+  //
+  // Deliberate consequence of a full rebuild replacing the old graph each time (not a bug): a
+  // segment between two OLDER pylons can be dropped and replaced if a new volley lands a pylon
+  // that's now a better (closer) match for one of its endpoints. The old graph is discarded
+  // outright each recompute (`this._pylonLinks = links`, `_recomputePylonLinkGraph`) so the drawn
+  // web below always reflects only the CURRENT graph — nothing stale lingers.
   _updatePylonLinks(dt) {
-    const byGroup = new Map();
+    const live = [];
     for (const hz of this.hazards) {
-      if (hz.kind !== 'pylon' || hz.dead || hz.armIn > 0 || hz.pairId == null) continue;
-      const list = byGroup.get(hz.pairId);
-      if (list) list.push(hz); else byGroup.set(hz.pairId, [hz]);
+      if (hz.kind !== 'pylon' || hz.dead || hz.armIn > 0) continue;
+      live.push(hz);
     }
-    for (const group of byGroup.values()) {
-      if (group.length < 2) continue;   // lone pylon: no link, no pulse
-      // Every pair of currently-alive members gets its own connecting segment.
-      const segments = [];
-      for (let i = 0; i < group.length; i++) {
-        for (let j = i + 1; j < group.length; j++) segments.push([group[i], group[j]]);
-      }
-      for (const [a, b] of segments) {
-        drawBeam(this.groundFx, a.x, a.y, b.x, b.y, a.color, 1, false, this.time.now, 1, 0);
-      }
-      // The pulse clock lives on the group's first member alone — ticking it per-member would
-      // multiply the damage by however many pylons are still alive.
-      const head = group[0];
-      head._pylonPulseIn = (head._pylonPulseIn ?? head.pulseInterval ?? 0.5) - dt;
-      if (head._pylonPulseIn > 0) continue;
-      head._pylonPulseIn += head.pulseInterval ?? 0.5;
-      const candidates = head.owner === 'enemy'
-        ? livePlayersOf(this)
-        : this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
-      for (const c of candidates) {
-        // Dedupe: a target near several strands of the same web still takes exactly one pulse —
-        // stop at the first segment within range rather than summing every match.
-        const hit = segments.some(([a, b]) => segmentPointDistance(a.x, a.y, b.x, b.y, c.x, c.y) < head.radius);
-        if (!hit) continue;
-        if (head.owner === 'enemy') this._damagePlayerAt(head.pulseDamage, c, { weaponId: head.weaponId });
-        else this._damageEnemyAt(c, c.x, c.y, head.pulseDamage, head.color, false, { weaponId: head.weaponId });
-      }
-      // One flash at the web's centroid rather than one per segment (up to 10 for a full 5-pylon
-      // mesh) — reads the pulse just as clearly without the redundant overdraw.
-      const cx = group.reduce((s, hz) => s + hz.x, 0) / group.length;
-      const cy = group.reduce((s, hz) => s + hz.y, 0) / group.length;
-      this._impactFx(cx, cy, head.color, 'beam', 0, head.weaponId);
+    const liveSet = new Set(live);
+    const prevSet = this._pylonArmedSet;
+    const grew = live.length > 0 && (!prevSet || live.some((hz) => !prevSet.has(hz)));
+    if (grew) this._recomputePylonLinkGraph(live);
+    this._pylonArmedSet = liveSet;
+
+    // Prune any link whose endpoint died/expired since the last recompute — this is what makes a
+    // pylon that just lost its only partner go inert immediately (draws/pulses nothing) rather
+    // than waiting for the next volley's rebuild, same "lone pylon" rule #623 had, now per-pylon
+    // instead of per-group.
+    const links = (this._pylonLinks || []).filter(([a, b]) => !a.dead && !b.dead);
+    this._pylonLinks = links;
+    if (links.length === 0) return;
+
+    for (const [a, b] of links) {
+      drawBeam(this.groundFx, a.x, a.y, b.x, b.y, a.color, 1, false, this.time.now, 1, 0);
     }
+
+    // One global pulse clock for the whole field's graph (#623 ticked one clock per group; #624
+    // has only one graph, so one clock). Its interval is read off whichever link happens to be
+    // first — in practice every live pylon shares the same weapon def's pulseInterval, so this is
+    // exact, not approximate.
+    const head = links[0][0];
+    this._pylonPulseIn = (this._pylonPulseIn ?? head.pulseInterval ?? 0.5) - dt;
+    if (this._pylonPulseIn > 0) return;
+    this._pylonPulseIn += head.pulseInterval ?? 0.5;
+
+    // Flying enemies are exempt from the pulse, mirroring the mine branch's `!e.flying` filter
+    // above — a ground-planted electric web shouldn't zap something flying over it.
+    const candidates = head.owner === 'enemy'
+      ? livePlayersOf(this)
+      : this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
+    for (const c of candidates) {
+      // Dedupe against the FULL field-wide segment set (#624, up from a single group's) — a
+      // target near several strands, even across different volleys/players, still takes exactly
+      // one pulse. Same short-circuiting `.some()` pattern #623 used.
+      const hit = links.some(([a, b]) => segmentPointDistance(a.x, a.y, b.x, b.y, c.x, c.y) < head.radius);
+      if (!hit) continue;
+      if (head.owner === 'enemy') this._damagePlayerAt(head.pulseDamage, c, { weaponId: head.weaponId });
+      else this._damageEnemyAt(c, c.x, c.y, head.pulseDamage, head.color, false, { weaponId: head.weaponId });
+    }
+    // One flash per segment, not one for the whole field: #623's single centroid flash assumed a
+    // single spatially-tight group (a full mesh from one volley). #624's field-wide graph can hold
+    // several disjoint webs at once (e.g. two volleys lobbed at opposite ends of the arena, each
+    // capped out linking only within itself) — a single flash location would misrepresent where
+    // the pulse actually lands, so each segment gets its own midpoint flash instead.
+    for (const [a, b] of links) {
+      this._impactFx((a.x + b.x) / 2, (a.y + b.y) / 2, a.color, 'beam', 0, a.weaponId);
+    }
+  },
+
+  // #624: the greedy bounded-degree nearest-neighbor construction — every candidate pair among
+  // the currently live+armed pylons, scored by distance and filtered to `MAX_LINK_RANGE`, sorted
+  // ascending, then walked once: a pair is accepted as a link only if BOTH pylons currently have
+  // fewer than `PYLON_LINK_CAP` links, otherwise it's skipped and the walk continues (a skipped
+  // pair is never revisited). This naturally favors short local links first and respects the cap
+  // by construction. Entirely replaces the previous graph — nothing from before this call
+  // survives except what gets reaccepted fresh.
+  _recomputePylonLinkGraph(live) {
+    const pairs = [];
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) {
+        const a = live[i], b = live[j];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        if (dist > MAX_LINK_RANGE) continue;
+        pairs.push([a, b, dist]);
+      }
+    }
+    pairs.sort((p, q) => p[2] - q[2]);
+    const linkCount = new Map();
+    const links = [];
+    for (const [a, b] of pairs) {
+      const ca = linkCount.get(a) ?? 0;
+      const cb = linkCount.get(b) ?? 0;
+      if (ca >= PYLON_LINK_CAP || cb >= PYLON_LINK_CAP) continue;
+      links.push([a, b]);
+      linkCount.set(a, ca + 1);
+      linkCount.set(b, cb + 1);
+    }
+    this._pylonLinks = links;
   },
 
   // #543 (Jackson: "the gravity well visual and effect [should] be blocked by hard cover in
