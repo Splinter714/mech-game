@@ -16,7 +16,7 @@ import { getAbility } from '../../data/abilities.js';
 import { Controls, PadEdges, PAD } from '../../input/Controls.js';
 import { initialSprintState } from '../../data/sprint.js';
 import { initAbilityStates } from './abilities.js';
-import { MAX_PLAYERS, makePlayer, showsPlayerColor } from '../../data/players.js';
+import { MAX_PLAYERS, makePlayer, nearestPlayer, showsPlayerColor } from '../../data/players.js';
 import { mechColorFor } from '../../data/mechColors.js';
 import { mechKeyForPlayer, joinerBuild } from '../../data/coopGarage.js';
 import { LEASH_RADIUS, clampToLeash, leashFocus } from '../../data/leash.js';
@@ -30,6 +30,9 @@ import { isPassable } from '../../data/terrain.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
 import { DEPTH, PLAYER_WALL_COLLIDE_RADIUS } from './shared.js';
 import { Audio } from '../../audio/index.js';
+import {
+  aiAbilityIntent, aiMoveVector, aiStandoff, pickAiTarget, AI_FIRE_RANGE_MULT,
+} from './coopAI.js';
 
 // The identifying ring drawn on the ground under each mech. Sized to sit just outside the
 // chassis silhouette so it reads as a marking on the ground rather than part of the machine,
@@ -191,10 +194,12 @@ export const CoopMixin = {
   // #387: watch EVERY not-yet-claimed pad, not just pad 1.
   //
   // #579: "unclaimed" is now asked of the LIVE ROSTER (`_padClaimed`) rather than inferred from
-  // `players.length`. Those two agreed only while players could exclusively join — once a player
-  // can also LEAVE (a controller disconnect despawns them, below), the roster develops holes:
-  // with P1+P3 on the field, `length` is 2, so the old loop would have watched pad 2 — which P3
-  // already owns — and a START press there would have spawned a duplicate of an existing player.
+  // `players.length`. Those two agree only while joins happen in pad order — if P1 and P3 join
+  // but P2 never does, `length` is 2, so the old loop would have watched pad 2 — which P3 already
+  // owns — and a START press there would have spawned a duplicate of an existing player. (#604:
+  // a controller disconnect no longer removes its player from the roster at all — it hands the
+  // mech to AI instead, below — so that no longer widens this gap either, but the asymmetric-join
+  // case alone is enough reason `_padClaimed` stays keyed off identity, not length.)
   _updateCoopJoin() {
     if (!this._joinEdges) return;
     if (playersOf(this).length >= MAX_PLAYERS) return;
@@ -234,28 +239,27 @@ export const CoopMixin = {
     Audio.ui('deploy');
   },
 
-  // ── #579: a controller unplugging DESPAWNS its player ────────────────────────────────────
-  // Before this, a disconnected pad left its mech standing exactly where it stopped: frozen (its
-  // Controls read all-zero forever) but still SOLID, still targetable, still soaking enemy
-  // attention, and still one of the bodies the shared leash hard-stops the survivor against.
-  // Jackson's call was the quick fix — "despawn the mech as a quick change" — with rejoining
-  // handled by the mid-sortie drop-in that already exists (START on that pad again), which is
-  // exactly why `_updateCoopJoin` above had to learn to cope with holes in the roster. Handing
-  // the abandoned mech to the AI instead is the deliberate follow-up, filed separately as #604
-  // and NOT attempted here.
+  // ── #604: a controller unplugging hands its player to AI instead of despawning ───────────
+  // Before #604, a disconnected pad DESPAWNED its player (#579's own deliberate quick fix —
+  // Jackson: "despawn the mech as a quick change" — with rejoining handled by the mid-sortie
+  // drop-in that already existed, START on that pad again). #604 replaces the action: the mech,
+  // its position, its colour, its HUD panel and its place in the shared camera framing all stay
+  // exactly as they were — `p.aiControlled` just switches who is producing this player's
+  // per-frame intent (see ArenaScene.js's one intent-source line, and `_aiIntentFor` below).
   //
-  // Detection is a SEEN-THEN-GONE LATCH rather than a bare "is this pad present" test, because a
-  // physically-connected gamepad is invisible to the browser until it is first touched — the same
-  // enumeration quirk #122/#524 fight inside Controls. A player deployed straight out of the
-  // co-op garage can therefore legitimately have no readable pad for its first frames, and a bare
-  // presence test would despawn it before its owner ever pressed anything. So the check only ARMS
-  // once that player's pad has actually been read at least once, and even then waits out a short
-  // confirm window so one dropped poll (or a wireless pad's brief radio hiccup) is not a leave.
+  // Detection is UNCHANGED from #579: a SEEN-THEN-GONE LATCH rather than a bare "is this pad
+  // present" test, because a physically-connected gamepad is invisible to the browser until it is
+  // first touched — the same enumeration quirk #122/#524 fight inside Controls. A player deployed
+  // straight out of the co-op garage can therefore legitimately have no readable pad for its first
+  // frames, and a bare presence test would hand it to AI before its owner ever pressed anything.
+  // So the check only ARMS once that player's pad has actually been read at least once, and even
+  // then waits out a short confirm window so one dropped poll (or a wireless pad's brief radio
+  // hiccup) is not a leave. Once armed-and-gone, re-flagging `aiControlled = true` every
+  // subsequent frame is harmless (idempotent) — there is no more one-shot removal to guard.
   _updateCoopLeave(delta) {
     const players = playersOf(this);
     if (players.length < 2) return;
-    // Iterate a COPY: `_removePlayer` splices the live array out from under this loop.
-    for (const p of [...players]) {
+    for (const p of players) {
       // Player 1 owns the keyboard+mouse and can always keep playing without a pad, so it is
       // never a disconnect candidate — and there would be no primary player left to hand the
       // camera, the HUD and the audio listener to.
@@ -263,36 +267,88 @@ export const CoopMixin = {
       if (p.controls?.pad?.()) { p._padSeen = true; p._padGoneMs = 0; continue; }
       if (!p._padSeen) continue;   // never armed — see the enumeration quirk above
       p._padGoneMs = (p._padGoneMs ?? 0) + delta;
-      if (p._padGoneMs >= PAD_DISCONNECT_MS) this._removePlayer(p);
+      if (p._padGoneMs >= PAD_DISCONNECT_MS && !p.aiControlled) {
+        p.aiControlled = true;
+        this._floatText(p.x, p.y - 30, `P${p.id + 1} AI TAKEOVER`, '#cf4d4d');
+      }
     }
   },
 
-  // Take one player off the field entirely. Deliberately NOT the same thing as dying: there is no
-  // wreck, no death FX and no respawn clock — the player is simply gone, and the run continues
-  // for whoever is left (a solo survivor's rings switch back off on the very next frame, because
-  // `_updatePlayerMarkers` re-asks `showsPlayerColor` every frame).
+  // ── #604: reconnecting yanks control back instantly, in place ────────────────────────────
+  // The symmetric detection to `_updateCoopLeave` above, for every currently-`aiControlled`
+  // player: watch ITS OWN pad (by `p.id`, unchanged since it was never removed from the roster)
+  // for the same signal — `pad()` reading connected again only happens once the browser has
+  // genuinely seen fresh input from that physical device, the same enumeration-quirk-driven fact
+  // `_updateCoopLeave`'s own latch relies on, so this needs no separate "did they actually press
+  // something" check of its own.
   //
-  // Everything this player OWNED in the world goes with them. The two ability-spawned things
-  // (the drone squad and the smoke cloud) get their own despawn calls because each holds live
-  // Phaser objects that nothing else would ever clean up once the owner is off the roster — the
-  // usual cleanup paths are keyed on `player.dead`, which never becomes true here. Rounds already
-  // in flight are left alone on purpose: they only carry `p.shooter` to EXCLUDE the firer from
-  // friendly-fire candidates, and `otherLivePlayers` filters the live roster, so a departed
-  // shooter is simply never found — no dangling reference, and the shots that were already in the
-  // air still land. Enemies re-resolve `targetPlayer` from the collection every frame.
-  _removePlayer(player) {
-    const players = playersOf(this);
-    const i = players.indexOf(player);
-    if (i < 0) return;
-    players.splice(i, 1);
-    this._despawnFriendlyDrone?.(player);
-    this._despawnSmokeCloud?.(player);
-    this._floatText(player.x, player.y - 30, `P${player.id + 1} DISCONNECTED`, '#cf4d4d');
-    player.view?.destroy();
-    player.marker?.destroy();
-    player.view = null;
-    player.marker = null;
-    player.controls = null;
+  // No arming/debounce window here, unlike the leave latch: this player's pad was already
+  // `_padSeen` long before AI took over (it was being played), and the owner's answer was
+  // explicit — "yanks control back instantly, no safe-beat wait, no 'finish this exchange
+  // first'". `_updateCoopJoin`'s `_padClaimed` check keeps the normal START-to-join path from
+  // ever re-firing for this pad (the player never left the roster), so this is the only reconnect
+  // path — no `_addPlayer`, no mech rebuild, no repositioning. Control resumes exactly where the
+  // AI left the mech, mid-fight.
+  _updateCoopReconnect() {
+    for (const p of playersOf(this)) {
+      if (!p.aiControlled) continue;
+      if (p.controls?.pad?.()) {
+        p.aiControlled = false;
+        this._floatText(p.x, p.y - 30, `P${p.id + 1} RECONNECTED`, '#7bd17b');
+      }
+    }
+  },
+
+  // ── #604: the AI brain's per-frame intent ─────────────────────────────────────────────────
+  // Called from ArenaScene.js's one intent-source line in place of `player.controls.read()` for
+  // any `aiControlled` player. Returns the EXACT SAME shape a human's Controls.read() does
+  // (`{move, aim, fire, mode, ability, reloadPressed, movementTogglePressed}`), which is the
+  // whole point: every downstream consumer (drive, turret slew, per-slot firing, abilities) is
+  // already generic over "however this player's intent got produced", so nothing about weapon
+  // firing, ability triggering, HUD rendering, camera framing or respawn needs to change for this
+  // player at all. See coopAI.js for the actual decision math this only orchestrates.
+  // `dt` is accepted (matching the call site) but unused today — this v1 brain re-decides fresh
+  // every frame rather than smoothing/holding a decision over time; a future pass that adds
+  // re-target hysteresis or a decision cadence (like enemyAiTuning.js's own DECIDE_MIN/MAX) would
+  // hang it off this parameter rather than changing the call site again.
+  _aiIntentFor(player, _dt) {
+    const mech = player.mech;
+    const liveEnemies = (this.enemies ?? []).filter((e) => !e.mech?.isDestroyed?.());
+    const target = pickAiTarget(player.x, player.y, liveEnemies);
+    const home = this._aiHomeFor(player);
+    const standoff = aiStandoff(mech);
+
+    const move = aiMoveVector({ x: player.x, y: player.y, target, standoff, home });
+
+    const aim = target
+      ? { mode: 'pointer', x: target.x, y: target.y }
+      : { mode: 'angle', angle: player.turretAngle };   // no target: hold current facing
+
+    const engaged = !!target
+      && Math.hypot(target.x - player.x, target.y - player.y) <= standoff * AI_FIRE_RANGE_MULT;
+    // #604: one shared engaged flag drives every skill slot — `_handleFiring` (firing.js) only
+    // ever reads whichever locations this player's mech actually has a weapon mounted in, so
+    // reporting all four here is harmless for the others and needs no knowledge of the loadout.
+    const fire = {
+      rightArm: engaged, leftArm: engaged, rightShoulder: engaged, leftShoulder: engaged,
+    };
+
+    const ability = aiAbilityIntent({ mech, abilityStates: player.abilityStates, engaged });
+
+    return {
+      move, aim, fire, mode: 'kbm', ability, reloadPressed: false, movementTogglePressed: false,
+    };
+  },
+
+  // The nearest LIVE, HUMAN (non-`aiControlled`) teammate to `aiPlayer` — the "stay close to the
+  // active players" the AI's movement biases toward (owner's answer, #604). Excludes the AI
+  // player itself and every other AI-controlled player; null when nobody currently human-driven
+  // is alive (every other teammate is also disconnected, or down), which `aiMoveVector` reads as
+  // "nobody to stay close to" and falls back to pure engagement.
+  _aiHomeFor(aiPlayer) {
+    const humans = playersOf(this).filter((p) => p !== aiPlayer && !p.aiControlled && !p.dead);
+    if (!humans.length) return null;
+    return nearestPlayer(humans, aiPlayer.x, aiPlayer.y);
   },
 
   // A second mech for player `index`: a FRESH Mech through the model's own constructor.
