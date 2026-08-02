@@ -830,7 +830,13 @@ export const WEAPONS = {
 // the beam laser." Same mechanism, same reason to shelve rather than delete: `enemyKinds.js`'s
 // wall-turret kind sets `weaponId: 'railLance'` and resolves it directly via getWeapon()/
 // resolveWeapon(), bypassing WEAPON_IDS entirely — that encounter is untouched by this list.
-export const SHELVED_WEAPON_IDS = ['repulsorPulse', 'railLance'];
+// #621: "move gravity well and proximity mines to abilities" — revised mid-discussion to a single
+// new ability, EMP Trap (data/abilities.js), that replaces both. Both `gravityWell` and
+// `timedCharge` are shelved rather than deleted: their WEAPONS entries (data/art/sfx) stay fully
+// intact — no enemy references either id directly (checked — zero hits in enemyKinds.js) — but an
+// existing save could still have either mounted/unlocked, so shelving is the safe move, same
+// mechanism already used twice above.
+export const SHELVED_WEAPON_IDS = ['repulsorPulse', 'railLance', 'gravityWell', 'timedCharge'];
 
 export const WEAPON_IDS = Object.keys(WEAPONS).filter((id) => !SHELVED_WEAPON_IDS.includes(id));
 
