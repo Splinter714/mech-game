@@ -30,7 +30,8 @@ import { AbilityCardPreview } from './abilityPreview.js';
 //   const list = new WeaponCardList(scene, { x, y, w, h, ids, onSelect, selectedId, compact });
 //   // in scene.update(): list.update(time, delta);
 //   list.setIds(newIds);        // refilter (e.g. eligible items for a slot)
-//   list.setSelected(id);
+//   list.setSections([{ id, label, ids }, …]);   // #607: ONE continuous list, labelled bands
+//   list.setSelected(id);       // #607: or a Set/array of ids
 //   list.setRegion(x, y, w, h); // on resize
 //   list.destroy();
 //
@@ -56,6 +57,17 @@ const LABEL_W = 200;     // left block: name + stats
 const COMPACT_CARD_H = 60;
 const COMPACT_CARD_GAP = 6;
 const COMPACT_LABEL_W = 108;
+
+// #607: a SECTIONED list — the Garage's catalog is now ONE continuous scrolling list with a
+// labelled band per section (ABILITIES, then WEAPONS) instead of the per-column tab system
+// (#529/#532) that used to swap whole catalogs in and out. A section header is a plain label row
+// in the same scroll space as the cards; `SECTION_GAP` is the breathing room after a section's
+// last card. An UNLABELLED single section (what `setIds` builds — the Weapon Lab's usage) draws
+// no header and takes no gap, so that path lays out byte-identically to before.
+const SECTION_HEADER_H = 20;
+const COMPACT_SECTION_HEADER_H = 15;
+const SECTION_GAP = 12;
+const COMPACT_SECTION_GAP = 8;
 
 // #197 (re-scoped): every catalog card auto-fires a live shot/beam demo on a loop and plays
 // its real fire/trajectory/impact sound automatically — with no way to turn it off, that's
@@ -109,12 +121,23 @@ export class WeaponCardList {
   // #505 (second correction): `compact` shrinks card height/gap/label width/emitter size for a
   // narrow Garage column (see COMPACT_* above) — everything else (the live delivery sim, the
   // scroll/mask/drag behaviour, onSelect/isLocked/costOf) is identical to the full-size list.
+  // #607: `sections` ([{ id, label, ids }]) builds ONE continuous list with a labelled band per
+  // section — what the Garage's tab-less catalog uses. `ids` (a single unlabelled section) is
+  // unchanged and stays the Weapon Lab's usage. `onHover(id, index)` fires when the pointer
+  // enters a card, so a caller can keep its own cursor model in step with the mouse (the Garage
+  // binds off whatever row is FOCUSED, and hovering is how a mouse focuses). `onScroll(scrollY)`
+  // fires on every scroll change, so a caller that parks its own content below the cards (see
+  // `setExtraHeight`) can move it in the same scroll space.
   constructor(scene, {
-    x, y, w, h, ids, onSelect = null, selectedId = null, isLocked = null, costOf = null, compact = false,
+    x, y, w, h, ids, sections = null, onSelect = null, onHover = null, onScroll = null,
+    selectedId = null, isLocked = null, costOf = null, compact = false,
   } = {}) {
     this.scene = scene;
     this.onSelect = onSelect;
+    this.onHover = onHover;
+    this.onScroll = onScroll;
     this.selectedId = selectedId;
+    this._selectedIds = null;
     this.isLocked = isLocked;
     this.costOf = costOf;
     this.compact = compact;
@@ -123,11 +146,19 @@ export class WeaponCardList {
     this.labelW = compact ? COMPACT_LABEL_W : LABEL_W;
     this.emitSize = compact ? COMPACT_EMIT_SIZE : EMIT_SIZE;
     this.emitBack = compact ? COMPACT_EMIT_BACK : EMIT_BACK;
+    this.headerH = compact ? COMPACT_SECTION_HEADER_H : SECTION_HEADER_H;
+    this.sectionGap = compact ? COMPACT_SECTION_GAP : SECTION_GAP;
     this.region = { x, y, w, h };
     this._scrollY = 0;
     this._maxScroll = 0;
     this._focus = -1;      // pad focus cursor (#70); -1 = none (the Weapon Lab never sets one)
     this.cards = [];
+    this._sections = [];
+    // #607: content height the CALLER draws below the cards, inside the same scroll space (the
+    // Garage's CHASSIS/COLOR rows). Counts toward maxScroll; the caller positions its own
+    // container off `onScroll`/`cardsHeight()`.
+    this._extraH = 0;
+    this._cardsH = 0;
     // #197: gates the auto-fire demo's automatic SOUND only (the visual shot/beam animation
     // always runs) — OFF by default. Loaded from localStorage so a returning session
     // remembers the owner's last choice, but a fresh browser/session (no stored value yet)
@@ -156,7 +187,8 @@ export class WeaponCardList {
     scene.input.on('pointermove', this._onMove);
     scene.input.on('pointerup', this._onUp);
 
-    this.setIds(ids ?? []);
+    if (sections) this.setSections(sections);
+    else this.setIds(ids ?? []);
   }
 
   _paintMask() {
@@ -180,9 +212,23 @@ export class WeaponCardList {
     this._layout();
   }
 
+  // #607: also accepts a COLLECTION of ids (array/Set). With the Garage's tab-less catalog there
+  // is no single "selected slot" any more, so it highlights every item mounted anywhere in that
+  // column's build at once. A bare id (the Weapon Lab's usage, and what drives `_isAudible`)
+  // behaves exactly as before.
   setSelected(id) {
-    this.selectedId = id;
+    if (id && typeof id === 'object') {
+      this._selectedIds = new Set(id);
+      this.selectedId = null;
+    } else {
+      this.selectedId = id;
+      this._selectedIds = null;
+    }
     for (const c of this.cards) this._paintSelection(c);
+  }
+
+  _isSelected(card) {
+    return this._selectedIds ? this._selectedIds.has(card.id) : card.id === this.selectedId;
   }
 
   // ── Pad focus cursor (#70) — optional; only the garage drives it. ──────────────────────
@@ -199,7 +245,9 @@ export class WeaponCardList {
       ? -1 : Math.min(this.cards.length - 1, i);
     for (const c of this.cards) this._paintSelection(c);
     if (scroll && this._focus >= 0) {
-      const top = this._focus * (this.cardH + this.cardGap);
+      // #607: a card's content-space top comes from the section layout now (headers/section gaps
+      // sit between cards), not `i * (cardH + cardGap)`.
+      const top = this.cards[this._focus].top ?? 0;
       this._setScroll(scrollToShow(this._scrollY, top, this.cardH, this.region.h, this._maxScroll));
     }
   }
@@ -213,6 +261,46 @@ export class WeaponCardList {
   focusedId() { return this.cards[this._focus]?.id ?? null; }
 
   indexOfId(id) { return this.cards.findIndex((c) => c.id === id); }
+
+  // ── #607: the seams a caller needs to run ONE continuous cursor across this list and its own
+  // trailing content (the Garage's CHASSIS/COLOR rows). ────────────────────────────────────────
+  cardCount() { return this.cards.length; }
+
+  focusIndex() { return this._focus; }
+
+  // Drop the focus highlight without moving scroll — the caller's cursor has left this list for
+  // its own trailing rows.
+  clearFocus() {
+    this._focus = -1;
+    for (const c of this.cards) this._paintSelection(c);
+  }
+
+  scrollY() { return this._scrollY; }
+
+  // Content-space y just past the last card — where the caller's own trailing block starts.
+  cardsHeight() { return this._cardsH; }
+
+  // Declare how tall the caller's trailing block is, so it scrolls as part of this list.
+  setExtraHeight(h) {
+    this._extraH = Math.max(0, h || 0);
+    this._layout();
+  }
+
+  // Scroll an arbitrary content-space rect into view (the caller's trailing rows).
+  scrollToContent(top, h) {
+    this._setScroll(scrollToShow(this._scrollY, top, h, this.region.h, this._maxScroll));
+  }
+
+  // Which section card `i` belongs to, and where a section's first card sits — the two queries a
+  // section-jump control (#607's D-pad left/right) needs.
+  sectionIdOf(i) {
+    const sec = this._sections.find((s) => i >= s.first && i < s.first + s.count);
+    return sec?.id ?? null;
+  }
+
+  sectionFirstIndex(id) {
+    return this._sections.find((s) => s.id === id)?.first ?? 0;
+  }
 
   // #541: true when `ids` (pre lock-sort, the same shape setIds() takes) is identical — same
   // length, same order — to the canonical id list this list was last built from. Lets a caller
@@ -228,20 +316,43 @@ export class WeaponCardList {
   // CANONICAL order; when lock info is available (#78) locked items sort to the bottom, so we
   // stash the canonical ids for refreshLocks() to re-sort against on unlock.
   setIds(ids) {
+    this.setSections([{ id: 'all', label: null, ids }]);
+  }
+
+  // #607: the sectioned form of setIds. `sections` is [{ id, label, ids }] in display order; a
+  // null/absent `label` draws no header row (and takes no trailing section gap), so the single
+  // unlabelled section `setIds` builds lays out exactly as the pre-#607 flat list did. Lock
+  // sorting (#78) applies WITHIN each section, so a locked weapon never sorts out of its band.
+  setSections(sections) {
     for (const c of this.cards) {
       c.preview?.destroy();   // #534: drops the ability preview's own sprites before the card goes
       c.container.destroy();
       if (c._heldOn) Audio.stopHeld(c.id);
     }
+    for (const s of this._sections) s.headerText?.destroy();
     this.cards = [];
+    this._sections = [];
     this._focus = -1;
-    this._ids = [...ids];   // canonical order, pre lock-sort — remembered for refreshLocks()
-    for (const id of orderByLock(this._ids, this.isLocked)) this._buildCard(getItem(id), id);
+    this._ids = [];   // canonical order, pre lock-sort — remembered for refreshLocks()/sameIds()
+    for (const sec of sections) {
+      const ids = [...(sec.ids ?? [])];
+      const meta = { id: sec.id, label: sec.label ?? null, first: this.cards.length, count: ids.length, headerText: null, top: 0 };
+      if (meta.label) {
+        meta.headerText = this.scene.add.text(0, 0, meta.label, {
+          fontFamily: 'monospace', fontSize: this.compact ? '9px' : '12px', color: UI.dim,
+        });
+        this.scroller.add(meta.headerText);
+      }
+      for (const id of orderByLock(ids, this.isLocked)) this._buildCard(getItem(id), id);
+      this._sections.push(meta);
+      this._ids.push(...ids);
+    }
     this._scrollY = 0;
     this._layout();
   }
 
   _buildCard(item, id) {
+    const index = this.cards.length;   // #607: this card's flat index, for the onHover callback
     const weapon = isWeapon(id) ? item : null;
     // #506: abilities are their own visually distinct kind, with their own accent color.
     const color = weapon ? (CATEGORIES[weapon.category]?.color ?? 0xffffff) : 0x7bd17b;
@@ -306,7 +417,13 @@ export class WeaponCardList {
 
     if (this.onSelect) {
       panel.setInteractive({ useHandCursor: true });
-      panel.on('pointerover', () => { if (this.selectedId !== id) { panel.setFillStyle(UI.panelSel); Audio.ui('menuNav'); } });
+      panel.on('pointerover', () => {
+        // #607: hovering a card is how the MOUSE moves the shared row cursor — the Garage binds
+        // whatever row is focused into whichever slot button gets pressed, so the pointer has to
+        // drive that same focus rather than a separate hover-only highlight.
+        this.onHover?.(id, index);
+        if (!this._isSelected(card)) { panel.setFillStyle(UI.panelSel); Audio.ui('menuNav'); }
+      });
       panel.on('pointerout', () => this._paintSelection(card));
       panel.on('pointerdown', () => this.onSelect(id));
     }
@@ -339,7 +456,7 @@ export class WeaponCardList {
   }
 
   _paintSelection(card) {
-    const on = card.id === this.selectedId;
+    const on = this._isSelected(card);
     const focused = this._focus >= 0 && this.cards[this._focus] === card;
     card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
       .setStrokeStyle(on || focused ? 2 : 1, focused ? UI.focus : on ? UI.sel : UI.panelEdge);
@@ -380,31 +497,55 @@ export class WeaponCardList {
     const muzzleInset = this.compact ? 8 : 14;
     const stageX = this.labelW + stageGap;
     const stageW = cardW - stageX - stageMargin;
-    this.cards.forEach((card, i) => {
-      const y = i * (cardH + this.cardGap);
-      card.container.setPosition(0, y);
-      card.panel.setSize(cardW, cardH);
-      card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), cardH - 16);
-      card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
-      card.muzzleX = stageX + muzzleInset;
-      card.muzzleY = 8 + (cardH - 16) / 2;
-      card.stageW = Math.max(20, stageW - muzzleInset - 8);
-      // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
-      card.emitter?.setDisplaySize(this.emitSize, this.emitSize).setPosition(card.muzzleX - this.emitBack, card.muzzleY);
-      // #534: an ability has no muzzle to fire from, so its preview gets the WHOLE stage rect —
-      // the effect is centred in it rather than launched from one edge.
-      card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
-      card.lockScrim.setSize(cardW, cardH);
-      card.lockLabel.setPosition(cardW / 2, cardH / 2);
-    });
-    const contentH = this.cards.length * (cardH + this.cardGap);
-    this._maxScroll = Math.max(0, contentH - this.region.h);
+    // #607: cards flow section by section (header row, then that section's cards, then a gap)
+    // rather than as one uniform stride, and each card remembers its own content-space `top` so
+    // focus-scrolling and a caller's section jump can both address it directly.
+    let y = 0;
+    for (const sec of this._sections) {
+      sec.top = y;
+      if (sec.headerText) {
+        sec.headerText.setPosition(nameX, y + (this.compact ? 2 : 4));
+        y += this.headerH;
+      }
+      sec.cardsTop = y;
+      for (let k = 0; k < sec.count; k++) this._layoutCard(this.cards[sec.first + k], y + k * (cardH + this.cardGap), {
+        cardW, cardH, nameX, stageX, stageW, stageMargin, muzzleInset,
+      });
+      y += sec.count * (cardH + this.cardGap);
+      if (sec.label) y += this.sectionGap;
+    }
+    this._cardsH = y;
+    this._maxScroll = Math.max(0, y + this._extraH - this.region.h);
     this._setScroll(this._scrollY);
+  }
+
+  // One card's geometry at content-space `y`. Split out of _layout (#607) purely because cards no
+  // longer flow at a uniform stride — the section loop decides each y and hands it here.
+  _layoutCard(card, y, geom) {
+    const { cardW, cardH, nameX, stageX, stageW, muzzleInset } = geom;
+    card.top = y;
+    card.container.setPosition(0, y);
+    card.panel.setSize(cardW, cardH);
+    card.stage.setPosition(stageX, 8).setSize(Math.max(20, stageW), cardH - 16);
+    card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
+    card.muzzleX = stageX + muzzleInset;
+    card.muzzleY = 8 + (cardH - 16) / 2;
+    card.stageW = Math.max(20, stageW - muzzleInset - 8);
+    // Emitter = the mount hardware, base-pivoted just left of the muzzle, barrel aiming right.
+    card.emitter?.setDisplaySize(this.emitSize, this.emitSize).setPosition(card.muzzleX - this.emitBack, card.muzzleY);
+    // #534: an ability has no muzzle to fire from, so its preview gets the WHOLE stage rect —
+    // the effect is centred in it rather than launched from one edge.
+    card.preview?.setStage(stageX, 8, Math.max(20, stageW), cardH - 16);
+    card.lockScrim.setSize(cardW, cardH);
+    card.lockLabel.setPosition(cardW / 2, cardH / 2);
   }
 
   _setScroll(y) {
     this._scrollY = Phaser.Math.Clamp(y, 0, this._maxScroll);
     this.scroller.y = -this._scrollY;
+    // #607: lets a caller keep its own trailing content (see setExtraHeight) in the same scroll
+    // space — it isn't inside `scroller`, so it has to be moved explicitly.
+    this.onScroll?.(this._scrollY);
   }
 
   update(_time, delta) {
@@ -476,7 +617,12 @@ export class WeaponCardList {
   // the auto-fire demo's sound toggle — every Audio.fire/impact/trajectory/startHeld call in
   // this file goes through this one check, so flipping autoFireEnabled mutes all of them at
   // once without touching the (always-running) visual sim that calls into this.
-  _isAudible(card) { return this.autoFireEnabled && card.id === this.selectedId; }
+  // #607: with a SET of selected ids (the Garage highlights everything mounted, not one pick)
+  // "the card you're listening to" is the FOCUSED row instead — the one under the cursor.
+  _isAudible(card) {
+    if (!this.autoFireEnabled) return false;
+    return this._selectedIds ? this.cards[this._focus] === card : card.id === this.selectedId;
+  }
 
   // Held/looping fire sound (#53), mirroring firing.js's edge-detected start/stop — a card
   // never gets a real button press, so "held" here just means "in its active duty-cycle

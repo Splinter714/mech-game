@@ -15,13 +15,12 @@ import { ABILITIES } from '../data/abilities.js';
 import { isWeapon, getItem } from '../data/items.js';
 import { costOf } from '../data/shop.js';
 import {
-  WEAPON_SLOTS, MELEE_LOCATIONS, ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
+  ABILITY_SLOTS, MOUNT_LOCATIONS, LOCATION_INFO, slotKind,
 } from '../data/anatomy.js';
 import { RUN_CURRENCY_KEY } from '../data/events.js';
-import { PadEdges, PAD } from '../input/Controls.js';
-import { TILE_ORDER, HUD_ABILITY_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
+import { PadEdges, PAD, SKILL_BINDS, ABILITY_BINDS } from '../input/Controls.js';
+import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../ui/skillTiles.js';
 import { stepIndex, dominantDir, DirRepeater } from '../ui/padNav.js';
-import { LAB_TABS, nextLabTab, labTabForSlotKind, TAB_DEFAULT_SLOT } from '../ui/labTabs.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
 import { buildTabBar, TAB_BAR_H, DEPLOY_W, DEPLOY_MARGIN } from '../ui/tabBar.js';
@@ -80,28 +79,40 @@ function hexColor(n) {
   return '#' + n.toString(16).padStart(6, '0');
 }
 
-// Pad up/down cycle order through a column's six slots (four weapon + two ability).
+// Every slot a column can bind into: the four weapon slots + the two ability slots.
 const ALL_SLOTS = [...TILE_ORDER, ...ABILITY_SLOTS];
 
-// #529: the per-column tab strip (chassis+color/weapon/ability/passive) that replaced the old
-// scene-level "MECH LAB" tab-bar button.
-// #532 (quick-wins batch, first change): moved from sitting above each column's own catalog area
-// up into the SAME row the pinned Deploy/Ready button lives in (ui/tabBar.js's shared top bar,
-// `TAB_BAR_H` tall) — Jackson's Garage feedback: "the 5 tab buttons should sit in the same row/
-// position as the Ready button, not wherever they currently are." Each column gets its own tab
-// strip container (`col.tabBarLayer`), positioned at that column's own x offset but at the bar's
-// y (not `col.layer`'s, which starts BELOW the bar) and depth-sorted above the bar's own
-// background/Deploy button so it reads as part of that row. The catalog area below regains the
-// full height the tab row used to carve out of it.
-const TAB_ROW_H = 34; // the per-column tab button height within the shared bar row
-// The shared bar's SCRAP/last-run readout + pinned Deploy/Ready button sit at the screen's
-// absolute right regardless of column count — the RIGHTMOST column's own tab row has to stop
-// short of them rather than run underneath. Sized generously: the button + its margins, plus a
-// buffer for the SCRAP text that sits just to its left.
-const TAB_ROW_RIGHT_RESERVE = DEPLOY_W + DEPLOY_MARGIN * 2 + 150;
+// #607 (supersedes #529's tab system, #532's tabs-in-the-Ready-row, #533's select-then-place and
+// #540's A-bind/B-unbind + D-pad destination-slot cursor; restores the spirit of #539). The
+// per-column TAB STRIP is gone entirely — `ui/labTabs.js` is deleted and `col.labTab` with it.
+// In its place each column has ONE continuous scrolling catalog, in this fixed order top to
+// bottom. The first two sections are bands inside the shared WeaponCardList (its #607 `sections`
+// support); the last two are the column's own chassis/color row lists, parked below the cards in
+// the SAME scroll space (WeaponCardList's `setExtraHeight`/`onScroll` seams).
+//
+// Nav: D-pad up/down runs ONE cursor continuously down all four sections; D-pad left/right jumps
+// section to section. Binding: with a catalog row focused you press the BUTTON OF THE SLOT you
+// want it in — LT/LB/RB/RT for the four weapons and X/Y for the two abilities, exactly their
+// in-arena fire binds (SKILL_BINDS/ABILITY_BINDS). LB/RB are free precisely because tab-cycling
+// is gone. A confirms a CHASSIS or COLOR row only — deliberately no A-bind fallback in the item
+// sections. There is no unbind gesture at all: you replace a slot by binding something else
+// there (Ready already demands a full loadout, #532).
+const CATALOG_SECTIONS = ['ability', 'weapon', 'chassis', 'color'];
 
-// Chassis+color merged tab (#532) row geometry — both sections render into the same catalog-area
-// rect, chassis rows first, color rows below.
+// #607: which slot each pad button binds into — derived from the SAME tables the arena fires
+// from, so "press the button you'd shoot it with" can't drift out of sync with the arena binds.
+const PAD_BIND_SLOTS = [...Object.entries(SKILL_BINDS), ...Object.entries(ABILITY_BINDS)]
+  .map(([loc, bind]) => ({ loc, button: PAD[bind.pad] }))
+  .filter((b) => b.button != null);
+
+// #607: the keyboard half of the same table. SKILL_BINDS/ABILITY_BINDS carry the arena's own key
+// labels; this maps each one onto its Phaser `keydown-*` event name. The two ARMS are bound to
+// MOUSE buttons in the arena (LMB/RMB), not keys — they have no entry here, and the mouse path
+// for them is clicking the arm's own loadout tile (see _drawColTile).
+const KEY_EVENT_NAMES = { Q: 'Q', E: 'E', 1: 'ONE', 4: 'FOUR' };
+
+// Chassis + color row geometry — both render below the cards in the one continuous catalog,
+// chassis rows first, color rows below (#607; the geometry itself is #532's, unchanged).
 const CHASSIS_ROW_H = 40, CHASSIS_ROW_GAP = 4;
 const COLOR_ROW_H = 22, COLOR_ROW_GAP = 3;
 const LIST_SECTION_HEADER_H = 14, LIST_SECTION_GAP = 10;
@@ -189,16 +200,25 @@ export default class GarageScene extends Phaser.Scene {
     // #505 THIRD rework (playtest, Jackson: "arrow keys should function the same as d-pad in the
     // garage") — the exact same actions column 0's own PadEdges drives off DPAD_LEFT/RIGHT/UP/
     // DOWN in update() below, just off keyboard events instead of a per-frame pad poll.
-    // #540: LEFT/RIGHT mirror the D-pad's live slot-cursor role (_navSlot) and UP/DOWN mirror its
-    // row-navigate role (_navRow) — see update()'s own D-pad dispatch for the full nav model.
-    this.input.keyboard.on('keydown-LEFT', () => this._navSlot(this.cols[0], -1));
-    this.input.keyboard.on('keydown-RIGHT', () => this._navSlot(this.cols[0], 1));
+    // #607: UP/DOWN run the one continuous catalog cursor (_navRow, now crossing section
+    // boundaries); LEFT/RIGHT jump section to section (_navSection) — they no longer move a
+    // destination-slot cursor, because #540's slot cursor is gone (the button you press IS the
+    // slot). ENTER/SPACE mirror the pad's A: confirm a chassis/color row, nothing in the item
+    // sections.
+    this.input.keyboard.on('keydown-LEFT', () => this._navSection(this.cols[0], -1));
+    this.input.keyboard.on('keydown-RIGHT', () => this._navSection(this.cols[0], 1));
     this.input.keyboard.on('keydown-UP', () => this._navRow(this.cols[0], -1));
     this.input.keyboard.on('keydown-DOWN', () => this._navRow(this.cols[0], 1));
-    // #529: '['/']' cycle column 0's own Mech Lab tab (chassis/weapon/ability/passive/color) —
-    // the keyboard mirror of the pad's LB/RB (see update(), below), same mapping either device.
-    this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._cycleLabTab(this.cols[0], -1));
-    this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._cycleLabTab(this.cols[0], 1));
+    this.input.keyboard.on('keydown-ENTER', () => this._confirm(this.cols[0]));
+    // #607: the keyboard mirror of the pad's bind buttons — press the key you'd FIRE that slot
+    // with to mount the focused catalog row into it. Driven straight off SKILL_BINDS/
+    // ABILITY_BINDS (see KEY_EVENT_NAMES) so the two can't drift; '['/']' (the #529 tab cycle)
+    // are gone with the tabs themselves.
+    for (const [loc, bind] of [...Object.entries(SKILL_BINDS), ...Object.entries(ABILITY_BINDS)]) {
+      const ev = KEY_EVENT_NAMES[bind.key];
+      if (!ev) continue;   // LMB/RMB (the arms) — mouse buttons, not keys; click the arm's tile
+      this.input.keyboard.on(`keydown-${ev}`, () => this._bindFocused(this.cols[0], loc));
+    }
 
     // #523: ESC always opens the shared pause menu. #529: openStats lets the pause menu's
     // dev-only STATS row reach back into THIS scene's StatsOverlay instance (outside dev,
@@ -254,46 +274,37 @@ export default class GarageScene extends Phaser.Scene {
   // again on every join, so an existing column reflows wider→narrower as the squad grows, and a
   // solo column always fills the whole width rather than sitting squished next to empty ones.
   _relayoutColumns() {
-    // catalogList and tabBarLayer are their own top-level containers (see _buildColumn — neither
-    // lives inside col.layer), so destroying col.layer alone would leak them (tabBarLayer sits at
-    // the shared bar's y, not colTop, and catalogList registers its own wheel/pointer listeners on
-    // the scene's input plugin). chassisColorMaskG (#532) is likewise never added to col.layer —
-    // it's an unparented mask source (see _buildChassisColorMask) — so it needs its own destroy too.
+    // catalogList is its own top-level container (see _buildColumn — it does not live inside
+    // col.layer), so destroying col.layer alone would leak it along with the wheel/pointer
+    // listeners it registers on the scene's input plugin. chassisColorMaskG (#532) is likewise
+    // never added to col.layer — it's an unparented mask source (see _buildChassisColorMask) — so
+    // it needs its own destroy too. (#607: the per-column tab strip container that also needed
+    // one here is gone with the tab system.)
     for (const col of this.cols) {
       col?.catalogList?.destroy();
-      col?.tabBarLayer?.destroy(true);
       col?.chassisColorMaskG?.destroy();
       col?.layer?.destroy(true);
     }
     this.cols = [];
     this.colW = Math.floor(this.W / this.session.count);
     this.colH = this.H - this.colTop;
-    const idxs = activeIndices(this.session);
-    idxs.forEach((i, pos) => this._buildColumn(i, pos === idxs.length - 1));
+    for (const i of activeIndices(this.session)) this._buildColumn(i);
   }
 
   // Build every element of column `i` from its own persistent mech slot. All coordinates are
-  // LOCAL to `col.layer` (whose position IS the column's screen offset) — EXCEPT `col.tabBarLayer`
-  // (#532), which sits at the shared top bar's own y (0) instead, since it renders IN that bar's
-  // row rather than below it. `isLast` says whether this is the rightmost active column, so its
-  // tab row knows to leave room for the bar's pinned SCRAP/Deploy chrome (see _buildLabTabRow).
-  _buildColumn(i, isLast) {
+  // LOCAL to `col.layer`, whose position IS the column's screen offset. (#607: the separate
+  // `col.tabBarLayer` that used to sit up in the shared top bar's own row is gone with the tab
+  // system it drew.)
+  _buildColumn(i) {
     const layer = this.add.container(i * this.colW, this.colTop);
-    // #529: `labTab` is this column's OWN active Mech Lab tab (chassis+color/weapon/ability/
-    // passive) — per-column, not scene-global, consistent with everything else in the
-    // simultaneous multi-cursor Garage being per-player. Starts on the weapon tab, matching the
-    // pre-#529 default (a weapon slot selected, its catalog showing).
-    const col = {
-      index: i, layer, selectedSlot: TILE_ORDER[0], labTab: LAB_TABS.findIndex((t) => t.id === 'weapon'),
-      // #540: D-pad up/down navigates the current tab's own catalog/list (item focus); D-pad
-      // left/right moves `selectedSlot` — the live "destination slot" cursor — among the current
-      // tab's own slot family (weapon: TILE_ORDER, ability: HUD_ABILITY_ORDER). Both axes are
-      // always live, no placement sub-mode. `listFocus` is the pad-cursor row index for the merged
-      // chassis+color tab's own combined row list (chassis rows then color rows) — the
-      // WeaponCardList catalog tracks its own focus internally (`col.catalogList`'s `_focus`), so
-      // this is only needed for the one tab that isn't a WeaponCardList.
-      listFocus: 0,
-    };
+    // #607: ONE cursor runs the whole catalog, and it lives in one of two places — `focusZone`
+    // says which. 'catalog' means the WeaponCardList owns it (its own internal `_focus`, spanning
+    // the ABILITIES and WEAPONS bands); 'list' means it's down in this column's own CHASSIS/COLOR
+    // rows, at `listFocus` (a single index across both: chassis rows first, color rows after).
+    // Per-column, not scene-global — same as every other piece of per-player state here, so each
+    // joined player keeps their own scroll position and own focused row (#505).
+    // The #529 `labTab` and #540 `selectedSlot` destination-slot cursor are both gone.
+    const col = { index: i, layer, focusZone: 'catalog', listFocus: 0 };
     this.cols[i] = col;
     col.mech = this.allMechs[PLAYER_MECH_KEYS[i]];
     col.textureKey = `garageMech${i}`;
@@ -336,37 +347,30 @@ export default class GarageScene extends Phaser.Scene {
     col.tileRefs = {};
     for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
 
-    // #532: the tab strip (chassis+color/weapon/ability/passive) used to sit ABOVE the catalog
-    // region, carved out of the top of `gl.catalog`'s own rect — it now lives up in the shared top
-    // bar's row instead (see `col.tabBarLayer`, built below), so the catalog area gets the FULL
-    // `gl.catalog` rect back rather than losing its top slice to the tab row.
+    // #607: the tab strip that #532 moved up into the shared top bar's row is GONE, along with
+    // `col.tabBarLayer` — there is nothing above the catalog any more, so it owns the FULL
+    // `gl.catalog` rect and the whole thing scrolls as one list.
     const catalogRect = gl.catalog;
-    // `col.tabBarLayer` is a SEPARATE top-level container from `col.layer` (which starts at
-    // `colTop`, i.e. below the shared bar) — it sits at this column's own x offset but y=0, and is
-    // depth-sorted above the bar's own background/Deploy button (see ui/tabBar.js) so the tab
-    // buttons read as part of that same row instead of floating behind it.
-    col.tabBarLayer = this.add.container(i * this.colW, 0).setDepth(51);
-    const tabY = (TAB_BAR_H - TAB_ROW_H) / 2;
-    const rightReserve = isLast ? TAB_ROW_RIGHT_RESERVE : 0;
-    const tabRowRect = {
-      x: 10, y: tabY, w: Math.max(140, this.colW - 20 - rightReserve), h: TAB_ROW_H,
-    };
-    this._buildLabTabRow(col, tabRowRect);
 
     // The catalog — the shared WeaponCardList (ui/weaponCardList.js), the SAME component the
     // standalone Weapon Lab tab uses, in its `compact` mode so a row of cards (name/category/
     // stats + a live-firing shot/beam preview per card) fits this column's width. It owns its
     // own top-level container rather than living inside col.layer, so it's positioned in WORLD
-    // coordinates (this column's own screen offset + the local catalog rect below). Refiltered/
-    // reselected whenever the selected slot or a mount changes, via _refreshCatalogList. Backs the
-    // WEAPON/ABILITY tabs (#529) — the same slot-filtered catalog mechanism as before, just now
-    // only shown while one of those two tabs is active (see _refreshLabTabUI). (A third PASSIVE
-    // tab existed briefly for #496's core-slot system; it's gone along with that system.)
+    // coordinates (this column's own screen offset + the local catalog rect below).
+    // #607: built ONCE with BOTH item bands (ABILITIES then WEAPONS) as sections — it is never
+    // refiltered per slot again, because there is no selected slot any more. That also settles
+    // #541 by construction: setIds/setSections (the only things that reset scroll) simply never
+    // run again for the life of the column, so browsing position survives everything.
+    // The highlighted cards are now every item mounted ANYWHERE in this column's build.
     col.catalogList = new WeaponCardList(this, {
       x: col.layer.x + catalogRect.x, y: col.layer.y + catalogRect.y, w: catalogRect.w, h: catalogRect.h, compact: true,
-      ids: this._eligibleIds(col.selectedSlot),
+      sections: [
+        { id: 'ability', label: 'ABILITIES', ids: Object.keys(ABILITIES) },
+        { id: 'weapon', label: 'WEAPONS', ids: this.catalogIds },
+      ],
       onSelect: (id) => this._clickCatalogItem(col, id),
-      selectedId: this._mountedIn(col, col.selectedSlot),
+      onHover: (_id, index) => this._focusCatalogRow(col, index, { scroll: false }),
+      onScroll: () => this._syncExtraScroll(col),
       // #506: abilities have no SCRAP-unlock data at all (shop.js's catalog is weapon-only) —
       // always unlocked and free to mount, so only a weapon id is ever gated here.
       isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
@@ -379,19 +383,24 @@ export default class GarageScene extends Phaser.Scene {
     // scrolled-out (masked but still input-live) card, regardless of which was constructed first.
     col.catalogList.root.setDepth(-1);
 
-    // #532: the merged CHASSIS+COLOR tab's own selection lists — a plain clickable row per
-    // PLAYER_CHASSIS_IDS entry (with a small live art preview, change 5), then a plain clickable
-    // row per MECH_SWATCHES entry (with its name, change 4) — both built into the SAME
-    // `catalogRect` (same rect the WeaponCardList catalog occupies), chassis rows first and color
-    // rows below, so switching tabs simply swaps which of the two catalog-area surfaces is
-    // visible. Both live INSIDE col.layer (unlike catalogList, which needs its own container for
-    // WeaponCardList's scroll/mask machinery) since they're simple, non-scrolling, fully
-    // custom-drawn lists. A shared clip mask keeps either section's overflow (if the column is too
-    // short to fit both in full) from bleeding into the loadout tile panel below.
+    // The CHASSIS and COLOR sections — a plain clickable row per PLAYER_CHASSIS_IDS entry (with a
+    // small live art preview, #532 change 5), then a plain clickable row per MECH_SWATCHES entry
+    // (with its name, #532 change 4). Both live INSIDE col.layer (unlike catalogList, which needs
+    // its own container for WeaponCardList's scroll/mask machinery) since they're simple,
+    // custom-drawn lists; a shared clip mask keeps them inside the catalog rect.
+    // #607: they are no longer a TAB that swaps places with the card list — they are the LAST TWO
+    // SECTIONS of the one continuous catalog, parked directly below the cards in the same scroll
+    // space. Their rows are laid out in that block's OWN coordinates (0 = the CHASSIS header) and
+    // the two containers are then translated as a unit by _syncExtraScroll, which the card list
+    // calls on every scroll change.
     const colorStartY = this._buildChassisList(col, catalogRect);
-    this._buildColorList(col, catalogRect, colorStartY);
+    const extraH = this._buildColorList(col, catalogRect, colorStartY);
     this._buildChassisColorMask(col, catalogRect);
-    this._refreshLabTabUI(col);
+    col.catalogList.setExtraHeight(extraH + CHASSIS_ROW_GAP);
+    this._syncExtraScroll(col);
+    // Start the cursor at the top of the list, and light up whatever this build already carries.
+    col.catalogList.setFocus(0);
+    this._refreshCatalogSelection(col);
 
     // The live mech preview — SQUARE, sized to the tile block's own height (both rows together),
     // sitting immediately LEFT of it as one centered pair (see garageColumnLayout). Built ONCE;
@@ -456,74 +465,33 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshReady(col);
   }
 
-  // ── Mech Lab tab system (#529) — chassis+color/weapon/ability/passive, per column ──────────────
-  // #532: the tab strip now lives in `col.tabBarLayer` (the shared top bar's own row — see
-  // _buildColumn), not `col.layer`. Mouse click + LB/RB (gamepad) + '['/']' (column 0 keyboard)
-  // all drive the same _setLabTab.
-  _buildLabTabRow(col, rect) {
-    col.labTabRefs = [];
-    const n = LAB_TABS.length;
-    const tabW = rect.w / n;
-    LAB_TABS.forEach((tab, idx) => {
-      const x = rect.x + idx * tabW;
-      const r = this.add.rectangle(x, rect.y, tabW - 2, rect.h, UI.btn).setOrigin(0, 0)
-        .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
-      const t = this.add.text(x + (tabW - 2) / 2, rect.y + rect.h / 2, tab.label, {
-        fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
-      }).setOrigin(0.5);
-      r.on('pointerover', () => { if (col.labTab !== idx) r.setFillStyle(UI.btnHover); });
-      r.on('pointerout', () => this._refreshLabTabUI(col));
-      r.on('pointerdown', () => this._setLabTab(col, idx));
-      col.tabBarLayer.add([r, t]);
-      col.labTabRefs.push({ rect: r, text: t });
-    });
+  // ── #607: the one continuous catalog's scroll glue ────────────────────────────────────────────
+  // The CHASSIS/COLOR rows aren't inside WeaponCardList's own scroller (they're this scene's own
+  // objects, in col.layer), so they have to be translated by hand to stay in the same scroll
+  // space as the cards. Called on every scroll change, via the list's `onScroll`.
+  _syncExtraScroll(col) {
+    if (!col?.chassisListLayer) return;
+    const rect = col.rects.catalog;
+    const top = rect.y + col.catalogList.cardsHeight() - col.catalogList.scrollY();
+    col.chassisListLayer.y = top;
+    col.colorListLayer.y = top;
+    // These rows scroll now, so a row scrolled out of the catalog rect lands somewhere else on
+    // screen still input-live (the clip mask hides it but doesn't stop hit-testing — the same
+    // trap `col.panelBlocker` exists for on the card side). Gate each row's hit area on actually
+    // being inside the rect.
+    for (const row of this._extraRows(col)) {
+      const y0 = top + row.top;
+      if (row.rect.input) row.rect.input.enabled = y0 + row.h > rect.y && y0 < rect.y + rect.h;
+    }
   }
 
-  // Repaint the tab row's highlight and swap which catalog-area surface (WeaponCardList /
-  // chassis list / color list) is visible for the column's current labTab. Called after every
-  // tab switch, and once at column build time.
-  _refreshLabTabUI(col) {
-    const tabId = LAB_TABS[col.labTab].id;
-    col.labTabRefs.forEach((ref, idx) => {
-      const on = idx === col.labTab;
-      ref.rect.setFillStyle(on ? UI.btnHover : UI.btn).setStrokeStyle(1, on ? UI.accent : UI.panelEdge);
-      ref.text.setColor(on ? UI.accent : UI.dim);
-    });
-    col.catalogList.root.setVisible(tabId === 'weapon' || tabId === 'ability');
-    // #532: chassis + color are now ONE merged tab — both lists show/hide together.
-    const showChassisColor = tabId === 'chassis';
-    col.chassisListLayer.setVisible(showChassisColor);
-    col.colorListLayer.setVisible(showChassisColor);
-    if (showChassisColor) { this._refreshChassisList(col); this._refreshColorList(col); }
+  // Every row below the cards, as ONE list: chassis rows first, then color rows — the order
+  // `col.listFocus` indexes into.
+  _extraRows(col) {
+    return [...(col.chassisRows ?? []), ...(col.colorSwatchRefs ?? [])];
   }
 
-  // Switch column `col`'s active tab. Landing on a slot-kind tab (weapon/ability/passive) whose
-  // kind doesn't match the currently-selected slot re-focuses a real slot of that kind (e.g.
-  // switching from ability→weapon lands on the first weapon slot, not an ability catalog under a
-  // weapon-slot highlight) — see ui/labTabs.js's TAB_DEFAULT_SLOT.
-  _setLabTab(col, tabIndex) {
-    const n = LAB_TABS.length;
-    col.labTab = ((tabIndex % n) + n) % n;
-    const tabId = LAB_TABS[col.labTab].id;
-    const defaultSlot = TAB_DEFAULT_SLOT[tabId];
-    if (defaultSlot && slotKind(col.selectedSlot) !== slotKind(defaultSlot)) col.selectedSlot = defaultSlot;
-    // #533: landing ON the merged chassis+color tab seeds its row cursor at the currently
-    // equipped chassis, so the very first A press (with no prior up/down) does something sane
-    // rather than acting on an arbitrary row 0.
-    if (tabId === 'chassis') this._syncListFocus(col);
-    this._refreshAllTiles(col);
-    this._refreshCatalogList(col);
-    this._refreshLabTabUI(col);
-  }
-
-  // LB/RB (gamepad) and '['/']' (column 0 keyboard) — cycle the column's own active tab.
-  _cycleLabTab(col, dir) {
-    if (!col) return;
-    Audio.ui('menuNav');
-    this._setLabTab(col, nextLabTab(col.labTab, dir));
-  }
-
-  // ── Merged CHASSIS+COLOR tab (#532) ──────────────────────────────────────────────────────────
+  // ── CHASSIS + COLOR sections ─────────────────────────────────────────────────────────────────
   // A plain clickable row per PLAYER_CHASSIS_IDS entry (mediumPlayer/strikerPlayer/colossusPlayer
   // — cosmetic-only variants, identical stats, see data/chassis/player/*.js). Re-enables the
   // chassis switcher that #248 (commit 7a3893a) disabled, scoped to just these three cosmetic
@@ -535,15 +503,18 @@ export default class GarageScene extends Phaser.Scene {
   // throwaway, unmounted Mech in that chassis, rather than inventing a new rendering approach.
   // Baked once per column (its own texture keys, `${col.textureKey}_chassisRow_<id>`) since the
   // three chassis shapes never change during a Garage visit.
+  // #607: every y here is relative to the START OF THE CHASSIS/COLOR BLOCK (0 = the CHASSIS
+  // header), not to the catalog rect — the block's screen position is whatever the shared scroll
+  // puts it at, and _syncExtraScroll applies that by moving the two containers as a unit.
   // Returns the y just below the chassis rows (where the color section starts).
   _buildChassisList(col, rect) {
     const rowH = CHASSIS_ROW_H, gap = CHASSIS_ROW_GAP;
     col.chassisListLayer = this.add.container(0, 0);
-    const header = this.add.text(rect.x, rect.y, 'CHASSIS', {
+    const header = this.add.text(rect.x, 0, 'CHASSIS', {
       fontFamily: 'monospace', fontSize: '10px', color: UI.dim,
     }).setOrigin(0, 0);
     col.chassisListLayer.add(header);
-    const rowsY = rect.y + LIST_SECTION_HEADER_H;
+    const rowsY = LIST_SECTION_HEADER_H;
     const previewScale = (rowH - 8) / 230;
     col.chassisRows = PLAYER_CHASSIS_IDS.map((id, idx) => {
       const y = rowsY + idx * (rowH + gap);
@@ -563,17 +534,19 @@ export default class GarageScene extends Phaser.Scene {
       r.on('pointerout', () => this._refreshChassisList(col));
       r.on('pointerdown', () => this._selectChassis(col, id));
       col.chassisListLayer.add([r, ...preview.children, t]);
-      return { id, rect: r, text: t };
+      // #607: `top`/`h` are what the shared cursor scrolls to and what _syncExtraScroll gates the
+      // row's hit area on.
+      return { id, rect: r, text: t, top: y, h: rowH };
     });
     col.layer.add(col.chassisListLayer);
     return rowsY + PLAYER_CHASSIS_IDS.length * (rowH + gap) + LIST_SECTION_GAP;
   }
 
-  // A static clip mask over the merged chassis+color tab's own rect (#532) — a safeguard against
-  // either section's rows spilling visually past the catalog area into the loadout tile panel
-  // below on a short column, since neither list scrolls (scrolling/D-pad list navigation for this
-  // tab is explicitly out of scope here — see #533). Built once per column; the rect is fixed at
-  // column-build time so, unlike WeaponCardList's scroll-driven mask, this never needs repainting.
+  // A static clip mask over the catalog rect (#532). #607: it is now load-bearing rather than a
+  // safeguard — these rows genuinely scroll (they're the last two sections of the one continuous
+  // catalog), so this is what keeps them from drawing outside the catalog area, exactly like
+  // WeaponCardList's own mask does for the cards. Built once per column; the rect is fixed at
+  // column-build time, so unlike the card list's mask this never needs repainting.
   _buildChassisColorMask(col, rect) {
     // Not added to the display list (scene.make, not scene.add) — a mask source only needs its
     // rendered pixels, never its own visible copy. Kept on `col` so _relayoutColumns can destroy
@@ -586,13 +559,14 @@ export default class GarageScene extends Phaser.Scene {
     col.colorListLayer.setMask(mask);
   }
 
-  // #533: `idx` is this row's position in the COMBINED chassis+color row list (chassis rows
-  // first, color rows after — see _syncListFocus/_navRow) — chassis rows occupy indices
-  // [0, chassisRows.length).
+  // `idx` is this row's position in the COMBINED chassis+color row list (chassis rows first,
+  // color rows after — see _extraRows/_navRow); chassis rows occupy [0, chassisRows.length).
+  // #607: the cursor only counts as being HERE when `focusZone` says so — it's one cursor shared
+  // with the card list above, so a focused card must leave these rows unhighlighted.
   _refreshChassisList(col) {
     col.chassisRows.forEach((row, idx) => {
       const on = col.mech.chassisId === row.id;
-      const focused = col.listFocus === idx;
+      const focused = col.focusZone === 'list' && col.listFocus === idx;
       row.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
         .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
       row.text.setColor(on ? UI.accent : UI.text);
@@ -610,21 +584,14 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshChassisList(col);
   }
 
-  // #533: seed the merged chassis+color tab's row-nav cursor at the currently equipped chassis
-  // row (index into the COMBINED chassis+color list — see _refreshChassisList) — called when a
-  // column's tab lands ON 'chassis' (_setLabTab). Doesn't touch the color rows: the chassis pick
-  // is the more likely thing to want to change next, and the cursor is only ONE index either way.
-  _syncListFocus(col) {
-    const idx = col.chassisRows.findIndex((row) => row.id === col.mech.chassisId);
-    col.listFocus = idx >= 0 ? idx : 0;
-  }
-
-  // ── The color section of the merged CHASSIS+COLOR tab (#532) ────────────────────────────────
+  // ── The COLOR section ───────────────────────────────────────────────────────────────────────
   // #532 (change 4): the swatch GRID is gone — this is now a navigable list of ROWS, each showing
   // the color's NAME (data/mechColors.js MECH_SWATCH_NAMES) alongside its swatch, so the picker is
   // identifiable at a glance instead of a bare grid of colour tiles. Same cycleSwatch model the
   // D-pad/arrow-key path already drives (_cycleColor, unchanged below) backs a direct row click too.
-  // `startY` is where _buildChassisList's own rows ended (plus its section gap).
+  // `startY` is where _buildChassisList's own rows ended (plus its section gap), in the same
+  // block-relative coordinates (#607). Returns the block's TOTAL height, which the card list
+  // needs to size the shared scroll range (`setExtraHeight`).
   _buildColorList(col, rect, startY) {
     col.colorListLayer = this.add.container(0, 0);
     const header = this.add.text(rect.x, startY, 'COLOR', {
@@ -646,19 +613,20 @@ export default class GarageScene extends Phaser.Scene {
       r.on('pointerout', () => this._refreshColorList(col));
       r.on('pointerdown', () => this._selectColor(col, hex));
       col.colorListLayer.add([r, sw, t]);
-      return { hex, rect: r, text: t };
+      return { hex, rect: r, text: t, top: y, h: rowH };
     });
     col.layer.add(col.colorListLayer);
+    return rowsY + MECH_SWATCHES.length * (rowH + gap);
   }
 
-  // #533: color rows sit AFTER every chassis row in the combined list — index `col.chassisRows.
-  // length + idx` — see _refreshChassisList's own note.
+  // Color rows sit AFTER every chassis row in the combined list — index `col.chassisRows.length +
+  // idx` — see _refreshChassisList's own note.
   _refreshColorList(col) {
     const current = mechColorFor(col.mech, col.index);
     const focusBase = col.chassisRows.length;
     col.colorSwatchRefs.forEach((swatch, idx) => {
       const on = swatch.hex === current;
-      const focused = col.listFocus === focusBase + idx;
+      const focused = col.focusZone === 'list' && col.listFocus === focusBase + idx;
       swatch.rect.setFillStyle(on || focused ? UI.btnHover : UI.btn)
         .setStrokeStyle(focused ? 2 : 1, focused ? UI.focus : on ? UI.accent : UI.panelEdge);
       swatch.text.setColor(on ? UI.accent : UI.text);
@@ -688,29 +656,33 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── Tiles (weapon/ability) ───────────────────────────────────────────────────────────────────
+  // #607: a tile no longer carries a `selected` (destination-slot cursor) highlight — that cursor
+  // is gone, because the button you press IS the slot. In its place each tile now SHOWS THAT
+  // BUTTON: the same pad glyph it fires with in the arena, straight out of SKILL_BINDS/
+  // ABILITY_BINDS, so "press LB to put this in that slot" is readable off the tile itself.
+  // Clicking a tile is the mouse's version of pressing its button — it binds whatever catalog row
+  // is currently focused (hovering a card is how the mouse focuses one).
+  _tileOpts(col, loc) {
+    const id = this._mountedIn(col, loc);
+    const bind = SKILL_BINDS[loc] ?? ABILITY_BINDS[loc];
+    return {
+      loc, itemId: id, selected: false, bindGlyph: bind?.pad ?? '',
+      emptyLabel: slotKind(loc) === 'weapon' ? 'weapon' : 'ability',
+      subtitle: id ? getItem(id).name : '',
+    };
+  }
+
   _drawColTile(col, rect) {
     const loc = rect.loc;
-    const id = this._mountedIn(col, loc);
-    const kind = slotKind(loc);
-    const refs = drawSkillTile(this, col.layer, rect, {
-      loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
-      emptyLabel: kind === 'weapon' ? 'weapon' : 'ability',
-      subtitle: id ? getItem(id).name : '',
-    });
-    refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._selectSlot(col, loc));
+    const refs = drawSkillTile(this, col.layer, rect, this._tileOpts(col, loc));
+    refs.bg.setInteractive({ useHandCursor: true }).on('pointerdown', () => this._bindFocused(col, loc));
     col.tileRefs[loc] = refs;
   }
 
   _refreshTile(col, loc) {
     const refs = col.tileRefs[loc];
     if (!refs) return;
-    const id = this._mountedIn(col, loc);
-    const kind = slotKind(loc);
-    updateSkillTile(refs, {
-      loc, itemId: id, selected: loc === col.selectedSlot, bindGlyph: '',
-      emptyLabel: kind === 'weapon' ? 'weapon' : 'ability',
-      subtitle: id ? getItem(id).name : '',
-    });
+    updateSkillTile(refs, this._tileOpts(col, loc));
   }
 
   _refreshAllTiles(col) {
@@ -718,108 +690,105 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── The catalog (WeaponCardList, compact) ────────────────────────────────────────────────────
-  _eligibleIds(loc) {
-    const kind = slotKind(loc);
-    if (kind === 'ability') return Object.keys(ABILITIES);
-    return this.catalogIds.filter((id) => {
-      if (!WEAPON_SLOTS.includes(loc)) return false;
-      if (getItem(id).category === 'melee' && !MELEE_LOCATIONS.includes(loc)) return false;
-      return true;
-    });
-  }
-
-  // Refilter the column's catalog to the currently-selected slot's eligible items and highlight
-  // whatever's mounted there — called on a slot change (mouse or pad/keyboard), a tab switch,
-  // and after any mount/unmount.
-  // #541: only actually REBUILDS the card list (setIds — which resets scroll to the top) when
-  // the eligible set genuinely changed content (e.g. crossing from a melee-only arm slot into a
-  // non-melee slot, or switching tabs entirely — weapon/ability catalogs are disjoint id sets).
-  // Switching between two slots that share the same eligible catalog (the common case:
-  // two ordinary weapon slots, or the two ability slots) is the SAME list, just a different
-  // "what's mounted here" highlight — so it now only repaints the selection/focus highlight in
-  // place, leaving scroll exactly where the player left it. A genuine list-content change still
-  // resets scroll to the top; that's a materially different list, not a browsing position worth
-  // preserving.
-  _refreshCatalogList(col) {
-    const ids = this._eligibleIds(col.selectedSlot);
-    const changed = !col.catalogList.sameIds(ids);
-    if (changed) col.catalogList.setIds(ids);
-    const mountedId = this._mountedIn(col, col.selectedSlot);
-    col.catalogList.setSelected(mountedId);
-    // #533: seed the pad-nav focus cursor on whatever's currently mounted (or the first row, if
-    // the slot's empty) so the very first D-pad/arrow-key A-press has a real row to act on
-    // without requiring an up/down press first. Only do this when the list was actually rebuilt
-    // (setIds always resets focus to -1) — when it wasn't, the player is still looking at the
-    // same list at the same scroll position, and a slot switch is not itself a reason to also
-    // relocate their focus cursor onto whatever happens to be mounted in the new slot (#541
-    // follow-up: this used to still snap the cursor even after scroll-snapping was fixed).
-    if (changed) {
-      const idx = col.catalogList.indexOfId(mountedId);
-      col.catalogList.setFocus(idx >= 0 ? idx : 0);
+  // #607: the catalog is no longer FILTERED to a selected slot — it's the whole set, always, in
+  // two labelled bands, built once (see _buildColumn). The gold "you have this" highlight is now
+  // every item mounted anywhere in this column's build, rather than the one item in the one
+  // selected slot. Nothing here ever rebuilds the card list, so nothing here can reset scroll —
+  // which is #541's guarantee, now structural instead of conditional.
+  _refreshCatalogSelection(col) {
+    const mounted = new Set();
+    for (const loc of ALL_SLOTS) {
+      const id = this._mountedIn(col, loc);
+      if (id) mounted.add(id);
     }
+    col.catalogList.setSelected(mounted);
   }
 
-  // #529: a tile click also flips the column's active tab to whichever tab that slot's kind
-  // belongs to (weapon/ability/passive) — so clicking, say, an ability tile while the weapon
-  // catalog is showing switches straight to the ability tab/catalog, keeping the always-visible
-  // tile row and the catalog beneath it in sync no matter which one you interact with first.
-  _selectSlot(col, loc) {
+  // ── #607: ONE cursor, four sections, bind-by-slot-button ──────────────────────────────────────
+  // Supersedes #533's select-then-place and #540's two-axis slot-cursor model wholesale. D-pad
+  // up/down (_navRow) runs a single cursor straight down ABILITIES → WEAPONS → CHASSIS → COLOR,
+  // crossing every boundary; D-pad left/right (_navSection) jumps section to section. There is no
+  // destination-slot cursor at all — a bind names its slot by WHICH BUTTON was pressed
+  // (_bindFocused), and A only confirms a chassis/color row (_confirm).
+
+  // Move the cursor to a card, wherever it currently is. Also what a mouse hover does.
+  _focusCatalogRow(col, idx, opts = {}) {
+    if (!col || idx < 0) return;
+    col.focusZone = 'catalog';
+    col.catalogList.setFocus(idx, opts);
+    this._refreshExtraFocus(col);
+  }
+
+  _refreshExtraFocus(col) {
+    if (!col.chassisRows || !col.colorSwatchRefs) return;   // called before the block exists yet
+    this._refreshChassisList(col);
+    this._refreshColorList(col);
+  }
+
+  // Move the cursor onto chassis/color row `idx` (index across BOTH, chassis first), taking it
+  // off the card list and scrolling it into view.
+  _focusExtraRow(col, idx) {
+    col.focusZone = 'list';
+    col.listFocus = idx;
+    col.catalogList.clearFocus();
     Audio.ui('menuNav');
-    col.selectedSlot = loc;
-    const tab = labTabForSlotKind(slotKind(loc));
-    if (tab != null) col.labTab = tab;
-    this._refreshAllTiles(col);
-    this._refreshCatalogList(col);
-    this._refreshLabTabUI(col);
+    this._refreshExtraFocus(col);
+    const row = this._extraRows(col)[idx];
+    if (row) col.catalogList.scrollToContent(col.catalogList.cardsHeight() + row.top, row.h);
   }
 
-  // ── #533: D-pad/keyboard nav — tab-cycle, row-navigate, select-then-place ──────────────────
-  // #540: two always-live, independent axes — up/down (_navRow) picks WHICH ITEM in the current
-  // tab's own list, left/right (_navSlot) picks WHICH SLOT `col.selectedSlot` — the destination a
-  // bind (A) or clear (B) acts on. No mode-switching, no two-step placement (that was #533's
-  // flow, dropped here). Reuses the loadout tile row's existing `selected` (gold) highlight —
-  // driven by `col.selectedSlot`, the same visual a mouse-selected tile has always shown — as the
-  // always-on slot cursor, rather than inventing a new one.
-
-  // Left/right: move the live slot cursor within the current tab's own slot family. Weapon tab has
-  // 4 slots (TILE_ORDER), ability tab has 2 (HUD_ABILITY_ORDER). Chassis+color and passive tabs
-  // have exactly one conceptual "slot" each (a single dedicated pick) — nothing to cycle, so this
-  // is a no-op there, consistent with how #533 already treated those tabs as direct-select only.
-  _navSlot(col, dir) {
-    if (!col) return;
-    const tabId = LAB_TABS[col.labTab].id;
-    const family = tabId === 'weapon' ? TILE_ORDER : tabId === 'ability' ? HUD_ABILITY_ORDER : null;
-    if (!family || family.length < 2) return;
-    const idx = family.indexOf(col.selectedSlot);
-    this._selectSlot(col, family[stepIndex(idx >= 0 ? idx : 0, dir, family.length)]);
-  }
-
+  // Up/down — one continuous run through every row in the column, cards and chassis/color rows
+  // alike. Clamped at both ends (it's a list, not a carousel), same as the card list's own
+  // moveFocus has always been.
   _navRow(col, dir) {
     if (!col) return;
-    const tabId = LAB_TABS[col.labTab].id;
-    if (tabId === 'chassis') {
-      const total = col.chassisRows.length + col.colorSwatchRefs.length;
-      col.listFocus = stepIndex(col.listFocus, dir, total, { wrap: false });
-      Audio.ui('menuNav');
-      this._refreshChassisList(col);
-      this._refreshColorList(col);
-    } else {
-      col.catalogList.moveFocus(dir);   // weapon/ability/passive — the shared WeaponCardList cursor
+    const n = col.catalogList.cardCount();
+    const rows = this._extraRows(col);
+    if (col.focusZone === 'catalog') {
+      // Stepping off the LAST card is what crosses into the chassis/color rows below.
+      if (dir > 0 && col.catalogList.focusIndex() >= n - 1 && rows.length) { this._focusExtraRow(col, 0); return; }
+      col.catalogList.moveFocus(dir);
+      return;
     }
+    const j = col.listFocus + dir;
+    if (j < 0) {   // back up off the first chassis row into the last card
+      col.focusZone = 'catalog';
+      Audio.ui('menuNav');
+      col.catalogList.setFocus(n - 1);
+      this._refreshExtraFocus(col);
+      return;
+    }
+    if (j >= rows.length) return;
+    this._focusExtraRow(col, j);
   }
 
-  // The associated select button (A). Chassis/color rows equip directly off the list cursor —
-  // there's only one place either can go. Weapon/ability/passive tabs bind the list-focused
-  // catalog item straight into the currently slot-selected destination, one press.
-  _confirmOrSelect(col) {
+  // Which of CATALOG_SECTIONS the cursor is sitting in right now.
+  _currentSection(col) {
+    if (col.focusZone === 'list') {
+      return col.listFocus < col.chassisRows.length
+        ? CATALOG_SECTIONS.indexOf('chassis') : CATALOG_SECTIONS.indexOf('color');
+    }
+    const id = col.catalogList.sectionIdOf(Math.max(0, col.catalogList.focusIndex()));
+    const at = CATALOG_SECTIONS.indexOf(id);
+    return at >= 0 ? at : 0;
+  }
+
+  // Left/right — jump to the next/previous section's first row, wrapping.
+  _navSection(col, dir) {
     if (!col) return;
-    const tabId = LAB_TABS[col.labTab].id;
-    if (tabId === 'chassis') { this._activateListFocus(col); return; }
-    this._activateCatalogFocus(col);
+    const next = stepIndex(this._currentSection(col), dir, CATALOG_SECTIONS.length);
+    const id = CATALOG_SECTIONS[next];
+    if (id === 'chassis') { this._focusExtraRow(col, 0); return; }
+    if (id === 'color') { this._focusExtraRow(col, col.chassisRows.length); return; }
+    Audio.ui('menuNav');
+    this._focusCatalogRow(col, col.catalogList.sectionFirstIndex(id));
   }
 
-  // Direct-select whichever row the merged chassis+color tab's cursor is on.
-  _activateListFocus(col) {
+  // A — confirms the focused CHASSIS or COLOR row, and ONLY that. Deliberately does nothing in
+  // the ABILITIES/WEAPONS bands: there is no A-bind fallback (#607), those bind off their slot's
+  // own button instead.
+  _confirm(col) {
+    if (!col || col.focusZone !== 'list') return;
     if (col.listFocus < col.chassisRows.length) {
       this._selectChassis(col, col.chassisRows[col.listFocus].id);
       return;
@@ -828,12 +797,18 @@ export default class GarageScene extends Phaser.Scene {
     if (swatch) this._selectColor(col, swatch.hex);
   }
 
-  // The catalog's own pad-focused row — same purchase gate + mount call a direct mouse click on
-  // that card already uses (_clickCatalogItem).
-  _activateCatalogFocus(col) {
+  // #607: THE bind. `loc` came from whichever slot button was pressed (pad LT/LB/RB/RT/X/Y, the
+  // keyboard mirror, or a click on that slot's own tile) — so a weapon button pressed while an
+  // ability row is focused (or the reverse) does NOTHING rather than mis-mounting, and a
+  // chassis/color row can't be bound into a slot at all. A locked weapon buys instead of mounting,
+  // the same gate a card click used to carry.
+  _bindFocused(col, loc) {
+    if (!col || col.focusZone !== 'catalog') return;
     const id = col.catalogList.focusedId();
     if (id == null) return;
-    this._clickCatalogItem(col, id);
+    if ((isWeapon(id) ? 'weapon' : 'ability') !== slotKind(loc)) return;
+    if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
+    this._mountInto(col, loc, id);
   }
 
   _mountedIn(col, loc) {
@@ -842,19 +817,22 @@ export default class GarageScene extends Phaser.Scene {
     return col.mech.usedSlots(loc) >= 1 ? col.mech.mounts[loc][0] : null;
   }
 
+  // #607: clicking a card no longer mounts anything — it just moves the cursor there (the mouse's
+  // equivalent of D-pad-ing onto the row). The bind then comes from pressing that slot's button,
+  // or clicking that slot's tile.
   _clickCatalogItem(col, id) {
-    if (isWeapon(id) && !this.unlocked.has(id)) { this._purchase(id); return; }
-    this._mountInto(col, col.selectedSlot, id);
+    this._focusCatalogRow(col, col.catalogList.indexOfId(id), { scroll: false });
   }
 
-  // A weapon slot always mounts/replaces (re-picking the mounted item is a no-op, and there's no
-  // unmount — a weapon slot must stay filled to deploy); an ability slot is optional, so
-  // re-picking the mounted item UNMOUNTS it instead.
+  // Mount/replace whatever is in `loc`. #607: re-binding the item already in an ability slot is
+  // now a plain no-op — it used to UNMOUNT (the #506-era "abilities are optional" toggle), and
+  // this issue's confirmed scheme has no unbind gesture at all: you replace a slot's contents by
+  // binding something else there, and Ready already demands a full loadout (#532).
   _mountInto(col, loc, itemId) {
     const mech = col.mech, kind = slotKind(loc);
     if (kind === 'ability') {
       const prevItem = this._mountedIn(col, loc);
-      if (prevItem === itemId) { this._unmountFrom(col, loc); return; }
+      if (prevItem === itemId) return;
       if (prevItem) mech.unmountAbility(loc);
       const res = mech.mountAbility(loc, itemId);
       if (!res.ok) {
@@ -875,23 +853,13 @@ export default class GarageScene extends Phaser.Scene {
     this._onMechChanged(col);
   }
 
-  // Pad B / the ability "clear" path — weapon slots have no unmount at all (see above).
-  _unmountFrom(col, loc) {
-    const kind = slotKind(loc);
-    if (kind === 'ability') col.mech.unmountAbility(loc);
-    else return;
-    Audio.ui('equip');
-    this._onMechChanged(col);
-  }
-
   _onMechChanged(col) {
     reskinMech(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     this._refreshAllTiles(col);
-    // Just the highlighted card, not a full setIds() rebuild — the eligible set for the
-    // currently-selected slot doesn't change on a mount/unmount, and rebuilding would reset the
-    // list's scroll position and interrupt every card's live-fire preview loop for no reason.
-    col.catalogList.setSelected(this._mountedIn(col, col.selectedSlot));
+    // Just the highlighted cards, never a rebuild — a rebuild would reset the list's scroll
+    // position and interrupt every card's live-fire preview loop for no reason.
+    this._refreshCatalogSelection(col);
     // #532: a mount/unmount can flip column 0's full-loadout completeness, which the pinned
     // Deploy/Ready button's greyed-out state depends on (_refreshHeader) — repaint it live rather
     // than only on the next ready-toggle/join.
@@ -937,7 +905,7 @@ export default class GarageScene extends Phaser.Scene {
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
     // The PLAYER # label is painted in the identity colour — repaint it in place.
     col.headerLabel?.setColor(hexColor(next));
-    // #529: keep the color tab's own swatch-grid highlight in sync, in case it's the active tab.
+    // Keep the COLOR section's own row highlight in sync — it's always on screen now (#607).
     this._refreshColorList(col);
   }
 
@@ -1016,18 +984,23 @@ export default class GarageScene extends Phaser.Scene {
 
   // ── Per-player pad controls ──────────────────────────────────────────────────────────────────
   // Every joined player's OWN pad (index i) drives ONLY their own column, entirely independent of
-  // every other player's. #540 rework (supersedes #533's placement flow and #539's trigger
-  // quick-mount): LB/RB cycle the column's own Mech Lab tab (chassis+color/weapon/ability/passive
-  // — column 0's keyboard '['/']' does the same, see _cycleLabTab); LT/RT do nothing in the
-  // Garage. D-pad up/down navigates the current tab's own list — which ITEM is focused (_navRow,
-  // unchanged from #533). D-pad left/right moves `col.selectedSlot` — which SLOT a bind targets —
-  // always live, no sub-mode to enter first (_navSlot). A binds the list-focused item into the
-  // slot-selected destination in one press (_confirmOrSelect → _activateCatalogFocus); B unbinds
-  // whatever's in the selected slot (_unmountFrom — a no-op on weapon slots, which always
-  // mount/replace and have no unmount). SELECT and START both toggle ready — START is freed up
-  // for this in the Garage specifically (padStart: false on wirePauseMenu, above) rather than
-  // opening the shared pause menu the way it does everywhere else (see PauseMenuScene.js); ESC
-  // (keyboard) still reaches the pause menu here for STATS/AUDIO/ART/settings access.
+  // every other player's.
+  //
+  // #607 rework (supersedes #540's, which superseded #533's; restores #539's spirit):
+  //   LT / LB / RB / RT  BIND the focused catalog row into that slot — the exact button that
+  //                      FIRES that slot in the arena (SKILL_BINDS). LB/RB are available because
+  //                      tab-cycling is gone with the tabs themselves.
+  //   X / Y              the same, for the two ability slots (ABILITY_BINDS).
+  //   D-pad up/down      ONE cursor down the whole catalog, across section boundaries (_navRow).
+  //   D-pad left/right   jump to the next/previous SECTION (_navSection). No slot cursor: #540's
+  //                      D-pad destination-slot cursor is gone, made redundant by the binds above.
+  //   A                  confirms a CHASSIS or COLOR row only (_confirm) — no A-bind fallback.
+  //   B                  nothing. There is no unbind gesture (#607): you replace a slot by
+  //                      binding something else into it.
+  // SELECT and START both toggle ready — START is freed up for this in the Garage specifically
+  // (padStart: false on wirePauseMenu, above) rather than opening the shared pause menu the way it
+  // does everywhere else (see PauseMenuScene.js); ESC (keyboard) still reaches the pause menu here
+  // for STATS/AUDIO/ART/settings access.
   update(time, delta) {
     this._updateJoin();
     // Ticks every column's catalog — the live shot/beam preview loop each card runs — regardless
@@ -1043,26 +1016,26 @@ export default class GarageScene extends Phaser.Scene {
       const e = this.padEdges[i];
       if (!col || !e.pad()) continue;
       if (e.pressed(PAD.SELECT) || e.pressed(PAD.START)) { this._toggleReady(i); continue; }
-      // Bumpers cycle tabs; triggers move the live slot cursor (weapon/ability sub-items). D-pad
-      // left/right is one more way to move the slot cursor, same as the triggers.
-      if (e.pressed(PAD.LB)) { this._cycleLabTab(col, -1); continue; }
-      if (e.pressed(PAD.RB)) { this._cycleLabTab(col, 1); continue; }
-      if (e.pressed(PAD.DPAD_LEFT)) { this._navSlot(col, -1); continue; }
-      if (e.pressed(PAD.DPAD_RIGHT)) { this._navSlot(col, 1); continue; }
+      // #607: the six BIND buttons, straight off the arena's own bind tables. Every one is polled
+      // every frame (PadEdges only baselines an index on the frames it's actually read, so
+      // short-circuiting out of this loop would leave the unread ones able to fire a stale edge
+      // later) and only the first match acts.
+      let bindLoc = null;
+      for (const b of PAD_BIND_SLOTS) if (e.pressed(b.button) && !bindLoc) bindLoc = b.loc;
+      if (bindLoc) { this._bindFocused(col, bindLoc); continue; }
+      if (e.pressed(PAD.DPAD_LEFT)) { this._navSection(col, -1); continue; }
+      if (e.pressed(PAD.DPAD_RIGHT)) { this._navSection(col, 1); continue; }
       if (e.pressed(PAD.DPAD_UP)) { this._navRow(col, -1); continue; }
       if (e.pressed(PAD.DPAD_DOWN)) { this._navRow(col, 1); continue; }
-      if (e.pressed(PAD.LT)) { this._navSlot(col, -1); continue; }
-      if (e.pressed(PAD.RT)) { this._navSlot(col, 1); continue; }
-      if (e.pressed(PAD.A)) { this._confirmOrSelect(col); continue; }
-      if (e.pressed(PAD.B)) { this._unmountFrom(col, col.selectedSlot); continue; }
-      // The left stick mirrors the D-pad exactly (up/down row-nav, left/right slot-nav), with
+      if (e.pressed(PAD.A)) { this._confirm(col); continue; }
+      // The left stick mirrors the D-pad exactly (up/down row-nav, left/right section jump), with
       // the same auto-repeat cadence padNav.js's DirRepeater already gives every other held-
       // direction control in this scene.
       const ls = e.pad()?.leftStick;
       const dir = ls ? dominantDir(ls.x, ls.y) : null;
       const step = this.stickRepeat[i].step(dir, time);
-      if (step === 'left') this._navSlot(col, -1);
-      else if (step === 'right') this._navSlot(col, 1);
+      if (step === 'left') this._navSection(col, -1);
+      else if (step === 'right') this._navSection(col, 1);
       else if (step === 'up') this._navRow(col, -1);
       else if (step === 'down') this._navRow(col, 1);
     }
