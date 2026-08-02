@@ -233,7 +233,19 @@ export default class ArenaScene extends Phaser.Scene {
     // underneath the menu. The MOVEMENT row flips EVERY live player's legacyMovement together
     // (not just the one who opened the menu) — a co-op nuance the issue didn't specify, called
     // here for simplicity/symmetry with it being a shared menu, not a per-player one.
-    wirePauseMenu(this, { pauseAlso: ['HudScene'], getPlayers: () => playersOf(this) });
+    // #625: the four dev actions that used to be bound to this scene's D-pad now live in the
+    // pause menu (dev builds only — see pauseMenu.js's DEV_ARENA_ROWS). The keyboard binds above
+    // ([ ] R N) are unchanged; only the pad D-pad bindings went away.
+    wirePauseMenu(this, {
+      pauseAlso: ['HudScene'],
+      getPlayers: () => playersOf(this),
+      arenaDebug: {
+        spawnEnemy: () => this._spawnEnemyDebug(),
+        resetEnemies: () => this._resetEnemies(),
+        toggleAi: (which) => this._toggleAi(which),
+        aiState: () => ({ move: this.enemyMove, fire: this.enemyFire }),
+      },
+    });
     // #99: explicit depths (DEPTH.* — shared.js) instead of relying on scene add-order, which
     // is what let napalm's burning-ground decal (drawn into `projFx`, below) paint over the
     // player/enemy views created earlier in create(). `groundFx` is its own low, ground-hugging
@@ -381,7 +393,7 @@ export default class ArenaScene extends Phaser.Scene {
     // #348: the hard-stop leash + the shared camera anchor, applied AFTER everyone has moved.
     this._updateCoopCamera();
 
-    // ── One-shot pad buttons (#28 AI toggles). #252: the manual R3/T drop-lock action is
+    // ── One-shot pad buttons. #252: the manual R3/T drop-lock action is
     // retired — the lock has no maintained state to escape any more, it simply follows
     // convergence's live pick every frame, so there's nothing left to "drop." ──
     // #407: B no longer returns to garage (it's now an additional dash trigger, see Controls.js).
@@ -391,10 +403,9 @@ export default class ArenaScene extends Phaser.Scene {
     // (`toGarage()`) as the G key and the pause menu's own manual-exit paths.
     if (this.padEdges.pressed(PAD.SELECT)) { this.toGarage(); return; }
     if (this.padEdges.pressed(PAD.A)) this._onInteractPressed?.();   // #517: pad A's interact bind
-    if (this.padEdges.pressed(PAD.DPAD_UP)) this._spawnEnemyDebug();    // ↑ add enemy (#39)
-    if (this.padEdges.pressed(PAD.DPAD_DOWN)) this._resetEnemies();     // ↓ reset enemies (#39)
-    if (this.padEdges.pressed(PAD.DPAD_LEFT)) this._toggleAi('move');   // ← toggle move (#28)
-    if (this.padEdges.pressed(PAD.DPAD_RIGHT)) this._toggleAi('fire');  // → toggle fire (#28)
+    // #625: the D-pad's four dev bindings (add enemy / reset enemies / toggle AI move / toggle AI
+    // fire) moved into the pause menu's dev rows. The D-pad is deliberately UNBOUND in the arena
+    // now — nothing was repurposed onto it.
     // ── Indirect-fire lock (#62, rework #252): mirrors direct-fire convergence's live pick
     // instantly (no charge-up, no maintain timer) — blind fire onto the target's last-known/
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing
