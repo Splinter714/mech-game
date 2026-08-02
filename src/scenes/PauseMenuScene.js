@@ -23,6 +23,9 @@
 //                 ['HudScene'], its permanently-launched overlay).
 //   getPlayers  — () => [...players] for the MOVEMENT row (Arena/Base only; omitted elsewhere,
 //                 which reads as "no live mech to toggle" and disables that row).
+//   arenaDebug  — #625: { spawnEnemy, resetEnemies, toggleAi, aiState } — the four dev actions
+//                 that used to be bound to the arena's D-pad. Arena-only (nothing else has
+//                 enemies on the field); its presence is what surfaces those dev rows at all.
 import Phaser from 'phaser';
 import { PadEdges, PAD } from '../input/Controls.js';
 import { Audio } from '../audio/index.js';
@@ -30,10 +33,12 @@ import { applyMovementToggle } from './arena/shared.js';
 import { Slider } from '../ui/slider.js';
 import { dominantDir, DirRepeater } from '../ui/padNav.js';
 import {
-  DEV_NAV_ROWS, pauseRowIds, toggleRowLabel, navRowLabel, movementRowLabel, movementRowEnabled,
+  DEV_NAV_ROWS, DEV_ARENA_ROWS, pauseRowIds, toggleRowLabel, navRowLabel, movementRowLabel,
+  movementRowEnabled, actionRowLabel, aiToggleRowLabel,
 } from '../data/pauseMenu.js';
 
 const NAV_ROW_ID_SET = new Set(DEV_NAV_ROWS);
+const ARENA_ROW_ID_SET = new Set(DEV_ARENA_ROWS);
 import {
   loadShowVersion, saveShowVersion, loadShowPerf, saveShowPerf,
   loadShowControlMethod, saveShowControlMethod, loadShowAiDebug, saveShowAiDebug,
@@ -80,7 +85,14 @@ export default class PauseMenuScene extends Phaser.Scene {
     // STATS row exist at all (see pauseRowIds's `hasStats`).
     this._dev = !!data.dev;
     this._openStats = typeof data.openStats === 'function' ? data.openStats : null;
-    this._rowIds = pauseRowIds({ dev: this._dev, hasStats: !!this._openStats });
+    // #625: the four arena dev actions that used to live on the arena's D-pad. Supplied only by
+    // ArenaScene (see its wirePauseMenu call), exactly like `openStats` is Garage-only — its mere
+    // presence is what makes those rows exist at all (pauseRowIds's `hasArenaDebug`), so pausing
+    // in the Garage/Base/labs never shows an enemy action there's no field for.
+    this._arenaDebug = (data.arenaDebug && typeof data.arenaDebug === 'object') ? data.arenaDebug : null;
+    this._rowIds = pauseRowIds({
+      dev: this._dev, hasStats: !!this._openStats, hasArenaDebug: !!this._arenaDebug,
+    });
     this._cursor = 0;
   }
 
@@ -93,7 +105,12 @@ export default class PauseMenuScene extends Phaser.Scene {
 
     this.add.rectangle(0, 0, this.W, this.H, UI.backdrop, 0.72).setOrigin(0, 0);
 
-    const panelH = this._rowIds.length * (ROW_H + ROW_GAP) - ROW_GAP + 96;
+    // #625: a dev build now stacks up to 13 rows, which at the full 40+10 pitch can be taller
+    // than a short browser window (the panel would centre off the top/bottom edge). Shrink the
+    // row pitch just enough to fit, down to a readable floor; the normal case is unchanged.
+    const { rowH, rowGap } = this._fitRows(this._rowIds.length);
+    this._rowH = rowH;
+    const panelH = this._rowIds.length * (rowH + rowGap) - rowGap + 96;
     const panelX = (this.W - ROW_W - 48) / 2;
     const panelY = (this.H - panelH) / 2;
     this.add.rectangle(panelX, panelY, ROW_W + 48, panelH, UI.panel).setOrigin(0, 0)
@@ -107,7 +124,7 @@ export default class PauseMenuScene extends Phaser.Scene {
     let y = panelY + 64;
     for (const id of this._rowIds) {
       this._rows.push(this._buildRow(id, rowX, y));
-      y += ROW_H + ROW_GAP;
+      y += rowH + rowGap;
     }
 
     this.add.text(this.W / 2, panelY + panelH - 24, 'ESC / START — RESUME', {
@@ -123,24 +140,36 @@ export default class PauseMenuScene extends Phaser.Scene {
     this._highlight();
   }
 
+  // #625: the row pitch that keeps `n` rows (plus the panel's 96px of title/footer chrome) inside
+  // the window with a small margin — the full 40+10 whenever it fits, scaled down proportionally
+  // (never past ~70%) when it doesn't.
+  _fitRows(n) {
+    const avail = this.H - 24 - 96;
+    const needed = n * (ROW_H + ROW_GAP) - ROW_GAP;
+    if (needed <= avail || avail <= 0) return { rowH: ROW_H, rowGap: ROW_GAP };
+    const k = Math.max(0.7, avail / needed);
+    return { rowH: Math.round(ROW_H * k), rowGap: Math.max(2, Math.round(ROW_GAP * k)) };
+  }
+
   // One clickable row: a background rect + label text, both swapped out per-frame by
   // `_refreshRows` (label text) and mouse hover / `_highlight` (rect fill/stroke).
   // #558: VOLUME is the one row that isn't a plain label — it embeds an actual Slider widget
   // (ui/slider.js, the same component the dev AUDIO tab's tuner uses) instead of ON/OFF text.
   _buildRow(id, x, y) {
-    const rect = this.add.rectangle(x, y, ROW_W, ROW_H, UI.row).setOrigin(0, 0)
+    const rowH = this._rowH ?? ROW_H;
+    const rect = this.add.rectangle(x, y, ROW_W, rowH, UI.row).setOrigin(0, 0)
       .setStrokeStyle(1, UI.panelEdge).setInteractive({ useHandCursor: true });
     rect.on('pointerover', () => { this._cursor = this._rowIds.indexOf(id); this._highlight(); });
     const row = { id, rect, enabled: true };
     if (id === 'volume') {
       row.slider = new Slider(this, {
-        x: x + 12, y: y + 10, w: ROW_W - 24, labelW: 60, valueW: 34,
+        x: x + 12, y: y + Math.round((rowH - 20) / 2), w: ROW_W - 24, labelW: 60, valueW: 34,
         label: 'VOLUME', min: 0, max: 1, step: 0.05,
         value: loadMasterVolume(),
         onChange: (v) => this._setVolume(v),
       });
     } else {
-      row.label = this.add.text(x + 16, y + ROW_H / 2, '', {
+      row.label = this.add.text(x + 16, y + rowH / 2, '', {
         fontFamily: 'monospace', fontSize: '14px', color: UI.text,
       }).setOrigin(0, 0.5);
       rect.on('pointerdown', () => this._activate(id));
@@ -171,6 +200,18 @@ export default class PauseMenuScene extends Phaser.Scene {
         // #529: AUDIO/ART/STATS — static labels, no ON/OFF state; always enabled (their mere
         // presence in this._rowIds already means they're relevant, see pauseRowIds).
         row.label.setText(navRowLabel(row.id)).setColor(UI.text);
+        row.enabled = true;
+      } else if (ARENA_ROW_ID_SET.has(row.id)) {
+        // #625: SPAWN/RESET are static one-shot actions; AI MOVE/FIRE mirror the paused arena's
+        // own live `enemyMove`/`enemyFire` flags (read back through `aiState`, not the registry,
+        // which the arena only republishes from its paused-out update loop).
+        if (row.id === 'aiMove' || row.id === 'aiFire') {
+          const ai = this._arenaDebug?.aiState?.() ?? {};
+          row.label.setText(aiToggleRowLabel(row.id, row.id === 'aiMove' ? ai.move : ai.fire));
+        } else {
+          row.label.setText(actionRowLabel(row.id));
+        }
+        row.label.setColor(UI.text);
         row.enabled = true;
       } else {
         const t = TOGGLE_ROWS[row.id];
@@ -212,6 +253,14 @@ export default class PauseMenuScene extends Phaser.Scene {
     Audio.ui('menuNav');
     if (id === 'movement') {
       for (const p of this._getPlayers?.() ?? []) applyMovementToggle(p, { movementTogglePressed: true });
+    } else if (ARENA_ROW_ID_SET.has(id)) {
+      // #625: live arena dev actions, same shape as MOVEMENT above — reach into the PAUSED
+      // ArenaScene through the accessors it handed us at launch and mutate its state directly.
+      // A spawn/reset lands immediately (the paused scene still renders); the AI toggles take
+      // effect the moment its update loop resumes.
+      if (id === 'spawnEnemy') this._arenaDebug?.spawnEnemy?.();
+      else if (id === 'resetEnemies') this._arenaDebug?.resetEnemies?.();
+      else this._arenaDebug?.toggleAi?.(id === 'aiMove' ? 'move' : 'fire');
     } else {
       const t = TOGGLE_ROWS[id];
       const next = this.registry.get(t.channel) !== true;
@@ -293,7 +342,7 @@ export function wirePauseMenu(scene, opts = {}) {
     const pauseAlso = opts.pauseAlso ?? [];
     scene.scene.launch('PauseMenuScene', {
       returnKey: scene.scene.key, pauseAlso, getPlayers: opts.getPlayers,
-      dev: import.meta.env.DEV, openStats: opts.openStats,
+      dev: import.meta.env.DEV, openStats: opts.openStats, arenaDebug: opts.arenaDebug,
     });
     scene.scene.pause();
     for (const key of pauseAlso) scene.scene.pause(key);
