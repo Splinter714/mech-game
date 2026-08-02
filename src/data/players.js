@@ -59,6 +59,11 @@ export function makePlayer({
     controls: null,
     fireCooldowns: {},
     heldAudio: {},
+    // #500: raised by `fireWeapon` (scenes/arena/firing.js) whenever THIS player actually puts a
+    // shot out, consumed by the next ability tick (scenes/arena/abilities.js) — the event an
+    // until-broken ability with `breaksOnFire` (Cloak) ends on. Per player, so in co-op only your
+    // own trigger drops your own cloak.
+    weaponFired: false,
     sprint: null,
     abilityStates: null,
     sprintForcedByOverclock: false,

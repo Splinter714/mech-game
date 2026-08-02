@@ -378,12 +378,31 @@ export const FiringMixin = {
     // returned pull id is threaded to this pull's emissions so a connecting one books the hit
     // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
     const pullId = this._statShotFired?.(w.weapon.id, player) ?? null;
+    // #500 (playtest follow-up — Jackson: "make cloak last until you fire a weapon instead of
+    // lasting a finite amount of time"): the shot that breaks Cloak. Latched on THIS player (co-op:
+    // only your own fire drops your own cloak) and consumed by the next ability tick
+    // (scenes/arena/abilities.js `updateAbilities`), which runs the break through the same state
+    // machine and deactivate edge as any other transition — see the latch's comment there.
+    //
+    // Deliberately keyed on a REAL SHOT, not a trigger press: this line is only reached once the
+    // weapon was ready, in cadence and paid for its ammo, so pulling the trigger on an empty or
+    // reloading gun leaves the cloak up. Every firing path funnels through here (auto-repeat, held
+    // beams, melee, and a released charge via `_releaseCharge`), so all four triggers count and
+    // ONLY weapon triggers do — activating another ability never touches this.
+    player.weaponFired = true;
+
     // #103 noise-aggro: a real shot just went off at the player's position — unaware enemies
     // within NOISE_AGGRO_RANGE of this instant become AWARE (see data/awareness.js), regardless
     // of line-of-sight. Just a timestamp + position; enemies.js reads it each frame.
     // #500/#507: a stealthed shooter (Cloak active, or standing in ANY player's Smoke Screen
     // cloud) doesn't latch this at all — the shot still fires and still deals damage, it just
     // doesn't give the shooter away to a dormant enemy nearby.
+    //
+    // #500 (playtest follow-up): now that firing is what BREAKS Cloak, the Cloak half of this only
+    // covers the one shot that does the breaking (the latch above is consumed a frame later) —
+    // near-inert, and deliberately kept anyway (raised with Jackson, who chose "any weapon fire"
+    // regardless). The SMOKE SCREEN half is untouched and fully live: a shooter standing in a
+    // cloud still fires silently for as long as they stay in it.
     if (!isPlayerStealthed(this, player)) {
       this._lastFireAt = this.time.now;
       // #347/#348: the NOISE source that wakes enemies — whoever actually fired.

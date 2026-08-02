@@ -5,7 +5,7 @@
 // (shield-burst/drone-launcher/jump-blast/cloak/smoke) add their own `effect` case without
 // touching the state machine or the input plumbing.
 import { getAbility } from '../../data/abilities.js';
-import { initialAbilityState, canActivate, activateAbility, updateAbilityState } from '../../data/abilityState.js';
+import { initialAbilityState, canActivate, activateAbility, updateAbilityState, breakAbility } from '../../data/abilityState.js';
 import { ABILITY_SLOTS } from '../../data/anatomy.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { nearestInterceptTarget } from '../../data/interceptor.js';
@@ -145,6 +145,18 @@ function burstAoeAt(scene, caster, x, y, radius, damage) {
 // react to its own active/inactive edge. Called once per player per frame from firing.js.
 export function updateAbilities(scene, intent, delta, player) {
   const dt = delta / 1000;
+  // #500: has THIS player actually put a shot out since the last ability tick? `fireWeapon`
+  // (firing.js) raises the latch on a real shot — any of the four weapon triggers, any weapon,
+  // including a released charge — and this consumes it. In co-op each player carries its own
+  // latch on its own object, so only the cloaked player's OWN fire can break their own cloak.
+  //
+  // A latch consumed HERE rather than a break called straight from the fire path, on purpose:
+  // every ability state transition then still happens in exactly one place, which is what keeps
+  // the per-effect deactivate edge below (and with it Cloak's own visual teardown) working
+  // unchanged for a break. The cost is that the break lands on the NEXT frame's tick, since
+  // ArenaScene.update ticks abilities before firing — one frame, ~16ms, invisible in play.
+  const fired = !!player.weaponFired;
+  player.weaponFired = false;
   for (const slot of ABILITY_SLOTS) {
     const abilityId = player.mech.abilityMounts?.[slot];
     const def = abilityId && getAbility(abilityId);
@@ -156,6 +168,14 @@ export function updateAbilities(scene, intent, delta, player) {
       next = activateAbility(next, { cooldown: def.cooldown, duration: def.duration });
     }
     next = updateAbilityState(next, dt);
+    // #500: an until-broken effect (Cloak) ends the moment its owner fires, and only THEN starts
+    // its cooldown — `breakAbility` (data/abilityState.js) is the whole of that. Gated on
+    // `wasActive` so a cloak activated on this very frame can't be broken by a shot that went out
+    // before it existed: the latch is always a frame old by construction (see above), and without
+    // this, pressing cloak while a trigger is already held would drop it instantly.
+    if (def.breaksOnFire && fired && wasActive && next.active) {
+      next = breakAbility(next, { cooldown: def.cooldown });
+    }
     player.abilityStates[slot] = next;
 
     // Stage 1 implements 'dash' — its state machine's active flag is all locomotion.js needs
@@ -202,9 +222,16 @@ export function updateAbilities(scene, intent, delta, player) {
         Audio.ui('sprintOff');
       }
     } else if (def.effect === 'cloak') {
-      // #500: purely a visual on the edges — `isPlayerStealthed` (scenes/arena/stealth.js)
-      // is what actually suppresses noise-aggro while `next.active` is true; nothing to spawn or
-      // tick here. `setCloakVisual` (above) is the genuine desaturation + translucency.
+      // #500: purely a visual on the edges — `isPlayerStealthed`/`cloakBlocksTarget`
+      // (scenes/arena/stealth.js) are what actually suppress noise-aggro and block the enemy
+      // firing-lane raycast while `next.active` is true; nothing to spawn or tick here.
+      // `setCloakVisual` (above) is the genuine desaturation + translucency, and the flattened
+      // RenderTexture that carries it (cloakFlatten.js) is torn down off the same `active` flag
+      // at the end of this same frame.
+      //
+      // #500 (playtest follow-up): the deactivate edge is now reached by the fire-break above
+      // rather than by a burst running out — the effect never expires on its own any more — but
+      // it is the SAME edge, so nothing here had to change.
       if (next.active && !wasActive) {
         setCloakVisual(scene, player, true);
         Audio.ui('sprintOn');
@@ -248,6 +275,25 @@ export function updateAbilities(scene, intent, delta, player) {
         }
       }
     }
+  }
+}
+
+// #500 (playtest follow-up): break an ACTIVE Cloak because its wearer just died. A dead player's
+// abilities stop ticking entirely (ArenaScene.update skips `_handleAbilities` for them), so with
+// no `duration` left to expire there is nothing else that could ever clear the state — a player
+// who dies mid-sneak would respawn still flagged cloaked, i.e. permanently unhittable by the
+// enemy LOS raycast and still wearing the grey wireframe. Runs the same texture restore the
+// normal deactivate edge does; the flattened stand-in is handled by cloakFlatten.js, which
+// treats a dead player as uncloaked. Silent on purpose — the death explosion is the cue.
+export function breakCloakOnDeath(scene, player) {
+  for (const slot of ABILITY_SLOTS) {
+    const abilityId = player.mech?.abilityMounts?.[slot];
+    const def = abilityId && getAbility(abilityId);
+    if (def?.effect !== 'cloak') continue;
+    const state = player.abilityStates?.[slot];
+    if (!state?.active) continue;
+    player.abilityStates[slot] = breakAbility(state, { cooldown: def.cooldown });
+    setCloakVisual(scene, player, false);
   }
 }
 

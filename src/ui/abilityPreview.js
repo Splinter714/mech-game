@@ -38,9 +38,11 @@
 //                   own part textures plus a flattened-container dim (arena/abilities.js
 //                   `setCloakVisual` / cloakFlatten.js) — there is no mech on a catalog card to
 //                   desaturate, and building one per card is far out of proportion. The card
-//                   instead desaturates and fades its caster chip to the real `CLOAK_ALPHA` over
-//                   the real `duration`, and drops to the outline-only "lit wireframe" read the
-//                   #500 fourth pass settled on. Same story beat, not the same pixels.
+//                   instead desaturates and fades its caster chip to the real `CLOAK_ALPHA`, and
+//                   drops to the outline-only "lit wireframe" read the #500 fourth pass settled
+//                   on. Same story beat, not the same pixels. (#500 playtest follow-up: Cloak has
+//                   no `duration` at all any more — it holds until you fire — so the card plays it
+//                   over the capped preview window, see PREVIEW_MAX_ACTIVE_MS below.)
 //
 // PLAYBACK matches the weapon cards: it loops continuously and unattended, with no hover/select
 // gating, so a whole column of cards is animating at once and you can compare them at a glance.
@@ -143,8 +145,13 @@ export class AbilityCardPreview {
     this.layer = scene.add.container(0, 0);   // stamped sprites (Smoke Screen) live here, under fxG
 
     // A movement burst plays out over its REAL duration; everything else gets the clamped window.
+    // #500: an UNTIL-BROKEN ability (`duration: null` — Cloak) has no real number to play out at
+    // all. A card can't show "indefinite", so it holds the effect for the same capped window a
+    // long duration gets rather than collapsing to the MIN_ACTIVE_MS floor — which would make the
+    // one ability that can now outlast every other one pulse the fastest on the shelf.
+    const previewDurationMs = def.duration == null ? PREVIEW_MAX_ACTIVE_MS : def.duration * 1000;
     this.travelMs = burstDistance(def) > 0 ? (def.duration ?? 0) * 1000 : 0;
-    this.activeMs = this.travelMs || clamp((def.duration ?? 0) * 1000, MIN_ACTIVE_MS, PREVIEW_MAX_ACTIVE_MS);
+    this.activeMs = this.travelMs || clamp(previewDurationMs, MIN_ACTIVE_MS, PREVIEW_MAX_ACTIVE_MS);
     // Extra time after the burst window for a trailing effect to finish: Jump Blast's landing
     // blast fires on the deactivate edge, Smoke Screen's cloud fades out.
     this.settleMs = this.effect === 'jumpBlast' ? ringsDuration(aoeBlastRings(1, 0)) + 60

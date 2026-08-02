@@ -28,7 +28,7 @@
 // frame cloak stays active; see `_updateCloakFlatten` below for exactly when in the frame this
 // runs and why.
 import { CLOAK_ALPHA, hasActiveEffect } from './abilities.js';
-import { livePlayersOf } from './players.js';
+import { playersOf } from './players.js';
 import { DESIGN, ART_SCALE } from '../../art/mechArt.js';
 import { ARENA_MECH_SCALE } from './shared.js';
 
@@ -70,12 +70,18 @@ export const CloakFlattenMixin = {
   // visibility toggle). Placing this any earlier risks flattening a stale pose or a
   // about-to-change glow visibility that a later step in the SAME frame is still going to touch;
   // placing it here guarantees the bake matches exactly what would have rendered this frame.
+  // #500 (playtest follow-up): walks EVERY player, not just the live ones. A dead player used to
+  // be skipped entirely, which left their flatten stand-in showing — a frozen ghost mech standing
+  // at the wreck while the real (hidden) container sat under it. Cloak expiring on its own used to
+  // paper over most of that; with no duration left to expire, a death mid-sneak would strand it
+  // there for the rest of the run. A dead player is simply never cloaked here, and their teardown
+  // must NOT restore the container's visibility — combat.js hid that deliberately when they died.
   _updateCloakFlatten() {
-    for (const player of livePlayersOf(this)) {
+    for (const player of playersOf(this)) {
       const view = player.view;
       if (!view) continue;
-      if (hasActiveEffect(player, 'cloak')) this._flattenCloakedView(view);
-      else this._teardownCloakFlatten(view);
+      if (!player.dead && hasActiveEffect(player, 'cloak')) this._flattenCloakedView(view);
+      else this._teardownCloakFlatten(view, !player.dead);
     }
   },
 
@@ -121,10 +127,14 @@ export const CloakFlattenMixin = {
     rt.setVisible(true);
   },
 
-  // Cloak just dropped (or never activated this player): show the real parts again, hide the
-  // flatten stand-in. Nothing to un-bake — the next activation redraws the RenderTexture fresh.
-  _teardownCloakFlatten(view) {
-    view.setVisible(true);
+  // Cloak just dropped — ran out, was broken by a shot (#500's until-broken rework: the state
+  // goes inactive inside `updateAbilities`, which runs earlier in the same frame, so this lands
+  // on that same frame), or never activated on this player at all: show the real parts again and
+  // hide the flatten stand-in. Nothing to un-bake — the next activation redraws the RenderTexture
+  // fresh. `restoreView` false for a DEAD player: hide the stand-in, but leave the container
+  // hidden, since that is the death presentation (combat.js), not a cloak.
+  _teardownCloakFlatten(view, restoreView = true) {
+    if (restoreView) view.setVisible(true);
     if (view._cloakRT) view._cloakRT.setVisible(false);
   },
 };
