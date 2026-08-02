@@ -134,6 +134,44 @@ export const ABILITIES = {
     duration: 3.5,
     range: 220,
   },
+  // #621: replaces the shelved Gravity Well + Proximity Mines weapons — Jackson: "combine the two
+  // - make it like traps that place around the player, no friendly-activation, but when it
+  // activates it does crowd control (kinda like the gravity thing) rather than mine damage, maybe
+  // it's an electric burst that disables things temporarily or something." Single-cast + cooldown
+  // (no magazine, no SCRAP unlock, same as every other ability) — one press scatters `trapCount`
+  // stationary trap hazards directly around the player's own position (no aim, no travel/arc
+  // phase; scenes/arena/abilities.js's `empTrap` effect pushes them straight into `scene.hazards`,
+  // skipping the projectile pipeline entirely since there's nothing to fly). Each trap reuses
+  // Proximity Mines' old `hazard: { kind: 'mine', ... }` arm/trigger/team-exemption pipeline
+  // (scenes/arena/projectiles.js `_updateHazards`) — armDelay/life numbers carried over from that
+  // weapon's own tuning — but its `disable` field makes the on-trigger branch apply a FULL STUN
+  // (can't move, can't fire) instead of `damageInRadius` damage.
+  //
+  // `duration: 0.15` is just the shared "instant activation beat" every non-movement ability uses
+  // (mirrors Shield Burst) — the traps themselves outlive that beat on their own `life` timer, same
+  // as a planted mine/field hazard always has.
+  //
+  // PLAYTEST DIAL, first to tune: `disableDuration` (2.5s) x `cooldown` (18s). This is the
+  // strongest of the three CC options Jackson was offered (full stun vs. movement-only vs.
+  // firing-only) — a scatter of 5 traps can plausibly stun several enemies at once, so both the
+  // per-hit stun window and the cooldown between casts are deliberately tighter/longer than every
+  // other ability here (next-highest cooldown is Drone Launcher's 15s) so one trap-scatter can't
+  // trivialize a pack of enemies. `trapCount` (5) mirrors Proximity Mines' old scatter; the
+  // scatter-radius band (50-100px around the player) and hazard radius/armDelay/life (55/0.3/7)
+  // mirror that weapon's own numbers, just re-centered on the player instead of a lobbed toss.
+  empTrap: {
+    name: 'EMP Trap',
+    effect: 'empTrap',
+    cooldown: 18,
+    duration: 0.15,
+    trapCount: 5,
+    scatterRadiusMin: 50,
+    scatterRadiusMax: 100,
+    hazardRadius: 55,
+    armDelay: 0.3,
+    life: 7,
+    disableDuration: 2.5,
+  },
 };
 
 // #618: the type/bucket label shown under each ability's name in the garage catalog (mirrors
@@ -148,6 +186,11 @@ export const ABILITY_TYPES = {
   cloak: 'Defense',
   smokeScreen: 'Defense',
   antiMissile: 'Defense',
+  // #621: a judgment call — it neutralizes a threat (crowd control) rather than dealing damage,
+  // same reasoning as Cloak/Smoke Screen/Anti-Missile above, so it's grouped with them rather than
+  // with the damage-dealing Offense pair (Shield Burst/Drone Launcher). Flagged in the report in
+  // case Offense reads better to Jackson.
+  empTrap: 'Defense',
 };
 
 export function getAbility(id) {

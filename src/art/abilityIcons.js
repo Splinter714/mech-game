@@ -141,6 +141,22 @@ function antiMissileIcon(g, S, c, color) {
   g.fillCircle(c, c, 2 * S);
 }
 
+// EMP Trap (#621): a broken ring of trap "ticks" (the scatter of traps planted around the player)
+// with a jagged lightning bolt through the middle (the disable/stun payload) — reads as "a ring of
+// electric traps," distinct from Anti-Missile's unbroken defensive ring and Shield Burst's solid
+// hexagon.
+function empTrapIcon(g, S, c, color) {
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    const x = c + Math.cos(a) * 10 * S, y = c + Math.sin(a) * 10 * S;
+    g.lineStyle(1.6 * S, color, 0.7);
+    g.strokeCircle(x, y, 2 * S);
+  }
+  g.fillStyle(0xffffff, 0.95);
+  g.fillTriangle(c - 1 * S, c - 9 * S, c + 3.5 * S, c - 1 * S, c - 0.5 * S, c - 1 * S);
+  g.fillTriangle(c - 0.5 * S, c - 1 * S, c + 1 * S, c + 9 * S, c - 3.5 * S, c + 1 * S);
+}
+
 const ABILITY_ICONS = {
   dash: dashIcon,
   shieldBurst: shieldBurstIcon,
@@ -149,6 +165,7 @@ const ABILITY_ICONS = {
   cloak: cloakIcon,
   smokeScreen: smokeScreenIcon,
   antiMissile: antiMissileIcon,
+  empTrap: empTrapIcon,
 };
 
 // Defensive fallback for any future ability added to `ABILITIES` before it gets its own glyph

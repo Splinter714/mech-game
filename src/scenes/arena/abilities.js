@@ -140,6 +140,38 @@ function burstAoeAt(scene, caster, x, y, radius, damage) {
   }
 }
 
+// #621: EMP Trap's activation — scatter `def.trapCount` stationary trap hazards directly around
+// the caster's own position. No projectile, no aim, no travel/arc phase (the ability is
+// self-centered, so there's nothing to fly) — this pushes straight into `scene.hazards`, the same
+// array `_plantHazard` (projectiles.js) fills once a hazard-carrying round lands. Each entry
+// reuses the exact `kind: 'mine'` shape Proximity Mines' hazard used (arm/trigger/team-exemption
+// pipeline, `_updateHazards`), plus a `disable` payload that tells the on-trigger branch there to
+// apply a stun instead of `damageInRadius` damage. Distributed evenly around a full circle (a
+// random starting angle so repeated casts don't always ring the exact same spots) with a little
+// per-trap jitter, since "self-centered" has no aim direction to fan a scatter around.
+function plantEmpTraps(scene, player, def) {
+  const {
+    trapCount = 5, scatterRadiusMin = 50, scatterRadiusMax = 100,
+    hazardRadius = 55, armDelay = 0.3, life = 7, disableDuration = 2.5,
+  } = def;
+  const step = (Math.PI * 2) / trapCount;
+  const baseAngle = Math.random() * Math.PI * 2;
+  for (let i = 0; i < trapCount; i++) {
+    const angle = baseAngle + i * step + (Math.random() - 0.5) * step * 0.4;
+    const dist = scatterRadiusMin + Math.random() * (scatterRadiusMax - scatterRadiusMin);
+    const x = player.x + Math.cos(angle) * dist;
+    const y = player.y + Math.sin(angle) * dist;
+    scene.hazards.push({
+      x, y, owner: 'player', shooter: player, caster: player, kind: 'mine',
+      radius: hazardRadius, color: 0x33ccff, weaponId: 'empTrap',
+      armIn: armDelay, life, damage: 0,
+      visualRadius: hazardRadius, force: null,
+      disable: { duration: disableDuration },
+    });
+  }
+  scene._impactFx?.(player.x, player.y, 0x33ccff, 'plasma', 10, 'empTrap');
+}
+
 // Advance every ability slot this player has something mounted in: trigger on a fresh press
 // (gated by the shared cooldown/burst rules), tick the state machine, and let each effect kind
 // react to its own active/inactive edge. Called once per player per frame from firing.js.
@@ -273,6 +305,13 @@ export function updateAbilities(scene, intent, delta, player) {
           scene._interceptFx?.(player.x, player.y, target.x, target.y);
           incoming.splice(incoming.indexOf(target), 1);
         }
+      }
+    } else if (def.effect === 'empTrap') {
+      // #621: fires the instant it activates — no movement, no "arrival" to wait for, same edge
+      // as Shield Burst. `plantEmpTraps` does the actual scatter; nothing to tick while active.
+      if (next.active && !wasActive) {
+        plantEmpTraps(scene, player, def);
+        Audio.ui('sprintOn');
       }
     }
   }

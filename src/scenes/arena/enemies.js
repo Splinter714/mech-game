@@ -91,6 +91,11 @@ import {
 // Re-exported so any external import of this name from enemies.js keeps working unchanged.
 export { ENEMY_MECH_TURRET_SLEW };
 
+// #621: EMP Trap's stun visual — a cold electric-blue tint multiplied over the hull/turret parts
+// while `e.disabledUntil` is live (see `_disableEnemy`/`_clearDisableVisual` below), so a stunned
+// enemy reads as visibly "shorted out" rather than just standing still for no apparent reason.
+const DISABLE_TINT = 0x4fd6ff;
+
 export const EnemiesMixin = {
   // ── Enemy lifecycle (#39 debug controls) ──────────────────────────────────────────
   // Build a fresh enemy with its own textures + view + AI state and track it. `typeId`
@@ -947,6 +952,29 @@ export const EnemiesMixin = {
     return this._routedIntent(e, tp.x, tp.y, (e._playerRouteToken ??= {}));
   },
 
+  // #621: apply/refresh EMP Trap's stun on a live enemy — a minimal duration MARKER, matching the
+  // existing `hurtUntil` idiom this file already uses elsewhere (an absolute "until" scene-time
+  // timestamp, `this.time.now + ms`, rather than a per-frame remaining-duration countdown — see
+  // `e.hurtUntil` above/below). `_updateEnemy`'s early-return gate gates the countdown itself: as
+  // long as `this.time.now < e.disabledUntil` it just keeps returning early, so "remaining time"
+  // is simply `e.disabledUntil - this.time.now`, no explicit per-frame subtraction needed. A
+  // retrigger (a second trap going off on an already-stunned unit) takes the LONGER of its current
+  // remaining stun and the new one, so overlapping traps never shorten an existing stun.
+  _disableEnemy(e, seconds) {
+    if (!e || e.mech?.isDestroyed?.()) return;
+    const until = this.time.now + seconds * 1000;
+    e.disabledUntil = Math.max(e.disabledUntil ?? 0, until);
+    e.view?.hull?.setTint?.(DISABLE_TINT);
+    e.view?.turret?.setTint?.(DISABLE_TINT);
+  },
+
+  // The other half of `_disableEnemy` — restores the normal (untinted) look once a stun's
+  // `disabledUntil` timestamp has passed. Called from `_updateEnemy`'s early-return gate.
+  _clearDisableVisual(e) {
+    e.view?.hull?.clearTint?.();
+    e.view?.turret?.clearTint?.();
+  },
+
   _updateEnemy(e, dt, delta) {
     // #87: a dead enemy is torn down and pruned out of `this.enemies` the same tick it dies (see
     // `_removeEnemy`), so in practice this guard is now belt-and-suspenders — nothing in
@@ -961,6 +989,20 @@ export const EnemiesMixin = {
     // distance-only check (`_maybeProximityWake`, bases.js) so a unit the player walks right up
     // to wakes even with no alert tower involved — not full AI ticking, just a `Math.hypot`.
     if (e.awareness === DORMANT) { this._maybeProximityWake(e); return; }
+    // #621: EMP Trap's stun — mirrors DORMANT's shape immediately above (one early-return before
+    // ANY movement/turret/fire logic runs, covering both the mech path below and the `_updateVehicle`
+    // dispatch just past it, so there's no second gate to keep in sync). UNLIKE dormant, a disabled
+    // enemy is not a data reason to skip everything: it stays visually present (its view was already
+    // synced on some earlier frame and simply freezes mid-pose here, which reads as "stunned" rather
+    // than "gone") and fully damageable (nothing about being stunned touches the mech/HpBody a
+    // player's shot actually applies damage to — that happens elsewhere, independent of this per-
+    // frame tick). It still "ticks down toward zero" — see `_disableEnemy`'s comment on why that's
+    // implicit in the absolute timestamp rather than an explicit per-frame subtraction.
+    if (e.disabledUntil != null) {
+      if (this.time.now < e.disabledUntil) return;
+      this._clearDisableVisual(e);
+      e.disabledUntil = null;
+    }
     // #440: 'Seen' counts only units that ACTUALLY ACTIVATED. A DORMANT unit early-returns above
     // and never reaches here, so this single check — placed for BOTH the mech and vehicle paths,
     // before the vehicle delegation below — books the once-per-unit Seen the first tick a unit is

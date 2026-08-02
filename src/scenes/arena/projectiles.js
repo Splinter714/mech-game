@@ -750,13 +750,16 @@ export const ProjectilesMixin = {
     this._impactFx(p.x, p.y, p.color, p.kind, radius, p.weaponId);
   },
 
-  // #488/#491: a round with `p.hazard` converts, on landing, into a standalone stationary object
-  // in `this.hazards` rather than resolving its normal impact. Two kinds today:
-  //   'mine'  (Timed Charge) — arms after `armDelay`, then waits for a living enemy/player to
-  //           wander within `radius`, detonating once (a real multi-target blast, data/aoe.js) —
-  //           or quietly expires after `life` seconds if nothing ever wanders in.
-  //   'field' (Gravity Well) — arms after `armDelay`, then continuously pulls living enemies
-  //           within `radius` (data/force.js) for `life` seconds, then expires with no blast.
+  // #488/#491/#621: a round with `p.hazard` converts, on landing, into a standalone stationary
+  // object in `this.hazards` rather than resolving its normal impact. Kinds today:
+  //   'mine'  (Timed Charge, shelved #621; also EMP Trap — scenes/arena/abilities.js plants these
+  //           directly, bypassing this function entirely since there's no projectile) — arms after
+  //           `armDelay`, then waits for a living enemy/player to wander within `radius`,
+  //           triggering once — either a real multi-target blast (data/aoe.js) or, if `h.disable`
+  //           is set, a DISABLE instead (see `_updateHazards`) — or quietly expires after `life`
+  //           seconds if nothing ever wanders in.
+  //   'field' (Gravity Well, shelved #621) — arms after `armDelay`, then continuously pulls living
+  //           enemies within `radius` (data/force.js) for `life` seconds, then expires with no blast.
   _plantHazard(p) {
     const h = p.hazard;
     this.hazards.push({
@@ -773,6 +776,8 @@ export const ProjectilesMixin = {
       // Defaults to the same value as `radius` for any other 'field' hazard that doesn't opt in.
       visualRadius: h.visualRadius ?? h.radius,
       force: h.force || null,
+      // #621: EMP Trap's payload — see `_updateHazards`'s mine branch for what this changes.
+      disable: h.disable || null,
     });
     this._impactFx(p.x, p.y, p.color, p.kind, 10, p.weaponId);
   },
@@ -798,6 +803,17 @@ export const ProjectilesMixin = {
           if (hz.owner === 'enemy') {
             for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, livePlayersOf(this))) {
               this._damagePlayerAt(hit.amount, hit.target, { weaponId: hz.weaponId });
+            }
+          } else if (hz.disable) {
+            // #621: EMP Trap — a trap-kind hazard applies a DISABLE instead of the normal mine
+            // blast. Reuses `damageInRadius` purely as the "who's actually within `radius`" filter
+            // (the damage amount it would compute is unused) so this rides the exact same
+            // arm/trigger/team-exemption pipeline as a real mine — including the team-exemption
+            // just below: only ground ENEMIES are ever candidates for a player-owned hazard
+            // (`groundEnemies`, computed above), so no live player — caster included — is ever at
+            // risk of triggering or eating their own trap.
+            for (const hit of damageInRadius(hz.x, hz.y, hz.radius, 0, groundEnemies)) {
+              this._disableEnemy?.(hit.target, hz.disable.duration);
             }
           } else {
             for (const hit of damageInRadius(hz.x, hz.y, hz.radius, hz.damage, groundEnemies)) {
@@ -910,7 +926,10 @@ export const ProjectilesMixin = {
       // an enemy-placed mine (none exist yet, but the branch already reasons about
       // `hz.owner === 'enemy'` elsewhere in this file) gets a distinct cold cyan-teal so the
       // two are never confusable at a glance, in the same "warning light" idiom.
-      const mineColor = hz.owner === 'enemy' ? 0x33e6ff : 0xff5533;
+      // #621: an EMP Trap (`hz.disable` set) gets its own bright electric-blue warning light
+      // instead — same pulsing "warning light" idiom, distinct at a glance from both a real
+      // player mine and an enemy one.
+      const mineColor = hz.disable ? 0x33ccff : (hz.owner === 'enemy' ? 0x33e6ff : 0xff5533);
       const pulse = 0.5 + 0.5 * Math.sin(now / 160);
       g.lineStyle(2, mineColor, 0.3 + pulse * 0.5).strokeCircle(hz.x, hz.y, hz.radius * 0.28 + pulse * 2);
       g.fillStyle(mineColor, 0.85).fillCircle(hz.x, hz.y, 3.5);
