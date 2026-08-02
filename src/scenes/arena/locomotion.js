@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, applyMovementToggle, approach, mechMuzzleTipOffset, partMuzzle, resolveMovement, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, aimAngleOffset, applyMovementToggle, approach, mechMuzzleTipOffset, partMuzzle, resolveMovement, rotateToward, unitDepth } from './shared.js';
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { makeMechParts, poseMechParts } from '../../art/mechView.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
@@ -86,6 +86,15 @@ const TILT_SMOOTH_K = 12;
 // regardless of INSTANT_VELOCITY — the old ramped-accel path was just less likely to reach
 // tunneling-capable speeds, not immune to the underlying gap.
 const COLLISION_SUBSTEP_PX = HEX_SIZE / 6;
+
+// #620: a small gamepad-only aim-assist pull toward whatever `pickConvergeTarget` already
+// picked this frame (`player.convergeTarget` — the same nearest-in-cone target that drives the
+// reticle, indirect-fire homing, and muzzle convergence). Blended into the turret-slew's `aim`
+// input BEFORE the existing slew is applied, so it composes with `mv.turretSlew` naturally
+// ("pulls where you're already turning") rather than snapping. Mouse/keyboard is untouched — see
+// the `intent.mode === 'pad'` gate below. Starting number, tuned live like every other feel dial
+// in this file (0-1 fraction of the angular gap closed per frame toward the target bearing).
+const AIM_ASSIST_STRENGTH = 0.15;
 
 export const LocomotionMixin = {
   // A mech = hull (legs) + shoulders + arms + turret-body stacked in a container so they can
@@ -351,7 +360,17 @@ export const LocomotionMixin = {
       p.aimX = p.x + Math.cos(intent.aim.angle) * 800;
       p.aimY = p.y + Math.sin(intent.aim.angle) * 800;
     }
-    const aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
+    let aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
+    // #620: gamepad-only aim-assist pull toward the already-picked convergence target, applied
+    // to `aim` BEFORE the slew below so it composes with the chassis' own turretSlew rate rather
+    // than snapping. `aimAngleOffset` (shared.js) gives the wrap-safe (±π) signed angular gap from
+    // `aim` to the target's bearing — reused here rather than a raw numeric lerp on the two
+    // angles, which breaks near the ±π seam. Deliberately no distance/angle falloff: one flat
+    // constant, the same "starting number, tune live" convention as every other feel dial.
+    if (intent.mode === 'pad' && p.convergeTarget) {
+      const offset = aimAngleOffset(p.x, p.y, aim, p.convergeTarget.x, p.convergeTarget.y);
+      aim = Phaser.Math.Angle.Wrap(aim + offset * AIM_ASSIST_STRENGTH);
+    }
     // #189: turret slew no longer has a buff multiplier — Overclock's old slewMult was
     // removed along with moveMult when it was redesigned to force-activate Sprint instead.
     p.turretAngle = p.legacyMovement
