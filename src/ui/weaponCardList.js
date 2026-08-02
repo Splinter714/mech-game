@@ -178,11 +178,17 @@ export class WeaponCardList {
   // #611 deleted the `onScroll`/`setExtraHeight` pair: they existed solely so the Garage could park
   // its CHASSIS/COLOR rows below the cards in this list's scroll space, and those are ordinary
   // cards now.
+  // #612: `caster` — `{ mech, textureKey }` — is whose mech stands on every ABILITY card's preview
+  // stage, in place of the accent-coloured chip that used to represent one. It's the caller's LIVE
+  // handle (the Garage passes its column's own build, mutated in place), so `refreshCaster()` after
+  // a mount/chassis/colour change is all the re-sync there is. Omitting it draws no caster and is
+  // exactly what the Weapon Lab does — that list is weapons-only, so it has no ability cards at all.
   constructor(scene, {
     x, y, w, h, ids, sections = null, onSelect = null, onHover = null,
-    selectedId = null, isLocked = null, costOf = null, compact = false,
+    selectedId = null, isLocked = null, costOf = null, compact = false, caster = null,
   } = {}) {
     this.scene = scene;
+    this.caster = caster;
     this.onSelect = onSelect;
     this.onHover = onHover;
     this.selectedId = selectedId;
@@ -486,12 +492,12 @@ export class WeaponCardList {
       fontFamily: 'monospace', fontSize: statsSize, color: UI.dim, lineSpacing: this.compact ? 1 : 2, wordWrap: { width: wrapW },
     });
     const fxG = this.scene.add.graphics();
-    // #534: an ability card's live preview. It owns a `layer` container (for the Smoke Screen
-    // puff sprites) that sits BELOW fxG, matching the arena's own depth order — smoke is ground
-    // FX, the caster and its blasts draw over it. Vector work goes straight into fxG alongside
-    // the weapon cards', so a card is still exactly one Graphics redraw per frame.
+    // #534: an ability card's live preview. It owns a `layer` container that sits BELOW fxG,
+    // matching the arena's own depth order — the Smoke Screen puffs are ground FX, the caster mech
+    // (#612) stands over them, and the blasts/drones/rounds in fxG draw over both. Vector work goes
+    // straight into fxG alongside the weapon cards', so a card is still one Graphics redraw a frame.
     const preview = kind === 'item' && !weapon
-      ? new AbilityCardPreview(this.scene, id, item, color, this.cards.length) : null;
+      ? new AbilityCardPreview(this.scene, id, item, color, this.cards.length, this.caster) : null;
     // #611: a custom card's own stage content (a posed chassis mech, a colour swatch), created by
     // the caller and reparented into this card so it scrolls, masks and layers with everything else.
     const art = desc.art ?? null;
@@ -699,11 +705,48 @@ export class WeaponCardList {
     this.scroller.y = -this._scrollY;
   }
 
+  // #612 (in scope with the mech-on-an-ability-card change): VISIBILITY CULLING. This used to loop
+  // every card unconditionally — a card scrolled well out of the masked region ran its
+  // delivery/ability sim and cleared+redrew its Graphics exactly like a visible one, with only the
+  // geometry mask throwing the result away. The garage catalog is now the whole item set in one
+  // continuous list (#607) at three cards across (#610), so most of it is off-screen at any moment,
+  // and each ability card additionally carries a real posed mech. A card outside the region is now
+  // both skipped and hidden — the skip is the sim/redraw saving, the hide keeps its (now several)
+  // sprites out of the renderer's batch entirely rather than relying on the mask to discard them.
+  //
+  // A culled card FREEZES rather than resetting — its loop clock, cooldown and in-flight rounds are
+  // left exactly where they were, so scrolling back finds the preview mid-stride instead of
+  // restarted. The one thing that can't simply pause is SOUND (a held weapon's loop, an in-flight
+  // trajectory loop), which is stopped on the way out; the next tick after it comes back re-arms it.
   update(_time, delta) {
     // #197: the toggle only gates AUDIO (see _isAudible) — the visual demo (every card's
     // shot/beam animation) keeps running unconditionally regardless of autoFireEnabled.
     const dt = Math.min(0.05, delta / 1000);
-    for (const card of this.cards) this._updateCard(card, dt, delta);
+    const top = this._scrollY, bottom = top + this.region.h;
+    for (const card of this.cards) {
+      const cardTop = card.top ?? 0;
+      const onScreen = cardTop < bottom && cardTop + this.cardH > top;
+      this._setCardOnScreen(card, onScreen);
+      if (onScreen) this._updateCard(card, dt, delta);
+    }
+  }
+
+  _setCardOnScreen(card, onScreen) {
+    if (card.onScreen === onScreen) return;
+    card.onScreen = onScreen;
+    card.container.setVisible(onScreen);
+    if (onScreen) return;
+    for (const p of card.projectiles) p.stopTrajectorySfx?.();
+    if (card._heldOn) { Audio.stopHeld(card.id); card._heldOn = false; }
+  }
+
+  // #612: the caller's build changed (a mount, a chassis swap, a colour) — re-pose every ability
+  // card's caster mech. The TEXTURES are the caller's own, re-baked in place under the same keys,
+  // so nothing is re-baked here; this is the pose/flatten half only. Cheap enough to call on any
+  // build change, and there is no rebuild involved, so scroll position and every preview's loop
+  // survive it untouched.
+  refreshCaster() {
+    for (const c of this.cards) c.preview?.refreshCaster();
   }
 
   // #197: flip the auto-fire demo's SOUND on/off, persisting the choice — the visual
