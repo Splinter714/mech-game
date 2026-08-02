@@ -33,8 +33,9 @@ const FIELD_VIS_SAMPLES = 24;
 // #624: Link Pylons' bounded-degree graph — replaces #623's per-volley full mesh. No pylon may
 // carry more than this many simultaneous links, field-wide, regardless of which volley or player
 // planted it. See `_updatePylonLinks`/`_recomputePylonLinkGraph` for the greedy nearest-neighbor
-// construction that respects this cap.
-const PYLON_LINK_CAP = 3;
+// construction that respects this cap. Playtest follow-up (Jackson: "can we decrease to 2 links
+// each?"): 3 -> 2, back to his original ask before the mid-flight bump to 3.
+const PYLON_LINK_CAP = 2;
 
 // #624: a candidate pair farther apart than this is never linked, even if both pylons still have
 // open slots. Picked a bit past `linkPylons`' own salvoSpread (110px, data/weapons.js) so pylons
