@@ -6,7 +6,10 @@ import {
   SHIELD_MECH_PART_KEYS, SHIELD_COLOR, SHIELD_PLAYER_BLEND,
   makeShieldOutline, updateShowroomShieldOutline,
 } from './arena/shieldOutline.js';
-import { mechColorFor, cycleSwatch, MECH_SWATCHES, MECH_SWATCH_NAMES, isSwatch } from '../data/mechColors.js';
+import {
+  mechColorFor, cycleSwatch, MECH_SWATCHES, MECH_SWATCH_NAMES, isSwatch,
+  canPickSwatch, swatchHolder, legibleColor,
+} from '../data/mechColors.js';
 import { PLAYER_CHASSIS_IDS, CHASSIS } from '../data/chassis/index.js';
 import { Mech } from '../data/Mech.js';
 import { saveAllMechs, loadUnlocked, saveUnlocked, saveRunCurrency } from '../data/save.js';
@@ -316,6 +319,10 @@ export default class GarageScene extends Phaser.Scene {
     this.colW = Math.floor(this.W / this.session.count);
     this.colH = this.H - this.colTop;
     for (const i of activeIndices(this.session)) this._buildColumn(i);
+    // #614: each column's colour cards paint themselves as they're built, but a column built
+    // BEFORE its neighbours can't yet see the colours they hold — so re-scrim once the whole set
+    // exists. This is also what makes a JOIN update the existing columns' pickers live.
+    this._refreshColorAvailability();
   }
 
   // Build every element of column `i` from its own persistent mech slot. All coordinates are
@@ -425,6 +432,11 @@ export default class GarageScene extends Phaser.Scene {
       // cards never reach this at all — the card list only asks about item-kind cards.)
       isLocked: (id) => isWeapon(id) && !this.unlocked.has(id),
       costOf: (id) => (isWeapon(id) ? costOf(id) : 0),
+      // #614: the general "you can't pick this" hook — here, a COLOUR another joined player is
+      // already wearing. The rule itself is old (canPickSwatch/_selectColor have always refused
+      // the pick); until now it was refused SILENTLY, with the card looking exactly as pickable as
+      // any other. It reads `this.cols` live, so it re-evaluates correctly on every repaint.
+      unavailable: (id, kind) => (kind === 'color' ? this._colorUnavailable(col, colorOfCardId(id)) : null),
     });
     // #505 sixth rework: catalogList owns its own top-level container (see the comment above), a
     // SIBLING of col.layer at the scene root rather than a child of it — so col.layer's default
@@ -588,15 +600,45 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCatalogSelection(col);
   }
 
-  // Directly pick a swatch (color-list click) — same distinctness rules as _cycleColor (no two
-  // live co-op players may hold the same colour) via cycleSwatch's own canPickSwatch gate; a
-  // colour already held by another joined player is simply not offered a real switch to (the
-  // click no-ops, mirroring cycleSwatch landing back on `current` when nothing else is free).
+  // ── Colour availability (#614) ───────────────────────────────────────────────────────────────
+  // The joined columns' builds in PLAYER ORDER — the `builds` argument every data/mechColors.js
+  // distinctness query takes. activeIndices is contiguous 0..count-1, so an entry's array position
+  // IS its player index, which is what `editingIndex`/`swatchHolder`'s return value mean.
+  _colorBuilds() {
+    return activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
+  }
+
+  // Why (if at all) `hex` is not available to `col` — the shape WeaponCardList's `unavailable` hook
+  // wants. Driven off canPickSwatch itself rather than a second hand-rolled `builds.some(...)`, so
+  // the greyed-out card and the guard in _selectColor below cannot disagree about what's takeable
+  // (mechColors.js says that one predicate is meant to back both). Solo is the n=1 case for free:
+  // takenSwatches is empty, nothing is ever scrimmed. And the editing player's OWN colour is
+  // excluded from that set by construction, so it never greys out in its own column.
+  _colorUnavailable(col, hex) {
+    const builds = this._colorBuilds();
+    if (canPickSwatch(builds, col.index, hex)) return null;
+    const holder = swatchHolder(builds, col.index, hex);
+    if (holder < 0) return null;   // not a swatch at all — nothing useful to say about it
+    // Named in the HOLDER's own colour so the card says not just "taken" but "taken by the player
+    // wearing this", which is what you need to decide what to switch to. `legibleColor` because a
+    // dark pick (CHARCOAL, NAVY) would otherwise be unreadable ink over the scrim it sits on.
+    return { text: `🔒 TAKEN\nP${holder + 1}`, color: hexColor(legibleColor(mechColorFor(builds[holder], holder))) };
+  }
+
+  // Repaint every column's colour cards. A colour change in ONE column changes what is available in
+  // EVERY OTHER one, so this is scene-wide rather than per column. (A join/drop goes through
+  // _relayoutColumns, which rebuilds each catalog from scratch and so repaints for free.)
+  _refreshColorAvailability() {
+    for (const col of this.cols) col?.catalogList?.refreshAvailability();
+  }
+
+  // Directly pick a swatch (color-card click, or A on the focused colour card) — same distinctness
+  // rules as _cycleColor (no two live co-op players may hold the same colour). #614 folded this
+  // guard onto the shared canPickSwatch predicate that also paints the card, so a card that looks
+  // pickable always is; a scrimmed one no-ops exactly as it did before, but now visibly says why.
   _selectColor(col, hex) {
     if (!isSwatch(hex) || col.mech.color === hex) return;
-    const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
-    const taken = builds.some((m, bi) => bi !== col.index && mechColorFor(m, bi) === hex);
-    if (taken) return;
+    if (!canPickSwatch(this._colorBuilds(), col.index, hex)) return;
     col.mech.color = hex;
     Audio.ui('menuNav');
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
@@ -605,6 +647,9 @@ export default class GarageScene extends Phaser.Scene {
     col.catalogList?.refreshCaster();   // #612: Cloak's greyscale bake is derived from the new pixels
     col.headerLabel?.setColor(hexColor(hex));
     this._refreshCatalogSelection(col);
+    // #614: this column just freed one colour and claimed another — every OTHER column's colour
+    // cards have to re-scrim/un-scrim to match, live.
+    this._refreshColorAvailability();
   }
 
   _artFor(col) {
@@ -865,7 +910,7 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCurrency();
     // Every column shares the one unlock set/wallet — refresh each column's lock overlays in
     // place (no rebuild, no scroll reset), same as the old single-editor garage's _purchase.
-    for (const col of this.cols) col?.catalogList?.refreshLocks();
+    for (const col of this.cols) col?.catalogList?.refreshAvailability();
     this.toast(`UNLOCKED ${getItem(id).name}`, UI.accent);
   }
 
@@ -879,7 +924,7 @@ export default class GarageScene extends Phaser.Scene {
   // the old separate identity dot into the label itself, so there's one thing left to repaint.
   _cycleColor(col, dir) {
     if (!col) return;
-    const builds = activeIndices(this.session).map((i) => this.cols[i]?.mech).filter(Boolean);
+    const builds = this._colorBuilds();
     const current = mechColorFor(col.mech, col.index);
     const next = cycleSwatch(builds, col.index, current, dir);
     if (next === col.mech.color) return;
@@ -893,6 +938,7 @@ export default class GarageScene extends Phaser.Scene {
     col.headerLabel?.setColor(hexColor(next));
     // Keep the COLOR section's own card highlight in sync — it's always in the catalog now (#607/#611).
     this._refreshCatalogSelection(col);
+    this._refreshColorAvailability();   // #614: same cross-column re-scrim as the direct pick
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────

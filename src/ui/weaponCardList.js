@@ -69,6 +69,11 @@ const UI = {
 // glyphs, the locked-card cost label). #611's "no gold" rule is about the panel fill/stroke only.
 const BIND_GOLD = '#efc14a';
 
+// #65's locked-card label colour, now the DEFAULT for the generalised "you can't pick this" label
+// (see `unavailable` below) rather than a hard-coded one — the #614 taken-colour card overrides it
+// with the holding player's own identity colour.
+const LOCK_GOLD = '#f5c542';
+
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
@@ -192,9 +197,15 @@ export class WeaponCardList {
   // handle (the Garage passes its column's own build, mutated in place), so `refreshCaster()` after
   // a mount/chassis/colour change is all the re-sync there is. Omitting it draws no caster and is
   // exactly what the Weapon Lab does — that list is weapons-only, so it has no ability cards at all.
+  // #614: `unavailable(id, kind)` is the GENERAL form of the lock above — return null for a normal
+  // card, or `{ text, color }` to give it the identical scrim + centred label treatment with a
+  // caller-written reason. It applies to EVERY card kind (a colour held by another co-op player has
+  // no SCRAP price and isn't an item at all), and the weapon-cost path is untouched: `isLocked`
+  // still wins, and a list that passes neither behaves exactly as before.
   constructor(scene, {
     x, y, w, h, ids, sections = null, onSelect = null, onHover = null,
-    selectedId = null, isLocked = null, costOf = null, compact = false, caster = null,
+    selectedId = null, isLocked = null, costOf = null, unavailable = null,
+    compact = false, caster = null,
   } = {}) {
     this.scene = scene;
     this.caster = caster;
@@ -204,6 +215,7 @@ export class WeaponCardList {
     this._selectedIds = null;
     this.isLocked = isLocked;
     this.costOf = costOf;
+    this.unavailable = unavailable;
     this.compact = compact;
     this.cardH = compact ? COMPACT_CARD_H : CARD_H;
     this.cardGap = compact ? COMPACT_CARD_GAP : CARD_GAP;
@@ -515,9 +527,11 @@ export class WeaponCardList {
     // #65: a lock overlay — a dim scrim over the whole card plus a centred "🔒 N SCRAP" label
     // — sits on TOP of everything when the item is locked, hiding the live preview without
     // tearing it down (still simulated underneath so unlocking it needs no rebuild of state).
+    // #614: the SAME two objects are now the one "you can't pick this" state for any reason, not
+    // just an unpaid SCRAP price — see `_paintLock`. One scrim, one language, everywhere.
     const lockScrim = this.scene.add.rectangle(0, 0, 100, cardH, 0x05070a, 0.72).setOrigin(0, 0).setVisible(false);
     const lockLabel = this.scene.add.text(0, 0, '', {
-      fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: '#f5c542', align: 'center',
+      fontFamily: 'monospace', fontSize: this.compact ? '10px' : '13px', color: LOCK_GOLD, align: 'center',
     }).setOrigin(0.5).setVisible(false);
 
     // #610 (added scope): the bind glyph of whichever slot this item is currently mounted in — the
@@ -563,17 +577,28 @@ export class WeaponCardList {
     this._paintBind(card);
   }
 
-  // #65: apply/refresh a single card's locked look without rebuilding it. Call after a
+  // #65: apply/refresh a single card's unavailable look without rebuilding it. Call after a
   // purchase (or any balance change) to redraw locks in place — cheaper than setIds().
+  //
+  // #614: TWO reasons can now put a card behind the scrim, and they share it deliberately so the
+  // catalog speaks one "you can't pick this" language rather than inventing a second dim state:
+  //   1. the #65 SCRAP lock — item cards only, gold "🔒 LOCKED / N SCRAP",
+  //   2. the caller's general `unavailable(id, kind)` — any card kind, caller's own text/colour
+  //      (the Garage names the co-op player holding a colour, in that player's colour).
+  // The lock wins where both could apply, so the weapon-cost path is exactly what it always was.
   _paintLock(card) {
     // #611: only ITEM cards can be locked — a chassis or a colour has no SCRAP price, and asking
     // the caller's `isLocked` about one would be asking a weapon-shop question about a paint chip.
     const locked = card.kind === 'item' && (this.isLocked?.(card.id) ?? false);
-    card.lockScrim.setVisible(locked);
-    card.lockLabel.setVisible(locked);
+    const blocked = locked ? null : (this.unavailable?.(card.id, card.kind) ?? null);
+    const on = locked || !!blocked;
+    card.lockScrim.setVisible(on);
+    card.lockLabel.setVisible(on);
     if (locked) {
       const cost = this.costOf?.(card.id) ?? 0;
-      card.lockLabel.setText(`🔒 LOCKED\n${cost} SCRAP`);
+      card.lockLabel.setText(`🔒 LOCKED\n${cost} SCRAP`).setColor(LOCK_GOLD);
+    } else if (blocked) {
+      card.lockLabel.setText(blocked.text ?? '').setColor(blocked.color ?? LOCK_GOLD);
     }
   }
 
@@ -584,7 +609,9 @@ export class WeaponCardList {
   // rebuild (setIds(), e.g. a slot change or leaving/re-entering the garage), which already
   // applies orderByLock() against the live isLocked state — so a purchased item settles into
   // its canonical slot on the next real navigation, not mid-interaction.
-  refreshLocks() {
+  // #614: renamed from `refreshLocks` now that the scrim covers more than the SCRAP lock — the
+  // Garage calls it both after a purchase and whenever another player's colour changes.
+  refreshAvailability() {
     for (const c of this.cards) this._paintLock(c);
   }
 
