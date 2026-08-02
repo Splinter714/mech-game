@@ -23,7 +23,7 @@ import { TILE_ORDER, drawSkillTile, updateSkillTile, paintTilePlate } from '../u
 import { stepIndex, dominantDir, DirRepeater } from '../ui/padNav.js';
 import { PLAYER_MECH_KEYS, MAX_GARAGE_PLAYERS, canJoin } from '../data/coopGarage.js';
 import { makeSimulSession, joinSimulPlayer, toggleReady, allReady, activeIndices } from '../data/simulGarage.js';
-import { buildTabBar, TAB_BAR_H, DEPLOY_W, DEPLOY_MARGIN } from '../ui/tabBar.js';
+import { buildTabBar, TAB_BAR_H, DEPLOY_MARGIN } from '../ui/tabBar.js';
 import { Audio } from '../audio/index.js';
 import { StatsOverlay } from './garage/statsOverlay.js';
 import { garageColumnLayout } from './garage/columnLayout.js';
@@ -44,10 +44,15 @@ import { WeaponCardList } from '../ui/weaponCardList.js';
 // "another controller can join" hint text entirely — the join mechanic itself is unchanged, it's
 // just no longer advertised on screen (Jackson's playtest note).
 //
-// Readiness replaces the old sequential "P1 READY" handoff: each column has its own READY pill
-// (mouse-clickable, or its pad's START). The scene deploys the instant every joined column is
-// ready — which for a lone player just means "press ready, go," identical in feel to the old
-// single-player Deploy button.
+// Readiness replaces the old sequential "P1 READY" handoff: each column has its own READY BUTTON
+// (mouse-clickable, or its pad's START/SELECT — column 0 also has the 'D' key). The scene deploys
+// the instant every joined column is ready — which for a lone player just means "press ready, go,"
+// identical in feel to the old single-player Deploy button.
+// #609 restores that per-column button after #529 had collapsed it into ONE pinned top-right
+// Deploy/Ready button wired to column 0 only — which left players 2+ able to ready up from their
+// pad but with nothing on screen showing it and nothing to click. Jackson: "each player should
+// have their own ready button visible." The pinned button is gone entirely; player 1's is just
+// their own column's button like everybody else's, and single player is simply the n=1 case.
 //
 // #505 (second correction — Jackson, after playtesting the merged scene): "bring back the
 // simulgaragescene, we wanted THAT to be the main garage scene, but not save space for players
@@ -72,6 +77,16 @@ const UI = {
   // Deliberately distinct from `accent` (cyan), which this list already uses for "this IS the
   // equipped chassis/color" — the two states (cursor vs. equipped) can now coincide or differ.
   focus: 0xefc14a,
+};
+
+// #609: the per-column READY button's own palette — deliberately the SAME green/gold/grey language
+// the pinned tab-bar button used (ui/tabBar.js's goodBg/good/sel/off), so the control reads
+// identically to the one it replaces; only its position and its count (one per player) changed.
+const READY_UI = {
+  bg: 0x222b35, bgHover: 0x2c3744, readyBg: 0x1c3a24,
+  edge: 0x2a333f, sel: 0xefc14a, good: 0x7bd17b,
+  text: '#efc14a', textReady: '#7bd17b', textOff: '#4a525c',
+  radius: 8,
 };
 
 // A Phaser text `color` style wants a CSS string; mechColorFor (and the rest of the identity-
@@ -121,7 +136,8 @@ const LIST_SECTION_HEADER_H = 14, LIST_SECTION_GAP = 10;
 // #505 (fifth rework, playtest): the standalone header band that used to sit under the shared tab
 // bar (SCRAP/last-run readout + the "another controller can join" hint) is gone as its own block.
 // The join hint is removed entirely (no replacement); SCRAP now rides in the tab bar's own top row
-// (see create(), just left of its Deploy/Ready button); columns start right below the tab bar.
+// (see create() — hugging its right margin since #609 took the pinned Deploy/Ready button out of
+// that row); columns start right below the tab bar.
 
 export default class GarageScene extends Phaser.Scene {
   constructor() {
@@ -164,10 +180,14 @@ export default class GarageScene extends Phaser.Scene {
     // #445: the dev-only run-stats overlay, opened from the tab bar's STATS action.
     if (import.meta.env.DEV) this._statsOverlay = new StatsOverlay(this);
 
-    this._refreshHeader();
-    // SCRAP (+ last-run readout) rides in the tab bar's own top row now, just left of its pinned
-    // Deploy/Ready button, rather than in a separate header band below it.
-    const scrapX = this.W - DEPLOY_MARGIN - DEPLOY_W - 16;
+    // #609: no `onDeploy` — the shared top bar draws NO pinned Deploy/Ready button here any more
+    // (ui/tabBar.js makes it opt-in), because ready/deploy is a per-column control now. The bar is
+    // just its background band plus the SCRAP readout below, and it no longer depends on any state
+    // that changes while the Garage is open, so it is built once here rather than rebuilt.
+    this.tabBar = buildTabBar(this, { active: 'GarageScene' });
+    // SCRAP (+ last-run readout) rides in the tab bar's own top row, hugging its right margin —
+    // the pinned Deploy/Ready button that used to sit to its right is gone (#609).
+    const scrapX = this.W - DEPLOY_MARGIN;
     this.currencyText = this.add.text(scrapX, TAB_BAR_H / 2, '', {
       fontFamily: 'monospace', fontSize: '13px', color: UI.accent,
     }).setOrigin(1, 0.5);
@@ -177,10 +197,6 @@ export default class GarageScene extends Phaser.Scene {
     this._refreshCurrency();
 
     this._relayoutColumns();
-    // Column 0 didn't exist yet when _refreshHeader() first ran above — repaint the pinned Deploy/
-    // Ready button now that col.mech is real, so an incomplete starting build greys it out from
-    // the first frame rather than only after the next mount/join (#532 change 2).
-    this._refreshHeader();
 
     // One PadEdges per pad index 0..MAX-1, reused whether that index is claimed or not — an
     // unclaimed one is only ever polled for START (join); a claimed one drives its own column.
@@ -246,30 +262,6 @@ export default class GarageScene extends Phaser.Scene {
     // plugin (WeaponCardList's constructor) — clean them up on the way out, mirroring the old
     // single-editor garage's `this.events.once('shutdown', () => this.list.destroy())`.
     this.events.once('shutdown', () => { for (const col of this.cols) col?.catalogList?.destroy(); });
-  }
-
-  // ── Header chrome (tab bar + SCRAP/last-run + join hint) ─────────────────────────────────────
-  // #529: AUDIO/ART/STATS access moved to the shared pause menu (see wirePauseMenu's openStats
-  // opt in create(), below) — the tab bar itself is now just the pinned Deploy/Ready button.
-  // That button's own visual now reflects READY state (see ui/tabBar.js's `deployReady`), not
-  // just its label text — it doubles as the per-column ready checkmark icon this rework removed.
-  // #532 (change 2): the button also greys out/disables (`canDeploy: false`) whenever column 0's
-  // build isn't FULLY equipped yet (all 4 weapons + both abilities, Mech.isFullyEquipped) and
-  // isn't already ready — so it's not just silently impossible to ready up with a gap (see
-  // _toggleReady's own hard gate below), it visibly can't be clicked either.
-  // Once already READY the button stays clickable (to un-ready), regardless of what changes after.
-  _refreshHeader() {
-    this.tabBar?.layer.destroy();
-    const ready0 = !!this.session.ready[0];
-    const col0 = this.cols[0];
-    const canDeploy0 = ready0 || !col0 || col0.mech.isFullyEquipped();
-    this.tabBar = buildTabBar(this, {
-      active: 'GarageScene',
-      canDeploy: canDeploy0,
-      onDeploy: () => this._toggleReady(0),
-      deployLabel: ready0 ? '✓ READY' : '▶ READY',
-      deployReady: ready0,
-    });
   }
 
   _refreshCurrency() {
@@ -348,8 +340,8 @@ export default class GarageScene extends Phaser.Scene {
     // click. Added FIRST (before any tile), so within `col.layer` every tile still renders — and
     // hit-tests — on TOP of it; only the gaps between tiles (and the halo/dead space around them)
     // fall through to the blocker instead of whatever's behind it. The old header band (the
-    // passive-slot avatar + "READY?" pill) is gone entirely — see the compact ready indicator next
-    // to the PLAYER # label for where that piece moved.
+    // passive-slot avatar + "READY?" pill) is gone entirely — that piece is now this column's own
+    // READY button, down at the bottom-right of the panel next to the tiles (#609).
     col.panelTopBorder = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, 2, UI.panelEdge)
       .setOrigin(0, 0).setAlpha(0.9);
     col.panelBlocker = this.add.rectangle(gl.panel.x, gl.panel.y, gl.panel.w, gl.panel.h, 0x000000, 0)
@@ -361,6 +353,11 @@ export default class GarageScene extends Phaser.Scene {
     // (HudScene.js draws those separately, alongside its own call into the same tile rects).
     col.tileRefs = {};
     for (const rect of [...gl.tiles.weapons, ...gl.tiles.abilities]) this._drawColTile(col, rect);
+
+    // #609: THIS player's own READY button, immediately right of the tile row they just built and
+    // flush with its bottom (see columnLayout.js's `ready` rect). Added after the tiles, so like
+    // them it renders — and hit-tests — on top of `col.panelBlocker`.
+    this._buildReadyButton(col, gl.ready);
 
     // #607: the tab strip that #532 moved up into the shared top bar's row is GONE, along with
     // `col.tabBarLayer` — there is nothing above the catalog any more, so it owns the FULL
@@ -463,11 +460,10 @@ export default class GarageScene extends Phaser.Scene {
     // rework (playtest follow-up): the separate identity-colour dot that used to sit to its left
     // is gone — the label text itself is now painted in the player's identity colour, so there's
     // one element carrying that information instead of two.
-    // #529: the compact checkmark-style READY indicator that used to sit to this label's right is
-    // GONE — the single pinned top-right Deploy/Ready button (tab bar, column 0 only) now carries
-    // that visual for the keyboard/mouse player (see ui/tabBar.js's `deployReady`). For every
-    // OTHER joined column (no pinned button of their own), ready state instead folds into THIS
-    // label's own text (a trailing "✓", see _refreshReady) rather than a separate icon element.
+    // #529 removed the compact checkmark-style READY indicator that used to sit to this label's
+    // right, folding ready state into the label's own text instead (a trailing "✓"). That stays,
+    // but it is no longer the only signal: #609 gives every column its own READY button, which
+    // carries the primary visual (see _buildReadyButton/_refreshReady).
     col.headerLabel = this.add.text(gl.label.cx, gl.label.y, `PLAYER ${i + 1}`, {
       fontFamily: 'monospace', fontSize: '12px', color: hexColor(mechColorFor(col.mech, i)),
     }).setOrigin(0.5, 0);
@@ -916,10 +912,10 @@ export default class GarageScene extends Phaser.Scene {
     // Just the highlighted cards, never a rebuild — a rebuild would reset the list's scroll
     // position and interrupt every card's live-fire preview loop for no reason.
     this._refreshCatalogSelection(col);
-    // #532: a mount/unmount can flip column 0's full-loadout completeness, which the pinned
-    // Deploy/Ready button's greyed-out state depends on (_refreshHeader) — repaint it live rather
-    // than only on the next ready-toggle/join.
-    if (col.index === 0) this._refreshHeader();
+    // #532: a mount/unmount can flip this column's full-loadout completeness, which its own READY
+    // button's greyed-out state depends on — repaint it live rather than only on the next
+    // ready-toggle/join. #609: per column, not just column 0's pinned button.
+    this._refreshReady(col);
   }
 
   // #65: spend banked SCRAP to permanently unlock `id` — one shared unlock set/currency every
@@ -966,14 +962,57 @@ export default class GarageScene extends Phaser.Scene {
   }
 
   // ── Ready / deploy ───────────────────────────────────────────────────────────────────────────
-  // #529: the old compact checkmark-style indicator next to the PLAYER # label is gone (replaced,
-  // for column 0/the keyboard-mouse player, by the pinned top-right Deploy/Ready button's own
-  // visual — see ui/tabBar.js's `deployReady` + _refreshHeader). Every column's own ready state
-  // still needs SOME visible signal for co-op (columns 1-3 have no pinned button of their own), so
-  // it folds into the PLAYER # label's own text — a trailing "✓" — rather than a separate element.
+  // #609: one READY button PER COLUMN — every joined player gets their own, showing and toggling
+  // only their own readiness. Built as a Graphics plate (Phaser's Rectangle can't round corners,
+  // same reason skillTiles.js paints its own plates) plus a transparent hit rect, so the button
+  // reads as one more plate in the loadout panel's own button language. All coordinates are LOCAL
+  // to col.layer, like every other element in the column.
+  _buildReadyButton(col, rect) {
+    col.readyRect = rect;
+    col.readyPlate = this.add.graphics();
+    col.readyHit = this.add.rectangle(rect.x, rect.y, rect.w, rect.h, 0x000000, 0)
+      .setOrigin(0, 0).setInteractive({ useHandCursor: true });
+    col.readyText = this.add.text(rect.x + rect.w / 2, rect.y + rect.h / 2, '▶ READY', {
+      fontFamily: 'monospace', fontSize: '14px', color: READY_UI.text,
+    }).setOrigin(0.5);
+    col.readyHit.on('pointerover', () => { col.readyHover = true; this._refreshReady(col); });
+    col.readyHit.on('pointerout', () => { col.readyHover = false; this._refreshReady(col); });
+    // Clicking a column's button toggles THAT column — `col.index`, never a hard-coded 0, which is
+    // exactly what the single pinned button couldn't express.
+    col.readyHit.on('pointerdown', () => { if (this._canReady(col)) this._toggleReady(col.index); });
+    col.layer.add([col.readyPlate, col.readyHit, col.readyText]);
+  }
+
+  // Whether this column's button is live. The #532 gate, now applied PER COLUMN rather than only to
+  // column 0: a player can't declare ready until their own build is fully equipped (all 4 weapons +
+  // both abilities, Mech.isFullyEquipped) — but once ready the button stays live regardless, so it
+  // can always be un-readied. _toggleReady keeps its own hard gate underneath this (the pad/keyboard
+  // paths reach it without passing through here, and they toast the reason).
+  _canReady(col) {
+    return !!this.session.ready[col.index] || !!col.mech?.isFullyEquipped();
+  }
+
+  // Repaint one column's ready state — its own button, plus the trailing "✓" on the PLAYER # label
+  // (kept from #529 as a second, glanceable signal now that the button carries the primary one).
+  // Greyed + inert while the build is incomplete, so it's not just silently impossible to ready up
+  // with a gap — it visibly can't be pressed either (#532 change 2's intent, per column now).
   _refreshReady(col) {
-    const ready = this.session.ready[col.index];
+    if (!col) return;
+    const ready = !!this.session.ready[col.index];
     col.headerLabel?.setText(`PLAYER ${col.index + 1}${ready ? ' ✓' : ''}`);
+    if (!col.readyPlate) return;
+    const enabled = this._canReady(col);
+    const { x, y, w, h } = col.readyRect;
+    const r = READY_UI.radius;
+    const fill = !enabled ? READY_UI.bg
+      : ready ? READY_UI.readyBg
+        : col.readyHover ? READY_UI.bgHover : READY_UI.bg;
+    const edge = !enabled ? READY_UI.edge : ready ? READY_UI.good : READY_UI.sel;
+    col.readyPlate.clear();
+    col.readyPlate.fillStyle(fill, 1).fillRoundedRect(x, y, w, h, r);
+    col.readyPlate.lineStyle(enabled ? 2 : 1.25, edge, 1).strokeRoundedRect(x, y, w, h, r);
+    col.readyText.setText(ready ? '✓ READY' : '▶ READY')
+      .setColor(!enabled ? READY_UI.textOff : ready ? READY_UI.textReady : READY_UI.text);
   }
 
   // Toggling a player TO ready is gated on their build being FULLY equipped (#532 change 2: every
@@ -998,7 +1037,6 @@ export default class GarageScene extends Phaser.Scene {
     this.session = toggleReady(this.session, i);
     Audio.ui('menuNav');
     this._refreshReady(col);
-    if (i === 0) this._refreshHeader();
     if (allReady(this.session)) this._deploy();
   }
 
@@ -1018,8 +1056,10 @@ export default class GarageScene extends Phaser.Scene {
     Audio.ui('deploy');
     this.session = joinSimulPlayer(this.session);
     this.registry.set('coopPlayerCount', this.session.count);
+    // Every column is rebuilt at the new width — including its own READY button, repainted from
+    // the live session by _buildColumn's closing _refreshReady. Nothing in the shared top bar
+    // depends on the session any more (#609), so there is no header to refresh here.
     this._relayoutColumns();
-    this._refreshHeader();
     this.toast(`PLAYER ${this.session.count} JOINED`, UI.accent);
   }
 
