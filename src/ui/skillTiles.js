@@ -26,17 +26,6 @@ export const TILE_ORDER = ['leftArm', 'leftShoulder', 'rightShoulder', 'rightArm
 // second (right) — see `weaponAbilityRows` below, which is what actually places them.
 export const HUD_ABILITY_ORDER = ['abilityX', 'abilityY'];
 
-// #544 (Jackson: "LB and X/L3 button contents swap ... RB and Y/R3 button contents swap"): the
-// two RENDER-POSITION swaps `weaponAbilityRows` applies at the end of its own layout — leftShoulder's
-// weapon-row rect trades screen geometry with abilityX's ability-row rect, and rightShoulder's with
-// abilityY's. Pure position swap: `mounts`/`abilityMounts`, TILE_ORDER, HUD_ABILITY_ORDER,
-// SKILL_BINDS, ABILITY_BINDS and GarageScene's `_navSlot` are all untouched — see that function's
-// own comment for the full reasoning.
-const RENDER_SWAP_PAIRS = [
-  ['leftShoulder', 'abilityX'],
-  ['rightShoulder', 'abilityY'],
-];
-
 export const TILE_UI = {
   text: '#c8d2dd', dim: '#7c8794', accent: '#5ec8e0', good: '#7bd17b', warn: '#efc14a', bad: '#e2533a',
   card: 0x131820, cardSel: 0x1b2430, edge: 0x2a333f, sel: 0xefc14a, slotEdge: 0x323c49, track: 0x0e1218,
@@ -220,32 +209,15 @@ export function weaponAbilityRows(x, w, {
     { loc: abilityOrder[0], x: rowX, y: abilityTop, w: leftW, h: abilityH },
     { loc: abilityOrder[1], x: rightX, y: abilityTop, w: rightW, h: abilityH },
   ];
-  // #544 (Jackson: "LB and X/L3 button contents swap, sizes stay the same" — same for RB/Y —
-  // "and armor display moves to the new position"): a pure GEOMETRY swap between two paired
-  // rects, applied as the very last step so every position computed above (rowX/rowW/abilityTop,
-  // the weapon row itself) is derived from the UN-swapped layout first. Each pair trades its
-  // `{x,y,w,h}` only — the `loc` label on each rect stays put, so every consumer (HudScene,
-  // GarageScene/columnLayout) still looks up content by the SAME unchanged key
-  // (`mech.mounts.leftShoulder`, `mech.abilityMounts.abilityX`, TILE_ORDER, HUD_ABILITY_ORDER,
-  // SKILL_BINDS, ABILITY_BINDS, GarageScene's `_navSlot` pad cursor — none of it touched) and
-  // hands the looked-up content to `drawSkillTile`, which simply draws into whichever box this
-  // function attached to that loc. The weapon content now lands in the ability row's own
-  // half-height slot and the ability content lands in the weapon row's own square slot, each at
-  // its SLOT's existing size — not a resize, not an input rebind. `isWideTile`'s aspect check
-  // (run against the rect, not the loc) is what then makes the relocated weapon content
-  // auto-render "wide" (icon-left/text-right, like the core tile already does) and the relocated
-  // ability content auto-render "square" (icon-centered, like every other weapon tile) — no
-  // separate style branch needed for either. The armor-backing plate (HudScene's
-  // `_paintFusedReadout`) reads its box straight off `panel.skillRefs[loc].rect` for `loc` in
-  // TILE_ORDER, so it follows the weapon content to its new position for free.
-  for (const [weaponLoc, abilityLoc] of RENDER_SWAP_PAIRS) {
-    const wTile = weapons.find((t) => t.loc === weaponLoc);
-    const aTile = abilities.find((t) => t.loc === abilityLoc);
-    if (!wTile || !aTile) continue;
-    const g = { x: wTile.x, y: wTile.y, w: wTile.w, h: wTile.h };
-    wTile.x = aTile.x; wTile.y = aTile.y; wTile.w = aTile.w; wTile.h = aTile.h;
-    aTile.x = g.x; aTile.y = g.y; aTile.w = g.w; aTile.h = g.h;
-  }
+  // #544 briefly swapped the RENDERED CONTENT of the two shoulder weapon slots with the two
+  // ability slots (weapons drawn up in the half-height ability boxes, abilities down in the square
+  // weapon boxes). Its playtest follow-up reversed that — "same positions as are currently
+  // available, but swap which things go where" — so content is back to matching position: the four
+  // WEAPONS draw in the row of four below, the two ABILITIES in the two half-height boxes above.
+  // Every box keeps the position and size #544 left it with; only which content lands in which box
+  // changed back. The armor-backing plate (HudScene's `_paintFusedReadout`) reads its box straight
+  // off `panel.skillRefs[loc].rect` for `loc` in TILE_ORDER, so it follows the weapon content back
+  // down to the lower row for free.
   return { weapons, abilities, top: abilityTop };
 }
 
