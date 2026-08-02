@@ -4,7 +4,6 @@ import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.
 import { CATEGORIES } from '../data/categories.js';
 import { getItem, isWeapon } from '../data/items.js';
 import { catalogMaxRange, previewRangeFrac } from '../data/weapons.js';
-import { magazineReadout } from '../data/weaponStats.js';
 import { Audio } from '../audio/index.js';
 import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED, WEAPON_IMPACT_SOUNDS_ENABLED } from '../audio/sfxParams.js';
 // #224 (temporary): both flags gate the Weapon Lab preview's trajectory/impact cues below —
@@ -91,7 +90,12 @@ const STAGE_RADIUS = 20;
 
 const CARD_H = 96;
 const CARD_GAP = 12;
-const LABEL_W = 200;     // left block: name + stats
+// #617: shrunk from 200 now that the numeric stats line (`dmg 5.5 · rng 600 · 1.20s · ammo 35`,
+// the widest thing that used to live in this column) is gone entirely — the label block now only
+// has to fit the name, the category, and a short word-only subtype line (`proj · arc`, `spread`,
+// `stream · burst`…) or an ability's cooldown/duration line. The freed 40px flows straight to the
+// preview stage via `stageX = labelW + stageGap` (see _layout).
+const LABEL_W = 160;     // left block: name + subtype
 // The card's MINIMUM width — the one dial that decides how many cards go across.
 //
 // #610 made the list a responsive grid packed at a FIXED card width, leaving whatever didn't
@@ -125,7 +129,8 @@ const CARD_COL_GAP = 12;
 // word-wraps within labelW regardless of mode, so neither size ever overflows into the stage.
 const COMPACT_CARD_H = 60;
 const COMPACT_CARD_GAP = 6;
-const COMPACT_LABEL_W = 108;
+// #617: shrunk from 108 alongside LABEL_W above, same reasoning at the compact scale.
+const COMPACT_LABEL_W = 86;
 // Kept proportional to the full-size width through every re-tune (240 at 340, 328 at 465, and now
 // 268 at 380 — 328 × 380/465 ≈ 268), even though nothing builds a `compact` list any more, so if
 // the compact path is ever revived it isn't silently the only card shape still sized to an old
@@ -676,6 +681,12 @@ export class WeaponCardList {
     for (const c of this.cards) this._paintSelection(c);
   }
 
+  // #617: the numeric weapon-stat line (`dmg X · rng Y · Zs · ammo N`) is gone entirely — this
+  // card list was the only surface that ever showed those numbers, and Jackson chose full
+  // removal over condensing. The delivery-subtype line survives but every number embedded in it
+  // is stripped too, leaving just the words that say HOW a weapon behaves (`proj · arc`,
+  // `spread`, `stream · burst`, `hitscan`, `melee`, `homing`). Ability cards are untouched: their
+  // second line is cooldown/duration timing, not a weapon-stat block.
   _statLines(item, weapon) {
     if (!weapon) {
       const cd = item.cooldown != null ? `${item.cooldown}s cooldown` : '';
@@ -690,17 +701,12 @@ export class WeaponCardList {
     const parts = [];
     if (d.hit === 'hitscan') parts.push('hitscan');
     else if (d.hit === 'contact') parts.push('melee');
-    else parts.push(`proj ${d.velocity}px/s${d.path === 'arcing' ? ' · arc' : ''}`);
-    if (d.pattern === 'spread') parts.push(`spread×${d.count ?? 1}`);
-    else if (d.pattern === 'stream') parts.push(`stream ${d.fireRate}/s${(d.count ?? 1) > 1 ? ` ×${d.count}` : ''}`);
-    if (d.burst) parts.push(`burst×${d.count ?? 1}`);
+    else parts.push(d.path === 'arcing' ? 'proj · arc' : 'proj');
+    if (d.pattern === 'spread') parts.push('spread');
+    else if (d.pattern === 'stream') parts.push('stream');
+    if (d.burst) parts.push('burst');
     if (d.guidance === 'homing') parts.push('homing');
-    // #402: mag size only (no trickle). #451: counted in PROJECTILES, the same unit the arena HUD
-    // now shows — a 4-round rack of 5-missile salvoes reads 20 in both places or the two disagree.
-    const mag = magazineReadout(weapon, weapon.ammoMax);
-    const ammo = mag == null ? '∞' : `${mag.max}`;
-    const cadence = d.pattern === 'stream' ? `${d.fireRate}/s` : `${(weapon.cycleTime / 1000).toFixed(2)}s`;
-    return [parts.join(' · '), `dmg ${weapon.damage} · rng ${weapon.range.max} · ${cadence} · ammo ${ammo}`].join('\n');
+    return parts.join(' · ');
   }
 
   // Flow cards into a responsive GRID within the region; compute max scroll. Margins shrink in
