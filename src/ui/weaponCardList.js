@@ -79,6 +79,16 @@ const BIND_GOLD = '#efc14a';
 // with the holding player's own identity colour.
 const LOCK_GOLD = '#f5c542';
 
+// #616: corner rounding for the card's outer panel and its (more-rounded) black preview-stage
+// backing. Phaser's Rectangle shape has no radius option, so both are drawn with Graphics
+// (fillRoundedRect/strokeRoundedRect) rather than plain Rectangle game objects — see `panel`/
+// `stage` in `_buildCard`. `TILE_UI.radius` (skillTiles.js, the loadout tiles) is 9; PANEL_RADIUS
+// is a modest lift over that per Jackson's "slightly more rounding", and STAGE_RADIUS is
+// deliberately well past it so the stage reads visibly softer than its own outer frame. Single
+// named constants — this is a dial Jackson expects to keep tuning in play.
+const PANEL_RADIUS = 10;
+const STAGE_RADIUS = 20;
+
 const CARD_H = 96;
 const CARD_GAP = 12;
 const LABEL_W = 200;     // left block: name + stats
@@ -504,8 +514,18 @@ export class WeaponCardList {
     const nameSize = this.compact ? '10px' : '14px', catSize = this.compact ? '8px' : '11px', statsSize = this.compact ? '8px' : '10px';
     const wrapW = Math.max(40, this.labelW - 24);
 
-    const panel = this.scene.add.rectangle(0, 0, 100, cardH, UI.panel).setOrigin(0, 0).setStrokeStyle(1, UI.panelEdge);
-    const stage = this.scene.add.rectangle(0, 0, 100, 100, UI.stage).setOrigin(0, 0);
+    // #616: rounded corners require Graphics (Phaser's Rectangle shape has no radius), but
+    // `panel` also has to carry the card's click/hover hit area (below). The least invasive
+    // split: `panel` stays a Rectangle, fully transparent, used ONLY for hit-testing — it has
+    // to stay `visible` (alpha 0, not `setVisible(false)`) because Phaser's input system gates
+    // pointer candidacy on `gameObject.willRender(camera)`, which an actually-hidden object
+    // fails (InputManager.inputCandidate) — a real, established pattern in this codebase
+    // already (GarageScene's `panelBlocker`). The rounded plate itself is a separate Graphics,
+    // `panelG`, drawn just above it. `stage` becomes a plain Graphics too: it was never
+    // interactive, so it just redraws in place wherever it used to move/resize.
+    const panel = this.scene.add.rectangle(0, 0, 100, cardH, 0x000000, 0).setOrigin(0, 0);
+    const panelG = this.scene.add.graphics();
+    const stage = this.scene.add.graphics();
     const swatch = this.scene.add.rectangle(14, 16, 4, cardH - (this.compact ? 12 : 32), color).setOrigin(0, 0);
     // The weapon's actual on-mech mount hardware IS the emitter the live preview fires from —
     // the same silhouette drawWeaponMount() paints on the body. The texture points up and is
@@ -556,12 +576,12 @@ export class WeaponCardList {
 
     // emitter sits under fxG so projectiles/beams render over the muzzle; the bind glyph sits over
     // the live preview so a passing shot can't hide it; the lock overlay sits above everything.
-    c.add([panel, stage, swatch, ...(emitter ? [emitter] : []), ...(art?.objects ?? []), name, cat, stats,
+    c.add([panel, panelG, stage, swatch, ...(emitter ? [emitter] : []), ...(art?.objects ?? []), name, cat, stats,
       ...(preview ? [preview.layer] : []), fxG, bindText, lockScrim, lockLabel]);
     this.scroller.add(c);
 
     const card = {
-      id, kind, item, weapon, color, art, container: c, panel, stage, emitter, name, cat, stats, fxG,
+      id, kind, item, weapon, color, art, container: c, panel, panelG, stage, emitter, name, cat, stats, fxG,
       lockScrim, lockLabel, preview, bindText,
       cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
@@ -630,11 +650,22 @@ export class WeaponCardList {
   // implements. Selected and focused are two independent facts that can coincide, and only the
   // cursor is ever coloured — a selected-but-not-focused card says so with its brighter fill and a
   // thicker but still NEUTRAL edge.
+  // #616: `panel` is now a rounded Graphics plate, so this redraws it rather than restyling it —
+  // which means it needs the card's current size. `_layoutCard` stores that on the card
+  // (`card.w`/`card.h`) and also calls this on every layout pass (cards stretch continuously,
+  // #611 follow-up), not just on a selection/focus change, so a resize never leaves a stale-sized
+  // plate under a differently-sized hit area. Falls back to the list's own defaults for the very
+  // first paint, which happens in `_buildCard` before that card's first layout pass has run.
   _paintSelection(card) {
     const on = this._isSelected(card);
     const focused = this._focus >= 0 && this.cards[this._focus] === card;
-    card.panel.setFillStyle(on || focused ? UI.panelSel : UI.panel)
-      .setStrokeStyle(on || focused ? 2 : 1, focused ? this.focusColor : UI.panelEdge);
+    const w = card.w ?? 100, h = card.h ?? this.cardH;
+    const g = card.panelG;
+    g.clear();
+    g.fillStyle(on || focused ? UI.panelSel : UI.panel, 1);
+    g.fillRoundedRect(0, 0, w, h, PANEL_RADIUS);
+    g.lineStyle(on || focused ? 2 : 1, focused ? this.focusColor : UI.panelEdge, 1);
+    g.strokeRoundedRect(0, 0, w, h, PANEL_RADIUS);
   }
 
   // #615: recolour the cursor in place — the Garage calls this when its column's player picks a new
@@ -752,8 +783,18 @@ export class WeaponCardList {
     const stageH = cardH - 16;
     card.top = y;
     card.container.setPosition(x, y);
+    // #616: `panel` (the invisible hit-rect) still gets a real setSize for its own hit-testing
+    // geometry; `card.w`/`card.h` are what the rounded Graphics plate reads, redrawn right here
+    // via _paintSelection so a resize (window resize, column-count change) never leaves a
+    // stale-sized rounded plate under the freshly-sized hit area.
     card.panel.setSize(cardW, cardH);
-    card.stage.setPosition(stageX, 8).setSize(stageW, stageH);
+    card.w = cardW; card.h = cardH;
+    this._paintSelection(card);
+    // The stage's black backing, rounder than the panel (STAGE_RADIUS > PANEL_RADIUS) — redrawn
+    // inline here since it carries no interactivity to preserve, only geometry that changes every
+    // layout pass. `card.muzzleX`/`muzzleY`/`stageW` below derive from `stageX`/`stageW`, not from
+    // this shape's own bounds, so they don't implicitly assume a sharp-cornered rect.
+    card.stage.clear().fillStyle(UI.stage, 1).fillRoundedRect(stageX, 8, stageW, stageH, STAGE_RADIUS);
     card.name.setX(nameX); card.cat.setX(nameX); card.stats.setX(nameX);
     card.muzzleX = stageX + muzzleInset;
     card.muzzleY = 8 + stageH / 2;
