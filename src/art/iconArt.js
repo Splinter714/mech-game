@@ -20,6 +20,20 @@ const GLYPHS = {
   energy: (sg, c) => { sg.fillStyle(c, 1); sg.fillRect(7, 1, 2, 14); sg.fillRect(4, 6, 8, 2); },
   // A small dish for support.
   support: (sg, c) => { sg.fillStyle(c, 1); sg.fillCircle(8, 8, 5); sg.fillStyle(0x0d1014, 1); sg.fillCircle(8, 8, 2.5); },
+  // #618: a loose cluster of blobs — the plasma family (Caustic Lobber, Plasma Coater/Cannon/
+  // Lance) reads as globs/bolts rather than a clean beam, so the glyph is irregular circles
+  // instead of a straight shape.
+  plasma: (sg, c) => {
+    sg.fillStyle(c, 1);
+    sg.fillCircle(8, 7, 4.2); sg.fillCircle(4.5, 10.5, 2.4); sg.fillCircle(11.5, 10, 2.6);
+  },
+  // #618: a simple flame silhouette — Napalm Lobber/Flamethrower.
+  fire: (sg, c) => {
+    sg.fillStyle(c, 1);
+    sg.fillTriangle(8, 1, 3.5, 13, 12.5, 13);
+    sg.fillStyle(0x0d1014, 1);
+    sg.fillTriangle(8, 6, 5.5, 13, 10.5, 13);
+  },
 };
 
 export function buildIconTextures(scene) {
