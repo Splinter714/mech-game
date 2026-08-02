@@ -115,6 +115,29 @@ export const AMMO_BAR_W = 7;      // the vertical column's width
 export const AMMO_BAR_PAD = 6;    // top/bottom inset from the tile's own edges
 export const ammoBarColor = structureColor;
 
+// #607 playtest follow-up (Jackson: "in the garage, current bindings should be visible on the
+// weapon/ability row (towards the right side of the preview row)"): an OPT-IN placement, passed as
+// `bindEdge: true` in a tile's opts, that puts the bind glyph against the tile's RIGHT edge at
+// mid-height instead of the shared default (top-centre on a square weapon tile, a top-left badge
+// on a stacked ability tile, top of the text column on a wide one).
+//
+// Opt-in rather than the new default because in the ARENA that same right edge belongs to the
+// live ammo/cooldown column (`AMMO_BAR_W` above, inset 5px from the edge and spanning nearly the
+// tile's full height) — a glyph there would sit under the gauge mid-fight. The Garage never
+// passes `ammoFrac`/`onCooldown`, so that edge is free there and only there; HudScene passes no
+// `bindEdge` and keeps its existing placement untouched.
+//
+// The glyph is right-anchored (origin 1, 0.5) and the tile's own content is pulled left out of a
+// reserved gutter so nothing runs underneath it. The gutter is sized off the WIDEST glyph the
+// bind tables can produce (3 chars — "RMB"/"LMB") rather than whichever one happens to be showing,
+// so an input-mode swap mid-screen (RT ↔ RMB) only ever changes the TEXT, never the layout.
+export const BIND_EDGE_PAD = 6;
+const BIND_EDGE_CHARS = 3;
+const MONO_ADVANCE = 0.62;        // monospace advance width as a fraction of the font size
+export function bindEdgeGutter(fontSize) {
+  return Math.round(fontSize * MONO_ADVANCE * BIND_EDGE_CHARS) + BIND_EDGE_PAD * 2;
+}
+
 // Pure geometry for a wide tile's content: a square icon, sized off the tile's own HEIGHT (the
 // limiting dimension, so it actually fills the short tile instead of overflowing it), followed by
 // a text column (bind glyph + subtitle) — but the icon+text PAIR is centered as one group within
@@ -127,12 +150,17 @@ export const ammoBarColor = structureColor;
 // fraction of the tile's own width instead of filling every remaining pixel, so the icon+column
 // block has a real width to center — not the full tile. Exported so the "always inside the rect,
 // column never negative" invariant is unit-testable without booting Phaser.
-export function wideTileLayout(rect, { pad = 6, iconGap = 8, colWFrac = 0.46 } = {}) {
+// `rightReserve` (#607 follow-up) walls off a strip of the tile's right edge for the bind glyph —
+// the icon+column pair is then sized and centred within what's LEFT of the tile, so the glyph
+// never has content sliding under it. 0 (the default, and what the arena HUD passes) reproduces
+// the original full-width geometry exactly.
+export function wideTileLayout(rect, { pad = 6, iconGap = 8, colWFrac = 0.46, rightReserve = 0 } = {}) {
   const iconSize = Math.round(rect.h * 0.8);
-  const maxColW = Math.max(0, rect.w - pad * 2 - iconSize - iconGap);
-  const colW = Math.min(maxColW, Math.round(rect.w * colWFrac));
+  const usableW = Math.max(0, rect.w - rightReserve);
+  const maxColW = Math.max(0, usableW - pad * 2 - iconSize - iconGap);
+  const colW = Math.min(maxColW, Math.round(usableW * colWFrac));
   const totalW = iconSize + iconGap + colW;
-  const left = Math.round(rect.x + (rect.w - totalW) / 2);
+  const left = Math.round(rect.x + (usableW - totalW) / 2);
   const iconCx = Math.round(left + iconSize / 2);
   const iconCy = Math.round(rect.y + rect.h / 2);
   const colX = left + iconSize + iconGap;
@@ -237,7 +265,9 @@ export function diamondLayout(cx, cy, { size = 46, radius } = {}) {
 
 // Build one tile's display objects into `parent` (a Container) and apply `opts`. Returns
 // refs for in-place updates. `opts`: { itemId, mode, selected, subtitle, subtitleColor,
-// iconAlpha, ammoFrac, emptyLabel }.
+// iconAlpha, ammoFrac, emptyLabel, bindEdge }. `bindEdge` is read here only — it's pure geometry,
+// fixed when the tile is built, so `updateSkillTile` ignores it (the glyph TEXT still changes
+// freely, which is what an input-mode swap needs).
 export function drawSkillTile(scene, parent, rect, opts) {
   const cx = rect.x + rect.w / 2;
   const wide = isWideTile(rect);
@@ -250,6 +280,12 @@ export function drawSkillTile(scene, parent, rect, opts) {
     .setOrigin(0, 0);
 
   const stacked = wide && !!opts.bindOverStatus;
+  // #607 follow-up: Garage-only right-edge bind placement (see `bindEdgeGutter` above). Every
+  // branch below reads the same two numbers — where the right-anchored glyph goes, and how much
+  // of the tile it reserves — so the three tile shapes stay consistent with each other.
+  const bindEdge = !!opts.bindEdge;
+  const edgeX = rect.x + rect.w - BIND_EDGE_PAD;
+  const edgeY = rect.y + rect.h / 2;
   let bind, icon, plus, subtitle;
   if (stacked) {
     // #526-followup2 (point 6, playtest: "restore the per-ability icon"): the ability tiles' own
@@ -259,40 +295,58 @@ export function drawSkillTile(scene, parent, rect, opts) {
     // `updateSkillTile`) — only `plus` (the empty-slot "+" swatch) still only shows when the slot
     // is actually empty, same as every other tile.
     const L = stackedTileLayout(rect);
-    bind = scene.add.text(L.bindX, L.bindY, '', {
-      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.24)}px`, color: TILE_UI.accent,
-    }).setOrigin(0, 0);
-    icon = scene.add.image(L.iconCx, L.iconCy, '__WHITE').setVisible(false);
-    plus = scene.add.text(L.iconCx, L.iconCy, '+', {
+    const bindSize = Math.round(rect.h * 0.24);
+    // #607 follow-up: with the glyph on the right edge the whole centred stack (icon, "+", status
+    // line) slides left by half the reserved gutter, so it stays visually centred in what's left
+    // of the tile rather than drifting under the glyph.
+    const gutter = bindEdge ? bindEdgeGutter(bindSize) : 0;
+    const dx = Math.round(gutter / 2);
+    bind = scene.add.text(bindEdge ? edgeX : L.bindX, bindEdge ? edgeY : L.bindY, '', {
+      fontFamily: 'monospace', fontSize: `${bindSize}px`, color: TILE_UI.accent,
+    }).setOrigin(bindEdge ? 1 : 0, bindEdge ? 0.5 : 0);
+    icon = scene.add.image(L.iconCx - dx, L.iconCy, '__WHITE').setVisible(false);
+    plus = scene.add.text(L.iconCx - dx, L.iconCy, '+', {
       fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.42)}px`, color: TILE_UI.slotEdge,
     }).setOrigin(0.5).setVisible(false);
-    subtitle = scene.add.text(L.cx, L.subtitleY, '', {
+    subtitle = scene.add.text(L.cx - dx, L.subtitleY, '', {
       fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'center',
-      wordWrap: { width: rect.w - 10, useAdvancedWrap: true },
+      wordWrap: { width: rect.w - 10 - gutter, useAdvancedWrap: true },
     }).setOrigin(0.5, 0);
   } else if (wide) {
     // Icon-left / text-right, but the pair is centered as one group within the rect (see
     // `wideTileLayout`) — so a wide tile's content sits balanced in the wide rect instead
     // of pinned to the left pad with empty space trailing off to the right. Still used by the
     // core/passive tile, which keeps a real item icon (see the module doc above `stackedTileLayout`).
-    const L = wideTileLayout(rect);
-    bind = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.1), '', {
-      fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.34)}px`, color: TILE_UI.accent,
-    }).setOrigin(0, 0);
+    const bindSize = Math.round(rect.h * 0.34);
+    // #607 follow-up: the glyph leaves the text column for the tile's right edge, so the column
+    // holds nothing but the item name — `rightReserve` re-centres the icon+column pair inside the
+    // shortened tile, and the name centres VERTICALLY (nothing sits above it any more, and leaving
+    // it at 0.56h would hang it low under an empty gap).
+    const gutter = bindEdge ? bindEdgeGutter(bindSize) : 0;
+    const L = wideTileLayout(rect, { rightReserve: gutter });
+    bind = scene.add.text(bindEdge ? edgeX : L.colX, bindEdge ? edgeY : rect.y + Math.round(rect.h * 0.1), '', {
+      fontFamily: 'monospace', fontSize: `${bindSize}px`, color: TILE_UI.accent,
+    }).setOrigin(bindEdge ? 1 : 0, bindEdge ? 0.5 : 0);
     icon = scene.add.image(L.iconCx, L.iconCy, '__WHITE').setVisible(false);
     plus = scene.add.text(L.iconCx, L.iconCy, '+', {
       fontFamily: 'monospace', fontSize: `${Math.round(rect.h * 0.5)}px`, color: TILE_UI.slotEdge,
     }).setOrigin(0.5).setVisible(false);
-    subtitle = scene.add.text(L.colX, rect.y + Math.round(rect.h * 0.56), '', {
+    subtitle = scene.add.text(L.colX, bindEdge ? edgeY : rect.y + Math.round(rect.h * 0.56), '', {
       fontFamily: 'monospace', fontSize: '10px', color: TILE_UI.dim, align: 'left',
       wordWrap: { width: L.colW, useAdvancedWrap: true },
-    }).setOrigin(0, 0);
+    }).setOrigin(0, bindEdge ? 0.5 : 0);
   } else {
-    bind = scene.add.text(cx, rect.y + 6, '', {
-      fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.13)}px`, color: TILE_UI.accent,
-    }).setOrigin(0.5, 0);
-    icon = scene.add.image(cx, rect.y + rect.h * 0.5, '__WHITE').setVisible(false);
-    plus = scene.add.text(cx, rect.y + rect.h * 0.46, '+', {
+    const bindSize = Math.round(rect.w * 0.13);
+    // #607 follow-up: on a square tile the glyph and the ICON are the only things sharing the
+    // mid-height band (the item name sits well below it, at rect.h - 22, so it needs no gutter and
+    // keeps its full centred wrap width). The icon slides left by half the reserved gutter, which
+    // both clears the glyph and leaves icon+glyph reading as one centred pair.
+    const dx = bindEdge ? Math.round(bindEdgeGutter(bindSize) / 2) : 0;
+    bind = scene.add.text(bindEdge ? edgeX : cx, bindEdge ? edgeY : rect.y + 6, '', {
+      fontFamily: 'monospace', fontSize: `${bindSize}px`, color: TILE_UI.accent,
+    }).setOrigin(bindEdge ? 1 : 0.5, bindEdge ? 0.5 : 0);
+    icon = scene.add.image(cx - dx, rect.y + rect.h * 0.5, '__WHITE').setVisible(false);
+    plus = scene.add.text(cx - dx, rect.y + rect.h * 0.46, '+', {
       fontFamily: 'monospace', fontSize: `${Math.round(rect.w * 0.2)}px`, color: TILE_UI.slotEdge,
     }).setOrigin(0.5).setVisible(false);
     // #121 follow-up: at narrow window widths the tile row shrinks (see GarageScene's
