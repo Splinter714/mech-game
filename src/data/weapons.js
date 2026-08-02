@@ -835,25 +835,38 @@ export const WEAPONS = {
       chain: { maxJumps: 3, jumpRange: 300, falloff: 0.7 },
     },
   }),
-  linkPylons: w({   // one pull lobs EXACTLY 2 pylon charges a short, fixed distance (arc
-    // numbers lifted from the shelved Proximity Mines toss — `timedCharge` above — same
-    // path:'arcing'/velocity/arcBump so the throw reads the same way). Once BOTH land and arm
-    // they draw a persistent connecting line (drawBeam) and PULSE damage to any enemy near that
-    // line, on an interval, for a limited lifetime. If one of the pair dies/expires first the
-    // survivor goes inert — see scenes/arena/projectiles.js `_updatePylonLinks`/`_plantHazard`.
-    // NOT N-pylon cross-linking — exactly 2 per cast (his confirmed simplification).
-    // Ammo: a multi-charge magazine rather than single-cast, since this is a WEAPON not an
-    // ability — mirrors Gravity Well's old 3-round mag / 2000ms cadence exactly.
+  linkPylons: w({   // #623: one pull lobs a 5-pylon volley, staggered like Plasma Arc's
+    // saturating burst (see plasmaCannon's #434 VOLLEY REWORK comment above for the full
+    // rationale of each delivery field) — count:5 + burst.interval ripples the throw out
+    // ~70ms apart instead of one instant fan, burstScatter fans each pylon a random angle
+    // across spreadAngle (13°) so they don't stack on one landing point, and salvoSpread +
+    // salvoNoConverge give each pylon a persistent lateral offset (up to 46px) that doesn't
+    // converge, spreading the 5 landings across a small swath. Arc numbers (arcBump, fixedRange)
+    // kept from the original 2-pylon toss — same throw feel, just more charges.
+    // Once landed and armed, EVERY currently-alive pylon in the launch group links to every
+    // other alive pylon (a full web, not pairs) and PULSES damage to any enemy near any strand,
+    // on an interval, for a limited lifetime. A pylon dying independently shrinks the web; a
+    // group down to exactly 1 member goes inert (same rule as before, now reachable from 5
+    // instead of 2) — see scenes/arena/projectiles.js `_updatePylonLinks`/`_plantHazard`.
+    // Ammo: `ammoPerShot: true` (like Plasma Arc) means each of the 5 pylons spends its own
+    // magazine round rather than one flat charge per pull, so ammoMax scales up to match —
+    // mirrors plasmaCannon's own math exactly: ammoMax 3 -> 15 (5x, one round per pylon) so
+    // the magazine still covers 3 full pulls/casts of 5 pylons each (15 ÷ 5 = 3) before the
+    // mag empties and the automatic RELOAD_SECONDS (2s) reload kicks in. cycleTime is left at
+    // 2000ms (unchanged) since that governs the pull-to-pull cadence, not the per-pylon spend —
+    // 3 pulls × 2000ms = ~6.0s burst, then reload, exactly the same overall shape Gravity Well/
+    // the old 2-pylon version had, just 5 pylons landing per pull instead of 2.
     id: 'linkPylons', name: 'Link Pylons', category: 'lightning',
     // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead
     // of resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card
     // math, same convention as Gravity Well.
     damage: 8, range: { min: 0, opt: 150, max: 190 },
-    ammoMax: 3, cycleTime: 2000,   // mirrors Gravity Well's old 3-round mag / cadence
+    ammoMax: 15, cycleTime: 2000,   // 3 volleys (15 ÷ 5 pylons/pull), ~6.0s burst, then reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
       fixedRange: true, arcBump: 1.3,
-      pattern: 'spread', count: 2, spreadAngle: 40,
+      count: 5, burst: { interval: 70 }, ammoPerShot: true, burstScatter: true,
+      spreadAngle: 13, salvoSpread: 46, salvoNoConverge: true,
       hazard: { kind: 'pylon', radius: 70, pulseDamage: 8, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
     },
   }),
