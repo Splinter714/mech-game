@@ -379,10 +379,12 @@ export const FiringMixin = {
     // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
     const pullId = this._statShotFired?.(w.weapon.id, player) ?? null;
     // #622/#623: an id shared by every round THIS trigger pull spawns — Link Pylons' whole launch
-    // group (originally 2 charges, now 5 as of #623) stamps it onto their planted hazards
-    // (`_plantHazard`) so `_updatePylonLinks` can find every OTHER pylon from the same pull and
-    // link them all into one web, rather than just the nearest other pylon on the field. Harmless
-    // (an unused extra id) for every weapon that doesn't plant a grouped hazard.
+    // group (originally 2 charges, now 5 as of #623) stamped it onto their planted hazards
+    // (`_plantHazard`) so `_updatePylonLinks` could find every OTHER pylon from the same pull and
+    // mesh them into one web. #624 made linking field-wide and capacity-based instead of
+    // per-launch-group, so `pairId` no longer drives any linking decision — left as inert
+    // per-pylon provenance (`_plantHazard` still copies it onto the hazard) since nothing needed
+    // it removed. Harmless (an unused extra id) for every weapon that doesn't plant a hazard.
     this._nextPairId = (this._nextPairId ?? 0) + 1;
     const pairId = this._nextPairId;
     // #500 (playtest follow-up — Jackson: "make cloak last until you fire a weapon instead of
