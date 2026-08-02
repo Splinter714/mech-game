@@ -1180,6 +1180,12 @@ export default class HudScene extends Phaser.Scene {
       };
       const state = snapshot.abilityStates?.[slot];
       if (id && state) {
+        // #500 (until-broken Cloak): this reads correctly with no change. The tile only ever shows
+        // a COOLDOWN fill, never a duration bar, so an ability that holds indefinitely simply sits
+        // on ACTIVE for as long as it lasts — nothing here has to invent a bar with no end. And
+        // because such an ability doesn't start its cooldown until it breaks
+        // (data/abilityState.js), the countdown below still starts from a full ring rather than
+        // from a clock that quietly expired mid-effect.
         if (state.active) {
           opts.subtitle = 'ACTIVE'; opts.subtitleColor = C.good;
         } else if (state.cooldown > 0) {

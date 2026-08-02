@@ -20,6 +20,7 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
+import { breakCloakOnDeath } from './abilities.js';
 import { getWeapon } from '../../data/weapons.js';
 
 // #576: which weapon CATEGORY is behind this hit, for the category-vs-layer multipliers
@@ -264,6 +265,13 @@ export const CombatMixin = {
       // ArenaScene.update()'s `!this._playerDead` guards around _handleSprint/_drive/
       // _handleFiring — the actual input choke point).
       player.vx = 0; player.vy = 0; player.speed = 0;
+      // #500 (playtest follow-up): Cloak has no duration any more — it holds until it's broken —
+      // and a dead player's abilities stop ticking (the `player.dead` guards in ArenaScene.update
+      // skip `_handleAbilities`), so nothing else would ever clear it. Death breaks it, or a
+      // co-op respawn would put the mech back on the field still flagged cloaked: invisible to
+      // every enemy's firing-lane raycast, permanently. Restores the mech's own textures too, so
+      // the wreck/respawn isn't wearing the grey wireframe.
+      breakCloakOnDeath(this, player);
       // The player's own kill gets the same catastrophic-kill treatment as an enemy death
       // (_deathFx — burst flash, irregular fireball blobs, shock ring, smoke, flung debris —
       // see the big comment above _deathFx) rather than nothing. Always the biggest scale/

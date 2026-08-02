@@ -95,15 +95,25 @@ export const ABILITIES = {
     cooldown: 15,
     duration: 12,
   },
-  // #500: a brief personal stealth window — visually fades the mech and suppresses noise-aggro
-  // from its own shots (data/awareness.js's NOISE_AGGRO_RANGE) for `duration`, so a dormant
-  // enemy nearby doesn't get woken by the sound of firing while cloaked. Does NOT hide the
-  // player from an enemy that's already engaged/aware — this is "go quiet," not true invisibility.
+  // #500: personal stealth — visually fades the mech to a grey wireframe, blocks the same
+  // per-enemy firing-lane raycast Smoke Screen does (scenes/arena/stealth.js — so even an
+  // already-engaged enemy loses its lane), and suppresses noise-aggro (data/awareness.js's
+  // NOISE_AGGRO_RANGE) at its wearer's position.
+  //
+  // Playtest follow-up (Jackson, 2026-08-01): "make cloak last until you fire a weapon instead of
+  // lasting a finite amount of time" / "make cloak have a shorter cooldown". So the fixed 4s
+  // window is gone entirely and there is no upper cap — `duration: null` is what
+  // data/abilityState.js reads as "hold indefinitely" — and `breaksOnFire` declares what ends it:
+  // any of the four weapon triggers actually putting a shot out (an ABILITY does not break it).
+  // The cooldown clock starts at that BREAK rather than at activation, or a long sneak would come
+  // back off cooldown before it had even ended. Both fields are read generically — the state
+  // machine and the arena's fire path know about `duration: null`/`breaksOnFire`, not about Cloak.
   cloak: {
     name: 'Cloak',
     effect: 'cloak',
-    cooldown: 14,
-    duration: 4,
+    cooldown: 5,
+    duration: null,
+    breaksOnFire: true,
   },
   // #507: a stationary area version of the same "suppress noise-aggro" mechanic Cloak grants
   // personally — drop it and reposition while it covers the spot. Protects ANY live player

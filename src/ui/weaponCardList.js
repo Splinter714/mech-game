@@ -348,7 +348,11 @@ export class WeaponCardList {
   _statLines(item, weapon) {
     if (!weapon) {
       const cd = item.cooldown != null ? `${item.cooldown}s cooldown` : '';
-      const extra = item.duration ? `${item.duration}s active` : item.speedMult ? 'mobility burst' : '';
+      // #500: an until-broken ability has no `duration` to quote — what it costs you is the
+      // thing that ends it, so the card says that instead.
+      const extra = item.breaksOnFire ? 'until you fire'
+        : item.duration ? `${item.duration}s active`
+        : item.speedMult ? 'mobility burst' : '';
       return ['ability', [cd, extra].filter(Boolean).join(' · ')].join('\n');
     }
     const d = weapon.delivery;
