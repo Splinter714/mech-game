@@ -869,9 +869,19 @@ export function catalogMaxRange(ids = WEAPON_IDS) {
 
 // Fraction (0-1, floored at minFrac so even the shortest-range weapon stays visible) of the
 // catalog's farthest range this weapon's own opt/max range represents.
+// Jackson, 2026-08-01 ("the weapon preview cards don't seem to be allowing the full range of
+// the weapons to be displayed, like they're squished"): the catalog's range spread is bimodal
+// — most weapons sit at opt 150-700, but two long-range outliers (opt 910, 1050) set
+// `catalogMax`, so a linear fraction left a typical mid-range weapon filling under half its
+// card. sqrt COMPRESSES that spread (his pick over dropping relative scaling entirely, or just
+// raising the floor): it pulls the middle of the distribution up toward 1 much more than it
+// pulls the top down, since sqrt(x) > x for every x in (0,1) and the gap shrinks as x -> 1. The
+// two outliers still reach ~0.93-1.0 (nearly unchanged) while a 500-range weapon goes from
+// ~0.48 to ~0.69 and a 190-range weapon from ~0.18 to ~0.43 — the #120 goal (farthest weapon
+// fills the stage, others draw shorter) survives, it's just no longer a straight line.
 export function previewRangeFrac(weapon, catalogMax, minFrac = 0.15) {
   const r = weapon?.range;
   const opt = r?.opt || r?.max || 0;
   if (!catalogMax) return 1;
-  return Math.max(minFrac, opt / catalogMax);
+  return Math.max(minFrac, Math.sqrt(opt / catalogMax));
 }
