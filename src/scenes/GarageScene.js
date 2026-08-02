@@ -412,6 +412,12 @@ export default class GarageScene extends Phaser.Scene {
         { id: 'chassis', label: 'CHASSIS', kind: 'chassis', cards: this._chassisCards(col) },
         { id: 'color', label: 'COLOR', kind: 'color', cards: this._colorCards(col) },
       ],
+      // #612: every ABILITY card draws THIS column's live mech as the thing casting it — real
+      // chassis, real mounted weapons, this player's colour — instead of the generic accent chip.
+      // A live handle, not a snapshot: `col.mech` is mutated in place by every mount/chassis/colour
+      // path below, and `col.textureKey`'s textures are re-baked in place under the same keys, so
+      // each of those paths only has to call `refreshCaster()` to re-pose (see _onMechChanged).
+      caster: { mech: col.mech, textureKey: col.textureKey },
       onSelect: (id) => this._clickCatalogCard(col, id),
       onHover: (_id, index) => this._focusCatalogRow(col, index, { scroll: false }),
       // #506: abilities have no SCRAP-unlock data at all (shop.js's catalog is weapon-only) —
@@ -578,6 +584,7 @@ export default class GarageScene extends Phaser.Scene {
     saveAllMechs(this.allMechs);
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    col.catalogList?.refreshCaster();   // #612: a chassis swap moves the joints every caster poses on
     this._refreshCatalogSelection(col);
   }
 
@@ -595,6 +602,7 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    col.catalogList?.refreshCaster();   // #612: Cloak's greyscale bake is derived from the new pixels
     col.headerLabel?.setColor(hexColor(hex));
     this._refreshCatalogSelection(col);
   }
@@ -831,6 +839,9 @@ export default class GarageScene extends Phaser.Scene {
     reskinMech(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     this._refreshAllTiles(col);
+    // #612: the ability cards' caster mechs read the same textures, which `reskinMech` just redrew
+    // in place — so this is a re-pose (and a Cloak re-bake), never a rebuild.
+    col.catalogList?.refreshCaster();
     // Just the highlighted cards, never a rebuild — a rebuild would reset the list's scroll
     // position and interrupt every card's live-fire preview loop for no reason.
     this._refreshCatalogSelection(col);
@@ -877,6 +888,7 @@ export default class GarageScene extends Phaser.Scene {
     buildMechTextures(this, col.textureKey, col.mech, this._artFor(col));
     saveAllMechs(this.allMechs);
     poseMechParts(col.preview, col.mech, -Math.PI / 2, col.previewScale, col.previewCx, col.previewCy, {});
+    col.catalogList?.refreshCaster();   // #612: same re-pose/re-bake as the direct colour pick
     // The PLAYER # label is painted in the identity colour — repaint it in place.
     col.headerLabel?.setColor(hexColor(next));
     // Keep the COLOR section's own card highlight in sync — it's always in the catalog now (#607/#611).

@@ -34,15 +34,26 @@
 //                   than the real Recon Drone airframe: at a card's scale the airframe is ~3px of
 //                   mush, and baking a whole vehicle texture set per catalog would cost far more
 //                   than the read is worth.
-//   cloak           STAND-IN. The real effect is a per-pixel greyscale re-bake of the live mech's
-//                   own part textures plus a flattened-container dim (arena/abilities.js
-//                   `setCloakVisual` / cloakFlatten.js) — there is no mech on a catalog card to
-//                   desaturate, and building one per card is far out of proportion. The card
-//                   instead desaturates and fades its caster chip to the real `CLOAK_ALPHA`, and
-//                   drops to the outline-only "lit wireframe" read the #500 fourth pass settled
-//                   on. Same story beat, not the same pixels. (#500 playtest follow-up: Cloak has
-//                   no `duration` at all any more — it holds until you fire — so the card plays it
-//                   over the capped preview window, see PREVIEW_MAX_ACTIVE_MS below.)
+//   cloak           REAL, as of #612. The card runs the actual effect on the actual mech: the
+//                   per-pixel greyscale re-bake of that build's own part textures
+//                   (`desaturateTexture`, the same call arena/abilities.js's `setCloakVisual`
+//                   makes), the same muzzle-glow dim/tint, pre-composited into one flattened
+//                   RenderTexture for correct occlusion and dimmed ONCE to the real `CLOAK_ALPHA`
+//                   — cloakFlatten.js's whole argument, applied to a card. See ui/casterMech.js.
+//                   This replaces the outline-only "lit wireframe" chip stand-in the #500 fourth
+//                   pass settled on, which existed only because there was no mech here to
+//                   desaturate. (#500 playtest follow-up: Cloak has no `duration` at all any more
+//                   — it holds until you fire — so the card plays it over the capped preview
+//                   window, see PREVIEW_MAX_ACTIVE_MS below.)
+//
+// THE CASTER (#612). Every card above needs something standing where the ability goes off, and
+// that something is now the PLAYER'S OWN LIVE BUILD — this column's chassis, mounted weapons and
+// colour — not the ~9x12px accent block with a white dot it was through #534/#500. Jackson: "for
+// ability previews, it seems there's a generic green box or something to represent the 'mech'; can
+// we instead actually show the mech?" It costs no extra texture bakes (the sprites point at the
+// column's already-baked mech textures) and it follows every mount/chassis/colour change — see
+// ui/casterMech.js for how, and for why Cloak's card can now run the genuine effect. A preview
+// built with no caster source simply shows no caster; everything else on the card is unchanged.
 //
 // PLAYBACK matches the weapon cards: it loops continuously and unattended, with no hover/select
 // gating, so a whole column of cards is animating at once and you can compare them at a glance.
@@ -68,6 +79,7 @@ import { MEDIUM_PLAYER_CONFIG } from '../data/chassis/player/mediumPlayer.js';
 import { drawProjectileBody } from '../art/index.js';
 import { aoeBlastRings, interceptRings, ringsDuration, drawFxRings, INTERCEPT_BOLT_COLOR } from '../art/abilityFx.js';
 import { ensureSmokeTextures, smokePuffLayout, smokePuffScale } from '../art/smokePuff.js';
+import { CasterMech, CasterCloak, CASTER_WORLD_PX, CASTER_BODY_FRAC, CLOAK_ALPHA } from './casterMech.js';
 
 // ── Timeline ───────────────────────────────────────────────────────────────────────────────────
 const REST_MS = 900;                 // preview-only gap between loops — NOT the real cooldown
@@ -118,31 +130,60 @@ const ABILITY_MAX_EXTENT = Math.max(...Object.values(ABILITIES).map(previewExten
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-// Luminance-preserving greyscale of a packed 0xRRGGBB — the same Rec.601 weighting
-// `desaturateTexture` (art/mechArt.js) applies per pixel for the real Cloak bake.
-function greyOf(hex) {
-  const r = (hex >> 16) & 0xff, g = (hex >> 8) & 0xff, b = hex & 0xff;
-  const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-  return (l << 16) | (l << 8) | l;
-}
+// ── The caster's on-card size (#612) ───────────────────────────────────────────────────────────
+// The mech is scaled by the SAME world→px factor as every radius/range/travel on its card (see
+// setStage's `pxPerWorld`), so a Shield Burst still reads as roughly four mech-lengths across
+// exactly as it does in play. Two guards on top of that, both purely about legibility on a ~245x80
+// stage: a card whose effect reaches a long way (Anti-Missile's 220px envelope) compresses the
+// world hard enough that a strictly proportional mech would be an 11px smudge, and a card whose
+// "extent" IS the mech (Cloak, Dash) would otherwise grow past the stage it stands in.
+const CASTER_MIN_STAGE_FRAC = 0.32;
+const CASTER_MAX_STAGE_FRAC = 0.85;
 
-// Cloak's real container dim (`CLOAK_ALPHA`, scenes/arena/abilities.js). Duplicated as a literal
-// rather than imported so `ui/` doesn't reach into an arena scene module for one number; it's part
-// of the declared stand-in above, and it's the ONLY visual constant here that isn't either the
-// ability's own registry data or a shared spec from `art/`.
-const CLOAK_PREVIEW_ALPHA = 0.45;
+// The caster radius at which the intercept spark plays at its full authored spec. The chip this
+// replaced was ~6px and the spark was `chipR / 14`; a real mech is ~2.5x that, and carrying the
+// same ratio over would throw a 32px shockwave across most of the intercept envelope. So the spark
+// still grows with the caster — the point of re-deriving it — just on a slacker reference, landing
+// near the chip's own absolute spark size for a mech-sized caster instead of 2.5x it.
+const FX_REF_CASTER_R = 26;
+
+// Dash's motion ghosts: how many trail the mech, and the alpha the nearest one starts at (each one
+// further back gets a share less). Fewer than the chip trail's four — a mech-sized ghost carries
+// far more of the read than a 9x12 block did, and the fourth was down at 0.07 alpha anyway.
+const DASH_GHOSTS = 3;
+const DASH_GHOST_ALPHA = 0.34;
 
 export class AbilityCardPreview {
   // `index` staggers the loop start across a column so several ability cards don't pulse in
   // lockstep — the same trick the weapon cards' `cd: this.cards.length * 120` seed plays.
-  constructor(scene, id, def, accent, index = 0) {
+  // `caster` (#612) is the caller's LIVE handle on whose mech is doing the casting —
+  // `{ mech, textureKey }`, read on every pose rather than snapshotted, since GarageScene mutates
+  // that same Mech in place. Omitting it (the Weapon Lab, which has no ability cards at all) draws
+  // no caster and changes nothing else.
+  constructor(scene, id, def, accent, index = 0, caster = null) {
     this.scene = scene;
     this.id = id;
     this.def = def;
     this.effect = def.effect;
     this.accent = accent;
-    this.grey = greyOf(accent);
-    this.layer = scene.add.container(0, 0);   // stamped sprites (Smoke Screen) live here, under fxG
+    this.layer = scene.add.container(0, 0);   // everything this preview owns, under the card's fxG
+    // Two bands inside it, in the arena's own depth order: smoke is ground FX, the mech standing in
+    // it draws over it. (The card's fxG — blasts, drones, rounds — is above both.)
+    this.smokeLayer = scene.add.container(0, 0);
+    this.casterLayer = scene.add.container(0, 0);
+    this.layer.add([this.smokeLayer, this.casterLayer]);
+
+    // The caster mech itself, plus Dash's motion ghosts (its own trail IS the read — Dash has no
+    // arena FX beyond the movement) and Cloak's real flatten. All three are per-card sprite stacks
+    // over the column's SHARED, already-baked mech textures — no card bakes anything of its own.
+    // Ghosts are built FIRST, furthest-back first, so the layer's own child order puts every one of
+    // them behind the mech leading the trail.
+    this.ghosts = [];
+    if (caster && def.effect === 'dash') {
+      for (let i = DASH_GHOSTS - 1; i >= 0; i--) this.ghosts[i] = new CasterMech(scene, caster).addTo(this.casterLayer);
+    }
+    this.caster = caster ? new CasterMech(scene, caster).addTo(this.casterLayer) : null;
+    this.cloak = this.caster && def.effect === 'cloak' ? new CasterCloak(scene, this.caster) : null;
 
     // A movement burst plays out over its REAL duration; everything else gets the clamped window.
     // #500: an UNTIL-BROKEN ability (`duration: null` — Cloak) has no real number to play out at
@@ -202,16 +243,48 @@ export class AbilityCardPreview {
     this.pxRadius = (this.def.radius ?? 0) * this.pxPerWorld;
     this.pxRange = (this.def.range ?? 0) * this.pxPerWorld;
     this.pxTravel = burstDistance(this.def) * this.pxPerWorld;
-    this.chipR = clamp(h * 0.09, 2.5, 6);
+    // #612: the caster's own size, and with it everything that used to be measured against the
+    // 6px chip. `CASTER_WORLD_PX` is the mech's real arena footprint, so pushing it through this
+    // card's own `pxPerWorld` keeps the mech in proportion to the effect around it; the clamp is
+    // the legibility guard described at CASTER_MIN_STAGE_FRAC.
+    this.casterPx = clamp(CASTER_WORLD_PX * this.pxPerWorld, h * CASTER_MIN_STAGE_FRAC, h * CASTER_MAX_STAGE_FRAC);
+    // Half the mech's drawn height — the mech-sized replacement for `chipR` as this card's "how big
+    // is the thing standing there" unit.
+    this.casterR = Math.max(2.5, (this.casterPx * CASTER_BODY_FRAC) / 2);
     // `interceptRings` are absolute world sizes (a 32px shockwave), because an intercept is a
     // POINT event with no ability-data radius behind it — pushed through `pxPerWorld` they'd come
     // out sub-pixel and the card's whole payoff beat would be invisible. So the one thing here
-    // sized against the card rather than the world is that spark, scaled off the caster chip. The
+    // sized against the card rather than the world is that spark, scaled off the caster. The
     // weapon cards already take the same liberty with their own impact circles. Nothing that
     // communicates an ability's REACH (radius, range, travel, cloud) is ever scaled this way.
-    this.fxScale = this.chipR / 14;
+    this.fxScale = clamp(this.casterR / FX_REF_CASTER_R, 0.35, 1);
+    // Dash's ghost spacing, as a fraction of the burst. Tied to the CASTER's own width rather than
+    // a flat 11% of travel (what the chip trail used): mech-sized ghosts 11% apart on a short burst
+    // are a smear, and the point of the trail is reading distinct positions along the path.
+    this.ghostGapFrac = this.pxTravel > 0 ? clamp(this.casterR / this.pxTravel, 0.08, 0.3) : 0;
+    this._placeCaster();
     this._buildSmoke();
     this._begin();
+  }
+
+  // Put the caster (and Dash's ghosts) at the stage centre at this layout's scale. Cloak's flatten
+  // is invalidated rather than rebuilt — it re-bakes lazily, the first frame the card actually
+  // draws it, so a card that's never scrolled into view never pays for one.
+  _placeCaster() {
+    if (!this.caster) return;
+    const { cx, cy } = this.stage;
+    this.caster.place(cx, cy, this.casterPx);
+    for (const gh of this.ghosts) { gh.place(cx, cy, this.casterPx); gh.setVisible(false); }
+    this.cloak?.invalidate();
+  }
+
+  // The column's build changed under us — a mount, a chassis swap, a new colour. The textures
+  // themselves re-bake in place under the same keys (GarageScene owns that), so all that's needed
+  // here is a re-pose and a fresh Cloak flatten.
+  refreshCaster() {
+    this.caster?.refresh();
+    for (const gh of this.ghosts) gh.refresh();
+    this.cloak?.invalidate();
   }
 
   // ── Loop ────────────────────────────────────────────────────────────────────────────────────
@@ -379,7 +452,7 @@ export class AbilityCardPreview {
         .setScale(scale)
         .setRotation(Math.random() * Math.PI * 2)
         .setAlpha(0);
-      this.layer.add(view);
+      this.smokeLayer.add(view);
       this._puffs.push({
         x0: cx + ox, y0: cy + oy, scale, baseAlpha, view,
         // The arena hangs two endlessly-repeating yoyo tweens off each puff (a slow positional
@@ -439,7 +512,6 @@ export class AbilityCardPreview {
   draw(g) {
     if (!this.stage) return;
     const a = this._loopAlpha();
-    if (a <= 0) return;
     const { cx, cy } = this.stage;
 
     // Where the caster is right now: a movement burst carries it, everything else stays put.
@@ -449,17 +521,16 @@ export class AbilityCardPreview {
       px = cx - this.pxTravel / 2 + this.pxTravel * f;
     }
 
+    // #612: the caster is real sprites, not vector work, so it's posed/faded before the alpha
+    // early-out below — at a <= 0 it has to be actively HIDDEN, where a Graphics simply isn't drawn.
+    this._updateCaster(a, px, py);
+    if (a <= 0) return;
+
     if (this.effect === 'antiMissile') this._drawEnvelope(g, a);
-    if (this.effect === 'dash') this._drawDashTrail(g, a, cx, cy);
 
     for (const p of this._rounds) {
       drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, (p.scale || 1) * 0.7, p.dist);
     }
-
-    // The caster chip itself. Cloak is the one effect that changes how it's drawn rather than
-    // adding something around it.
-    if (this.effect === 'cloak') this._drawCloakedChip(g, a, px, py);
-    else this._drawChip(g, px, py, a, this.accent);
 
     if (this.effect === 'droneLauncher') this._drawDrones(g, a);
 
@@ -475,7 +546,9 @@ export class AbilityCardPreview {
     const restStart = this.activeMs + this.settleMs;
     if (this.t >= restStart) {
       const f = (this.t - restStart) / REST_MS;
-      const r = this.chipR * 2.6;
+      // Just outside the mech, wherever the mech ended up — same relationship the chip's own
+      // 2.6x sweep had to it.
+      const r = this.casterR * 1.5;
       g.lineStyle(1, this.accent, 0.45 * a);
       g.beginPath();
       g.arc(px, py, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
@@ -483,49 +556,75 @@ export class AbilityCardPreview {
     }
   }
 
-  // A small mech-ish silhouette — body block plus a turret dot. Deliberately abstract: it marks
-  // WHERE the ability happens, the same way a weapon card's mount icon marks where a shot leaves.
-  _drawChip(g, x, y, alpha, color) {
-    const r = this.chipR;
-    g.fillStyle(color, 0.9 * alpha).fillRect(x - r * 0.75, y - r, r * 1.5, r * 2);
-    g.fillStyle(0xffffff, 0.7 * alpha).fillCircle(x, y, r * 0.5);
+  // ── The caster (#612): the player's real mech, where the chip used to be ────────────────────
+
+  // Pose/fade the caster's sprites for this frame. Everything else on a card is vector work into
+  // one Graphics, so this is the only per-frame sprite bookkeeping — and for the six abilities that
+  // don't move the caster, `CasterMech.place` early-outs on an unchanged position.
+  _updateCaster(alpha, x, y) {
+    if (!this.caster) return;
+    if (alpha <= 0) {
+      this.caster.setVisible(false);
+      for (const gh of this.ghosts) gh.setVisible(false);
+      this.cloak?.hide();
+      return;
+    }
+    this.caster.place(x, y, this.casterPx);
+    this._updateDashGhosts(alpha);
+    if (this.effect === 'cloak') { this._updateCloak(alpha, x, y); return; }
+    this.caster.setVisible(true);
+    this.caster.setAlpha(alpha);
   }
 
-  // Cloak's stand-in (see the header): the chip desaturates to its own luminance grey, sinks to
-  // the real CLOAK_ALPHA, and switches to the outline-only "lit wireframe" silhouette the #500
-  // fourth pass landed on — over the ability's real `duration`, in and back out.
-  _drawCloakedChip(g, alpha, x, y) {
-    const IN = 250;
+  // Cloak, for real (see the header and ui/casterMech.js). The mech's own greyed, flattened,
+  // CLOAK_ALPHA-dimmed image takes over from the coloured one — a short cross-dissolve at each edge
+  // rather than the arena's hard swap, purely because a card loops this every few seconds and a
+  // snap reads as a glitch there in a way it doesn't on a deliberate button press.
+  _updateCloak(alpha, x, y) {
+    const IN = 200;
     let f = 0;
     if (this.t >= 0 && this.t < this.activeMs) {
       f = this.t < IN ? this.t / IN
         : this.t > this.activeMs - IN ? Math.max(0, (this.activeMs - this.t) / IN) : 1;
     }
-    const r = this.chipR;
-    const fade = alpha * (1 - f * (1 - CLOAK_PREVIEW_ALPHA));
-    if (f < 1) this._drawChip(g, x, y, alpha * (1 - f), this.accent);
-    if (f > 0) {
-      g.lineStyle(1, this.grey, fade * f);
-      g.strokeRect(x - r * 0.75, y - r, r * 1.5, r * 2);
-      g.strokeCircle(x, y, r * 0.5);
+    if (f <= 0) {
+      this.cloak.hide();
+      this.caster.setVisible(true);
+      this.caster.setAlpha(alpha);
+      return;
     }
+    // Baked here, not at layout: a card scrolled past and never drawn never pays for a flatten.
+    const rt = this.cloak.ensure(this.casterLayer);
+    rt.setPosition(x, y);
+    rt.setVisible(true);
+    rt.setAlpha(alpha * CLOAK_ALPHA * f);
+    // The coloured mech fades out UNDER the incoming ghost and is gone entirely at full cloak, so
+    // what's left is one flattened image at one alpha — the state cloakFlatten.js exists to reach.
+    this.caster.setVisible(f < 1);
+    this.caster.setAlpha(alpha * (1 - f));
   }
 
-  // Dash has no arena FX of its own, so the speed-lines ARE the read: ghosts of the chip along
-  // the path it has actually covered so far this burst.
-  _drawDashTrail(g, alpha, cx, cy) {
-    if (this.t < 0 || this.t > this.travelMs) return;
-    const f = clamp(this.t / this.travelMs, 0, 1);
-    for (let i = 1; i <= 4; i++) {
-      const gf = f - i * 0.11;
-      if (gf <= 0) continue;
-      const x = cx - this.pxTravel / 2 + this.pxTravel * gf;
-      this._drawChip(g, x, cy, alpha * (0.35 - i * 0.07), this.accent);
+  // Dash has no arena FX of its own, so the trail IS the read: the mech itself, ghosted along the
+  // path it has actually covered so far this burst.
+  _updateDashGhosts(alpha) {
+    if (!this.ghosts.length) return;
+    const { cx, cy } = this.stage;
+    const active = this.t >= 0 && this.t <= this.travelMs;
+    const f = active ? clamp(this.t / this.travelMs, 0, 1) : 0;
+    for (let i = 0; i < this.ghosts.length; i++) {
+      const gh = this.ghosts[i];
+      const gf = f - (i + 1) * this.ghostGapFrac;
+      if (!active || gf <= 0) { gh.setVisible(false); continue; }
+      gh.place(cx - this.pxTravel / 2 + this.pxTravel * gf, cy, this.casterPx);
+      gh.setVisible(true);
+      gh.setAlpha(alpha * DASH_GHOST_ALPHA * (1 - i / this.ghosts.length));
     }
   }
 
   _drawDrones(g, alpha) {
-    const r = Math.max(1.6, this.chipR * 0.55);
+    // A drone is a fraction of the mech it escorts — the same relationship the chip's own 0.55x
+    // drone had to it, restated against the mech that replaced the chip.
+    const r = Math.max(1.6, this.casterR * 0.28);
     for (const d of this._drones) {
       g.fillStyle(this.accent, 0.9 * alpha).fillCircle(d.x, d.y, r * 0.55);
       // Two crossed rotor arms spun by the same rate the arena spins the real airframe's blur.
@@ -546,6 +645,10 @@ export class AbilityCardPreview {
 
   destroy() {
     this._destroySmoke();
+    this.cloak?.destroy();
+    this.caster?.destroy();
+    for (const gh of this.ghosts) gh.destroy();
+    this.ghosts.length = 0;
     this.layer.destroy();
     this._fx.length = 0;
     this._rounds.length = 0;
