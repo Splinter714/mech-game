@@ -342,7 +342,7 @@ function chainBolt(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   glowDot(sg, bx, frontY - L, 2 * s, n);                               // sparking tip
 }
 
-// Link Pylons — a stubby forked launcher stake: a squat base with two short prongs, each
+// Tesla Pylons — a stubby forked launcher stake: a squat base with two short prongs, each
 // glowing at its own tip, reading as "throws a pair of things" rather than a single barrel.
 function linkPylons(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   const L = barrelLen('linkPylons', s, cap), w = 3.6 * s;
