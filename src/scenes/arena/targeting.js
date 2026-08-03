@@ -27,10 +27,16 @@ import { CONVERGE_DIST, aimAngleOffset, convergedFireAngle, pickConvergeTarget }
 import { TARGETING_RANGE } from '../../data/targetingRange.js';
 import { primaryPlayerOf } from './players.js';
 
-// #620: how much of the angular gap to the converge target the limbs close, 0-1. See
-// `_aimAssistOffset` at the bottom of this file for the full reading of this dial — the short
-// version is that `TARGET_CONE` (20° half-angle) caps the gap, so the real ceiling is
-// AIM_ASSIST_STRENGTH × 20°: 0.15 -> 3°, 0.6 -> 12°, 1.0 -> a full soft-lock inside the cone.
+// #620: how much of the angular gap to the converge target the limbs close, 0-1 (applied in
+// `_fireAngle` below). The magnitude is capped by geometry, not by this constant alone — a
+// converge target only exists while it's inside `TARGET_CONE` (shared.js, a 20° HALF-angle), so
+// the gap being scaled is at most 20° and the real ceiling is AIM_ASSIST_STRENGTH × 20°:
+//   0.15 -> up to 3°   (#620's original: real, but under the noise floor of a moving fight)
+//   0.60 -> up to 12°  (current: unmistakable, still clearly an assist and not a lock)
+//   1.00 -> up to 20°  (full soft-lock: the limbs point at anything inside the cone)
+// Deliberately no distance falloff: one flat constant, tuned live, same convention as every
+// other feel dial. Note it does NOT compound across frames — it's a fraction of the LIVE gap
+// recomputed every frame, not an accumulating pull.
 const AIM_ASSIST_STRENGTH = 0.6;
 
 // #322: the two hand-set targeting ranges are gone. `ASSIST_RANGE` (2200) gated enemies and
@@ -226,7 +232,21 @@ export const TargetingMixin = {
     // is defined as `fireAngle - turretAngle`, so every degree of assist becomes a degree of
     // limb toe-in, and the turret tracks the stick untouched. One offset, both regimes below,
     // and the art follows for free because `_partTilt` calls straight back into this method.
-    const assist = this._aimAssistOffset(player);
+    //
+    // Computed INLINE rather than as a `this._…` sibling helper on purpose: BaseScene
+    // cherry-picks exactly `{ _fireAngle, _lockAimPoint }` off this mixin (see its comment), so a
+    // sibling-method dependency is a runtime TypeError in the base the moment it's added — which
+    // is precisely what happened on the first attempt. Keep this method self-contained.
+    // Gates, all unchanged from #620/#629: a live converge target, gamepad input
+    // (`player.inputMode`, stamped per player each frame in locomotion `_drive` — mouse aiming is
+    // precise enough not to want help), and the player-facing ON/OFF preference, read LIVE off the
+    // registry every call so the pause-menu row and D-pad bind are felt on the very next frame
+    // (`!== false` because it defaults ON). In the base, `convergeTarget` is never set at all, so
+    // this is always 0 there — the same "nothing locked" behaviour the base already had.
+    const t = player.convergeTarget;
+    const assist = (t && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false)
+      ? aimAngleOffset(player.x, player.y, player.turretAngle, t.x, t.y) * AIM_ASSIST_STRENGTH
+      : 0;
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') {
       // Indirect/melee never converged (their targeting happens downrange), but they still have a
       // limb to pivot — so they take the raw assist offset and the round leaves along the arm.
@@ -237,7 +257,6 @@ export const TargetingMixin = {
     // the muzzles (#74). `convergeTarget` (shared.js `pickConvergeTarget`, set in _updateLock) is
     // #322: scored by ONE rule over one pool — nearest inside a ~20° cone, enemies given a modest
     // range edge. (This supersedes #250's absolute "an enemy always beats terrain" ordering.)
-    const t = player.convergeTarget;
     const dist = t ? Math.hypot(t.x - player.x, t.y - player.y) : CONVERGE_DIST;
     // The convergence POINT moves onto the assisted bearing, so the muzzles toe in toward the
     // target rather than toward a point dead ahead of the turret. At full strength the point sits
@@ -245,25 +264,4 @@ export const TargetingMixin = {
     return convergedFireAngle(player.x, player.y, player.turretAngle + assist, dist, m.x, m.y);
   },
 
-  // The aim-assist angular offset for this player's limbs, in radians — 0 whenever the assist
-  // shouldn't apply. Signed, wrap-safe (`aimAngleOffset` handles the ±π seam, which a raw numeric
-  // lerp between two angles does not).
-  //
-  // Gated on three things, all unchanged from #620/#629: a live converge target, gamepad input
-  // (`player.inputMode`, stamped per player each frame in locomotion `_drive` — mouse aiming is
-  // precise enough not to want help), and the player-facing ON/OFF preference. The preference is
-  // read LIVE off the registry every call, never cached, so the pause-menu row and the D-pad bind
-  // are felt on the very next frame. `!== false` because it defaults ON.
-  //
-  // The magnitude is capped by geometry rather than by this constant alone: a target only exists
-  // while it's inside `TARGET_CONE` (a 20° HALF-angle), so the gap being scaled is at most 20°
-  // and the assist can never exceed `AIM_ASSIST_STRENGTH × 20°`. Read the dial that way —
-  // 0.15 was a 3° ceiling (invisible in a moving fight), 0.6 is 12°, 1.0 is a full soft-lock onto
-  // anything in the cone. Deliberately no distance falloff: one flat constant, tuned live, the
-  // same convention as every other feel dial.
-  _aimAssistOffset(player) {
-    const t = player.convergeTarget;
-    if (!t || player.inputMode !== 'pad' || this.registry.get('aimAssist') === false) return 0;
-    return aimAngleOffset(player.x, player.y, player.turretAngle, t.x, t.y) * AIM_ASSIST_STRENGTH;
-  },
 };
