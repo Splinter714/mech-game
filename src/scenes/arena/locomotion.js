@@ -94,7 +94,20 @@ const COLLISION_SUBSTEP_PX = HEX_SIZE / 6;
 // ("pulls where you're already turning") rather than snapping. Mouse/keyboard is untouched — see
 // the `intent.mode === 'pad'` gate below. Starting number, tuned live like every other feel dial
 // in this file (0-1 fraction of the angular gap closed per frame toward the target bearing).
-const AIM_ASSIST_STRENGTH = 0.15;
+//
+// 2026-08-02 (Jackson: "how can we increase the intensity of aim assist so I can see it more
+// egregiously?") — 0.15 -> 0.6. Worth writing down WHY 0.15 was nearly invisible, because the
+// ceiling isn't obvious from this constant alone: the pull only exists while `pickConvergeTarget`
+// has a target, and that requires the target inside `TARGET_CONE` (shared.js) — a 20° HALF-ANGLE.
+// So the angular gap this fraction acts on is 20° at the absolute most, and 0.15 of it capped the
+// whole effect at a 3° nudge. Multiply by the cone to read this dial honestly:
+//   0.15 -> up to 3°   (the old value: real, but under the noise floor of a moving fight)
+//   0.60 -> up to 12°  (current: unmistakable, still clearly an assist and not a lock)
+//   1.00 -> up to 20°  (full soft-lock: aim snaps onto any target inside the cone)
+// Note it does NOT compound across frames — `aim` is rebuilt from raw stick input every frame, so
+// this is a steady fraction of the live gap, not an accumulating pull. `rotateToward` below still
+// rate-limits the actual turret motion to the chassis's own `turretSlew` at any value here.
+const AIM_ASSIST_STRENGTH = 0.6;
 
 export const LocomotionMixin = {
   // A mech = hull (legs) + shoulders + arms + turret-body stacked in a container so they can

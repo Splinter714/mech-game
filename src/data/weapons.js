@@ -836,10 +836,9 @@ export const WEAPONS = {
   // `spreadAngle`, the angular fan. And 2026-08-02: "make the burst for new missiles much
   // tighter, one after the other much closer in time, almost overlapping one another."
   //
-  // WHAT IT LOOKS LIKE NOW. All six leave the tubes inside ~100ms — one per frame at 60fps,
-  // which is as tight as a staggered burst can get before rounds start sharing a frame and the
-  // ripple collapses into a single simultaneous pop. They leave on essentially the same heading
-  // (`spreadAngle: 0`; the only angular offset left is the ±0.3° alternating weave stagger every
+  // WHAT IT LOOKS LIKE NOW. All six leave the tubes inside 200ms (2026-08-02: interval 20 -> 40,
+  // so ~1 round every 2-3 frames at 60fps and a ripple twice as long). They leave on essentially
+  // the same heading (`spreadAngle: 0`; the only angular offset left is the ±0.3° alternating weave stagger every
   // 'weave' burst weapon gets, which is cosmetic), then splay out sideways as each one steers to
   // its own aim point 6/18/30px off-centre either way — a 60px-wide WALL of missiles rather than
   // a fan or a ripple. Convergence is deliberately left ON (no `salvoNoConverge`): the offsets
@@ -872,7 +871,7 @@ export const WEAPONS = {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
       velocity: 700,                                  // squarely between 400 and 1000
       count: 6,                                       // both parents fire 6
-      burst: { interval: 20 },                        // "almost overlapping" — ~1 round per frame
+      burst: { interval: 40 },                        // ~1 round every 2-3 frames; 200ms whole volley
       burstShuffle: true,                             // don't sweep left→right; re-roll the order each pull
       spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
       salvoSpread: 30,                                // the separation, all of it: lateral px
