@@ -219,10 +219,12 @@ export default class ArenaScene extends Phaser.Scene {
       const muted = Audio.toggleMute();
       this._floatText(this.px, this.py - 30, muted ? 'MUTED' : 'SOUND ON', '#7c8794');
     });
-    this.input.keyboard.on('keydown-OPEN_BRACKET', () => this._toggleAi('move'));
-    this.input.keyboard.on('keydown-CLOSED_BRACKET', () => this._toggleAi('fire'));
-    this.input.keyboard.on('keydown-R', () => this._resetEnemies());   // #39
-    this.input.keyboard.on('keydown-N', () => this._spawnEnemyDebug()); // #39
+    // #625 follow-up (Jackson: "remove keyboard equivalents"): the four dev actions — spawn
+    // enemy, reset enemies, toggle AI move/fire — used to also be bound to N / R / [ / ] here,
+    // alongside the D-pad binds #625 removed. Both input paths are gone now; the actions live
+    // ONLY as dev-only, arena-only pause-menu rows (data/pauseMenu.js's DEV_ARENA_ROWS, reached
+    // through the `arenaDebug` closures ArenaScene hands wirePauseMenu below). Deliberately not
+    // repurposed — N, R, [ and ] are simply unbound in the arena now.
     // #517: the interact bind (Controls.js `INTERACT_BIND` — pad A's first concrete use) answers
     // the post-clear base-capture choice. One-shot, same pattern as every other scene-level key
     // above; the pad side is polled via `this.padEdges` in update() below.
