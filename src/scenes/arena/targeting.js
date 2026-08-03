@@ -243,8 +243,31 @@ export const TargetingMixin = {
     // registry every call so the pause-menu row and D-pad bind are felt on the very next frame
     // (`!== false` because it defaults ON). In the base, `convergeTarget` is never set at all, so
     // this is always 0 there — the same "nothing locked" behaviour the base already had.
+    //
+    // FOURTH GATE (#637, 2026-08-02). Jackson: "without perfect lead, wouldn't aim assist actually
+    // CAUSE me to miss and keep it difficult to hit with skill?" — yes, and this weapon class is
+    // strictly WORSE OFF with the assist than without it, so it's excluded until leading exists.
+    //
+    // The assist pulls toward where the target IS. A round with flight time has to be aimed where
+    // the target WILL BE. So on a non-tracking projectile the assist doesn't merely fail to help,
+    // it drags 60% of the way OFF whatever lead the player applied by hand. The numbers make it
+    // concrete: a Repeater round takes 667ms to cross its 600px range, during which a light enemy
+    // mech (268 px/s) travels 179px — nearly four hex widths. Leading by that much at 600px is
+    // ~17°, still inside `TARGET_CONE`'s 20°, so the target is still picked and the assist still
+    // fires — precisely when the player was aiming correctly.
+    //
+    // Scope is exactly #637's set: `hit: 'projectile'` AND not homing AND not arcing — 8 weapons
+    // (Repeater, Scatter Gun, Autocannon, Cluster Salvo, Plasma Lance, Flamethrower, Caustic
+    // Lobber, Repulsor Pulse). Hitscan keeps the assist because zero flight time makes "aim at the
+    // target" exactly right; homing keeps it because the round steers itself; melee keeps it. Lobs
+    // (`path: 'arcing'`) are deliberately left in — they resolve a travel DISTANCE to the target
+    // rather than bending a launch angle, so they're a different mechanism and a separate question.
+    //
+    // DELETE THIS GATE when #637 lands: with a real lead the assist becomes correct for these
+    // weapons and this exclusion becomes the thing making them feel bad.
+    const noLeadYet = d.hit === 'projectile' && d.guidance !== 'homing' && d.path !== 'arcing';
     const t = player.convergeTarget;
-    const assist = (t && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false)
+    const assist = (t && !noLeadYet && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false)
       ? aimAngleOffset(player.x, player.y, player.turretAngle, t.x, t.y) * AIM_ASSIST_STRENGTH
       : 0;
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') {
