@@ -32,12 +32,13 @@ import { primaryPlayerOf } from './players.js';
 // converge target only exists while it's inside `TARGET_CONE` (shared.js, a 20° HALF-angle), so
 // the gap being scaled is at most 20° and the real ceiling is AIM_ASSIST_STRENGTH × 20°:
 //   0.15 -> up to 3°   (#620's original: real, but under the noise floor of a moving fight)
-//   0.60 -> up to 12°  (current: unmistakable, still clearly an assist and not a lock)
+//   0.30 -> up to 6°   (current, 2026-08-02: "dial aim assist back down to like 6 degrees")
+//   0.60 -> up to 12°  (the intermediate step, used to see the effect at all before settling)
 //   1.00 -> up to 20°  (full soft-lock: the limbs point at anything inside the cone)
 // Deliberately no distance falloff: one flat constant, tuned live, same convention as every
 // other feel dial. Note it does NOT compound across frames — it's a fraction of the LIVE gap
 // recomputed every frame, not an accumulating pull.
-const AIM_ASSIST_STRENGTH = 0.6;
+const AIM_ASSIST_STRENGTH = 0.3;
 
 // #322: the two hand-set targeting ranges are gone. `ASSIST_RANGE` (2200) gated enemies and
 // `CONVERGE_DIST` (450) gated terrain — different numbers for the same question, and 2200 was
