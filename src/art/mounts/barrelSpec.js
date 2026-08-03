@@ -24,12 +24,33 @@
 // The reference point is the FOREMOST LIT feature — the emitter glow/launch cell, which is what
 // reads as the muzzle. That's the same point every already-correct projecting entry uses (each
 // one's `frac` lands exactly on its own glowDot), so it's one rule across the whole table.
+// 2026-08-02 (Jackson: "can we have the missile projectiles spawn a tad bit further back on the
+// mount? right now they seem to spawn at the tip of the body piece, but since the tubes look like
+// they've ON that body piece, they should spawn slightly further back").
+//
+// Every other mount in this table is a BARREL — something that projects off the limb, where the
+// muzzle genuinely is the frontmost lit feature and `frac` landing on that glowDot is exactly
+// right. A missile mount is a RACK: the tubes are bolted flat ONTO the body piece, so the
+// frontmost cell is the front FACE of a box that sits on the limb, not a protruding nose. Reading
+// the muzzle off that face puts the round at the leading edge of the body piece, which is what he
+// is seeing; a missile should come out of the rack, a bit behind its own front face.
+//
+// Expressed as a SEPARATE field rather than by editing the four `frac` values, deliberately: each
+// `frac` is documented as tracking a specific art feature (foremost 2x3 cell, seeker eye, warhead
+// glint) and that arithmetic is still correct and still worth being able to check against the draw
+// fn. This is an intentional offset BEHIND that feature, so it says so instead of quietly making
+// four documented numbers wrong. One dial for all four; raise it if a tad wasn't enough.
+//
+// Units are fractions of the mount's own modeled length L, same as `frac`, so each rack shifts in
+// proportion to its own size rather than by a flat pixel count.
+const MISSILE_SETBACK = 0.22;
+
 export const BARREL_SPECS = {
   // category fallbacks (src/art/mounts/{energy,ballistic,missile,support,melee}.js)
   energy:        { len: 11,  frac: 1 },
   ballistic:     { len: 10,  frac: 1 },
   // flush collar mount: foremost launch cell at y0 + collarH*0.28 = frontY + 0.224L
-  missile:       { len: 6.5, frac: -0.224 },
+  missile:       { len: 6.5, frac: -0.224, setback: MISSILE_SETBACK },
   support:       { len: 7,   frac: 1 },
   melee:         { len: 11,  frac: 1 },
   // bespoke energy (src/art/mounts/weapons.js)
@@ -66,13 +87,14 @@ export const BARREL_SPECS = {
   napalm:        { len: 8,   frac: 0.9 },   // canister glow sits at 0.9L, not the full modeled tube
   // bespoke missile — all three went flush on the shared weaponCollar() the same day Plasma
   // Coater did, but kept the projecting-mount fracs their old free-floating tube shapes earned.
-  swarmRack:     { len: 7.5, frac: -0.16 },    // foremost 2x3 cell: y0 + collarH*0.2 = frontY + 0.16L
+  // Every one of them carries MISSILE_SETBACK as well — see below.
+  swarmRack:     { len: 7.5, frac: -0.16,  setback: MISSILE_SETBACK },  // foremost 2x3 cell: y0 + collarH*0.2 = frontY + 0.16L
   // 2026-08-02: newMissiles draws swarmRack's rack (WEAPON_MOUNT_ART), so it needs swarmRack's
   // spec too — without an entry here `weaponMuzzleTip` falls through to the `missile` CATEGORY
   // spec and spawns rounds off a tube that isn't on the model any more.
-  newMissiles:   { len: 7.5, frac: -0.16 },
-  streakPod:     { len: 9,   frac: -0.208 },   // seeker eye: collarY - collarH*0.24 = frontY + 0.208L
-  clusterRocket: { len: 8,   frac: -0.128 },   // foremost warhead glint: collarY - collarH*0.34 = frontY + 0.128L
+  newMissiles:   { len: 7.5, frac: -0.16,  setback: MISSILE_SETBACK },
+  streakPod:     { len: 9,   frac: -0.208, setback: MISSILE_SETBACK },  // seeker eye: collarY - collarH*0.24 = frontY + 0.208L
+  clusterRocket: { len: 8,   frac: -0.128, setback: MISSILE_SETBACK },  // foremost warhead glint: collarY - collarH*0.34 = frontY + 0.128L
 };
 
 // The barrel/tube length (design units) for one mount, at chassis scale `s`, clamped so it
@@ -94,7 +116,9 @@ export function weaponMuzzleTip(weaponId, catId, part, bodyLen, CENTER) {
   const cap = frontY + CENTER - 2;
   const id = BARREL_SPECS[weaponId] ? weaponId : catId;
   const spec = BARREL_SPECS[id] ?? BARREL_SPECS.energy;
-  return barrelLen(id, s, cap) * spec.frac;
+  // `setback` (missile racks only, see MISSILE_SETBACK above) pulls the spawn point BACK from the
+  // art feature `frac` names. Absent on every other spec, so nothing else changes.
+  return barrelLen(id, s, cap) * (spec.frac - (spec.setback ?? 0));
   // (barrelLen already applies spec.len; multiplying by spec.frac here, not inside barrelLen,
   // keeps barrelLen's return value equal to the exact modeled tube length the housings/rects
   // are drawn at — the frac only matters for where the tip GLOW sits within that tube.)
