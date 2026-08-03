@@ -947,6 +947,12 @@ export const FiringMixin = {
     // weapon can opt back into a heavy beam deliberately rather than as a side effect of its
     // projectile kind.
     const heavy = false;
+    // 2026-08-02 playtest: the beam's END TAPER is pinned to this absolute distance from the muzzle
+    // rather than to whatever length the shot actually drew, so a beam clamped short by a wall,
+    // a unit or foliage stays full-width into the impact instead of narrowing to a point there.
+    // See `fullLen` in drawBeam. The weapon's own max range — the reach it would have with nothing
+    // in the way — which is exactly what `endDist` starts as before the clamps above whittle it.
+    const beamFullLen = w.weapon.range?.max || endDist;
     const continuous = forceContinuous || w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
     const beamKey = `${shooterKey}:${w.location}:${lane}`;
     const live = continuous ? this.beams.find((b) => b.loc === beamKey) : null;
@@ -955,8 +961,9 @@ export const FiringMixin = {
       live.lateral = lateral;
       live.ttl = beamTtl;   // age keeps advancing → warble flows continuously
       live.coneDeg = burstConeDeg;
+      live.fullLen = beamFullLen;
     } else {
-      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral, coneDeg: burstConeDeg });
+      this.beams.push({ x0: muzzleX, y0: muzzleY, x1: endX, y1: endY, color, heavy, ttl: beamTtl, age: 0, loc: continuous ? beamKey : null, lane, lateral, coneDeg: burstConeDeg, fullLen: beamFullLen });
     }
     if (eatenAt) {
       // #374 — the beam was eaten mid-trace: play its OWN normal beam impact FX at the clamp point

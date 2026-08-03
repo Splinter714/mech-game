@@ -33,6 +33,15 @@ const SPARKS_ENABLED = true;
 // and three copies of 0.85 is exactly how they would drift apart.
 const TAPER_START = 0.85;
 
+// The taper curve itself, as one function, taking the fraction along the beam's FULL reach (not
+// along what it happened to draw — see `fullLen` on drawBeam). Full width until TAPER_START, then
+// a cosine down to nothing. Clamped so a caller passing t > 1 gets 0 rather than a negative width.
+function farTaper(t) {
+  if (t < TAPER_START) return 1;
+  if (t >= 1) return 0;
+  return Math.cos(((t - TAPER_START) / (1 - TAPER_START)) * Math.PI / 2);
+}
+
 // Beam stroke weights, in design px before the caller's `s` scale. The standard pair is what
 // EVERY beam in the game draws at (see `heavy` below and firing.js's note) — the heavy pair is
 // dormant, kept so a future weapon can opt into a fatter beam deliberately.
@@ -196,8 +205,7 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
     const r0 = reach * t0, r1 = reach * t1;
     const dfade = chargeDistanceFade((i + 0.5) / SIDE_SEGS);
     const segAlpha = Math.min(1, alpha * dfade * 1.3);
-    const taper = tc < TAPER_START ? 1 : Math.cos(((tc - TAPER_START) / (1 - TAPER_START)) * Math.PI / 2);
-    const w = sideW * taper;
+    const w = sideW * farTaper(tc);
     if (segAlpha <= 0.004 || w <= 0.02) continue;
     let w0 = 0, w1 = 0;
     if (warble) {
@@ -240,12 +248,25 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
 // beam. The `coneDeg = 0` branch below is the untouched original body: every other hitscan weapon
 // in the game (pulse/beam/rail laser, chain-bolt hops, the sustained charge beam, enemy beams,
 // pylon zaps, the lab's icon previews) passes coneDeg 0 and is bit-for-bit unaffected.
-export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1, coneDeg = 0) {
+export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1, coneDeg = 0, fullLen = 0) {
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1) return;
   const nx = dx / len, ny = dy / len;   // beam direction
   const px = -ny, py = nx;              // perpendicular
+
+  // 2026-08-02 playtest (Jackson: "the taper of the held beams seems to start in position based on
+  // when the beam ends if it hits something early; can we have its taper position be absolute at the
+  // far end of its range, but not taper early if it hits something early?"). The taper was measured
+  // as a fraction of the DRAWN length, so a beam clamped short by a wall/unit/foliage narrowed to a
+  // point at the impact — the beam visibly got weaker the closer the thing it was hitting, which is
+  // backwards. `fullLen` is the beam's full unobstructed reach (the weapon's max range); the taper
+  // is now measured against THAT, so it's pinned to an absolute distance from the muzzle. A beam
+  // stopped anywhere inside 85% of its range holds full width right up to the impact point and just
+  // ends; only a beam that actually flies its whole range softens to a point. `fullLen` 0/absent
+  // means "no separate reach" and reproduces the old behaviour exactly — that's every caller whose
+  // length IS its reach by construction (chain-bolt hops, pylon zaps, catalog cards, icon previews).
+  const taperScale = fullLen > 0 ? Math.min(1, len / fullLen) : 1;
 
   // 2026-08-01 playtest (Jackson: "can you make the default laser beam thinner overall?"). The
   // standard pair came down glow 11 -> 8 and core 2.6 -> 1.8, both ~28-30% thinner. Since `heavy`
@@ -281,8 +302,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
-    const taperStart = TAPER_START;
-    const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
+    const taper = farTaper(tc * taperScale);
     const warp0 = warbleOffset(t0, phase, s);
     const warp1 = warbleOffset(t1, phase, s);
     g.lineStyle(glowW * taper, color, 0.18);
@@ -295,10 +315,10 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
-    // Taper: full at muzzle, tapers only toward the far end.
-    const taperStart = TAPER_START;
-    const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
-    // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
+    // Taper: full at muzzle, tapers only toward the far end of the weapon's RANGE (see taperScale).
+    const taper = farTaper(tc * taperScale);
+    // `warbleOffset` ramps itself to zero at both ends, so the beam still meets the muzzle and its
+    // endpoint exactly on the axis regardless of where the taper now starts.
     const warp0 = warbleOffset(t0, phase, s);
     const warp1 = warbleOffset(t1, phase, s);
     const ax = x0 + nx * len * t0 + px * warp0, ay = y0 + ny * len * t0 + py * warp0;
