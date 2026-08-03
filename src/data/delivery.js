@@ -995,7 +995,7 @@ export function chargeConeAngleDeg(frac, maxDeg = CHARGE_CONE_MAX_DEG) {
 // from the player, so it fades to transparent at the far edge; also let's remove the strong
 // middle line during charging... that should really just be there if they hold charge all the
 // way to middle convergence; and then the actual weapon burst visual should depend on when it
-// was released what the shape of the arc was." Four pure pieces below feed both the telegraph
+// was released what the shape of the arc was." The pure pieces below feed both the telegraph
 // (firing.js `_drawChargeFor`, via the shared `drawChargeWedge` art primitive) and the actual
 // fired burst (art/projectileArt.js `drawBeam`'s `coneDeg` parameter), so the shot that leaves
 // the gun visibly carries whatever cone width was showing the instant it was released.
@@ -1026,33 +1026,45 @@ export function chargeDistanceFade(t) {
   return 1 - u;
 }
 
-// The centre convergence line should read as the cone FINISHING ITS COLLAPSE — it only belongs
-// on screen once the wedge has actually shut around it.
+// ── #630: the cone IS the line — the telegraph's ONE opacity curve ─────────────────────────
+// Jackson: "why does the core even need to be a separate thing? can't the cone just collapse to
+// 0 degrees and just BE the core?" It can, and it always could: `drawChargeWedge` STROKES the
+// two cone sides as 1.5px hairlines, so as the angle shuts they converge onto each other and
+// become a single line down the centre all by themselves. The only thing stopping it was an
+// early-out that bailed before drawing anything at very small angles — which is the whole
+// reason a separate centre line ever had to exist.
 //
-// 2026-08-01 playtest (Jackson: "it seems like the central line comes together before the wedge
-// fully collapses"). It did, and the cause was structural: this used to ease off `frac` from its
-// own independently-tuned threshold (0.85), while the cone eased off `frac` on a completely
-// separate curve (`chargeConeAngleDeg`'s `1 - f²`). Two curves over the same input, tuned apart,
-// with nothing tying them together — so at f = 0.85, the exact moment the line began to appear,
-// the cone was still ~25° wide (a quarter of its full 90° spread). The line converged visibly
-// ahead of the wedge.
+// That separate line is now gone, and with it `chargeCoreAlpha`/`CORE_CONE_OPEN_MAX`. This is
+// its replacement and the telegraph's ONLY opacity curve: the wedge's own alpha, which must now
+// carry the convergence moment the core line used to (the core reached ~0.9 while the wedge sat
+// at a flat 0.1 + frac * 0.15, so simply deleting it would have made full charge a faint
+// sliver). Faint and diffuse while wide, bright and solid once collapsed.
 //
-// Now derived FROM THE CONE'S OWN ANGLE rather than from `frac` a second time, so the two cannot
-// drift apart again by construction — retuning `chargeConeAngleDeg` retunes this for free. The
-// line fades in across the last `CORE_CONE_OPEN_MAX` of the cone's angular travel and reaches
-// full opacity exactly when the cone reaches zero.
+// Driven off the cone's OWN ANGLE, not off `frac` a second time — the same lesson the two
+// previous telegraph bugs taught (a 2026-08-01 playtest: "it seems like the central line comes
+// together before the wedge fully collapses" — two curves over the same input, tuned apart, with
+// nothing tying them together). Retuning `chargeConeAngleDeg` retunes this for free, and no
+// third independently-tuned curve exists to drift.
 //
-// Sanity check on the new curve: at f = 0.85 the cone is 27.8% open, well outside the 12% window,
-// so the line is fully hidden where it used to be starting; it first appears around f ≈ 0.94
-// (cone ~11.6% open) and is only past half opacity around f ≈ 0.97, by which point the wedge is
-// a narrow sliver. That is the "collapses into one line" read.
-export const CORE_CONE_OPEN_MAX = 0.12;
+// `closed` runs 0 (cone fully open) → 1 (cone shut). Two terms, both of `closed`:
+//   · DIFFUSE `0.10 + 0.15 * sqrt(closed)` — the wide-cone haze, unchanged. Under the current
+//     `chargeConeAngleDeg` (`1 - f²`), `sqrt(closed)` IS `frac`, so this reproduces today's
+//     `0.1 + frac * 0.15` exactly and the part of the telegraph Jackson already likes is
+//     untouched through the whole early/mid hold.
+//   · FOCUS `0.60 * closed⁴` — the concentration punch. Negligible until the cone is nearly
+//     shut, hitting its full 0.60 exactly when the cone reaches zero.
+// Totals: f=0 → 0.10, f=0.5 → 0.18 (vs 0.175 today), f=0.75 → 0.27, f=0.9 → 0.49, f=1 → 0.85,
+// which lands the fully-collapsed line right about where the old core line's ~0.9 was.
+export const CHARGE_WEDGE_ALPHA_BASE = 0.10;    // wide open, at the muzzle
+export const CHARGE_WEDGE_ALPHA_RAMP = 0.15;    // added across the diffuse phase
+export const CHARGE_WEDGE_ALPHA_FOCUS = 0.60;   // added as the cone collapses to a line
 
-export function chargeCoreAlpha(frac, maxOpen = CORE_CONE_OPEN_MAX) {
-  // How open the cone still is, 1 (full spread) → 0 (shut), read off the cone's own function so
-  // this can never disagree with what's actually being drawn.
-  const openFrac = chargeConeAngleDeg(frac) / CHARGE_CONE_MAX_DEG;
-  if (maxOpen <= 0) return openFrac <= 0 ? 1 : 0;
-  if (openFrac >= maxOpen) return 0;
-  return 1 - openFrac / maxOpen;
+export function chargeWedgeAlpha(frac) {
+  // How SHUT the cone is, 0 (full spread) → 1 (collapsed), read off the cone's own function so
+  // this can never disagree with the shape actually being drawn.
+  const closed = 1 - chargeConeAngleDeg(frac) / CHARGE_CONE_MAX_DEG;
+  const c = Math.max(0, Math.min(1, closed));
+  return CHARGE_WEDGE_ALPHA_BASE
+    + CHARGE_WEDGE_ALPHA_RAMP * Math.sqrt(c)
+    + CHARGE_WEDGE_ALPHA_FOCUS * (c * c * c * c);
 }
