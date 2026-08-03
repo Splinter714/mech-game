@@ -1019,7 +1019,12 @@ export class WeaponCardList {
     if (mode === 'hitscan') {
       const len = this._rangeLen(card);
       const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: card.weapon.delivery.kind === 'rail' });
+      // 2026-08-01: `heavy` was derived here from `delivery.kind === 'rail'`, the same way the
+      // arena used to derive it. The arena now pins it false (every laser draws at Beam Laser's
+      // dimensions — see `firing.js`'s own note), so leaving this deriving independently would put
+      // a FAT beam on the catalog card and a THIN one in the actual fight for the very same
+      // weapon. The card exists to show what the arena does; matched.
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: false });
       // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED.
       if (WEAPON_IMPACT_SOUNDS_ENABLED && this._isAudible(card)) Audio.impact(card.weapon.id);
       return;

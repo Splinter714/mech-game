@@ -935,7 +935,18 @@ export const FiringMixin = {
     // (sustained/stream) keeps ONE beam object that re-pins to the muzzle each shot, so it
     // tracks the mech as it turns/moves; single-shot beams (pulse/rail) push a fresh one.
     const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
-    const heavy = w.weapon.delivery.kind === 'rail';
+    // 2026-08-01 playtest (Jackson: "make the laser beam AND held-portions of all laser weapons
+    // the same thickness/size/dimensions whatever as the current beam laser, because that one
+    // looks right"). `heavy` fattens everything drawBeam draws — glow 17px vs 11, core 4px vs
+    // 2.6, and bigger/further-drifting sparks. It was derived from `delivery.kind === 'rail'`,
+    // and EVERY rail-kind weapon in the game is a laser (Rail Lance [shelved], Charge Lance,
+    // Charge Beam), so that flag only ever fattened the exact weapons he wants matched to Beam
+    // Laser. Now always false: every beam, held or released, player or enemy, draws at Beam
+    // Laser's dimensions. Note this also thins the wall turret's Rail Lance beam, which is the
+    // same consistency and not a regression. `drawBeam` still TAKES the parameter, so a future
+    // weapon can opt back into a heavy beam deliberately rather than as a side effect of its
+    // projectile kind.
+    const heavy = false;
     const continuous = forceContinuous || w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
     const beamKey = `${shooterKey}:${w.location}:${lane}`;
     const live = continuous ? this.beams.find((b) => b.loc === beamKey) : null;
