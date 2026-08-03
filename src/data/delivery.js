@@ -1119,3 +1119,34 @@ export function chargeWedgeAlpha(frac) {
     + CHARGE_WEDGE_ALPHA_RAMP * Math.sqrt(c)
     + CHARGE_WEDGE_ALPHA_FOCUS * (c * c * c * c);
 }
+
+// ── #633: the weapon-derived half of a BEAM spawn, shared by the arena and the catalog card ──
+// A hitscan shot pushes a beam object in two places — `scenes/arena/firing.js` `_fireHitscan`
+// (the real fight) and `ui/weaponCardList.js` `_emit` (the catalog card's live preview, whose
+// entire job is to show what the arena does). Every field of that object except these two is
+// per-site geometry (x0/y0/x1/y1) or per-site bookkeeping (`loc`, `lane`, `lateral`, `coneDeg`);
+// these two are decisions read off the WEAPON, and they had already drifted apart:
+//   · `heavy` — derived independently from `delivery.kind === 'rail'` at both sites, then pinned
+//     false at both by hand (2026-08-01, "make every laser the same thickness as beam laser").
+//     Two hand-edits to keep one decision in sync is the drift this helper removes.
+//   · `ttl`   — same expression, DIFFERENT fallback: arena `?? 80`, card `?? 130`. So any weapon
+//     without a `burst.wubOn` showed a beam lingering 60% longer on its card than in the fight,
+//     with nothing anywhere claiming that was on purpose. Resolved toward the ARENA's 80: the
+//     card is a preview OF the arena, so where the two disagreed and neither was documented, the
+//     real thing wins. If a longer preview beam is ever genuinely wanted for card readability,
+//     add it here as a named `{ preview: true }` option rather than as a second literal.
+// `color` is deliberately NOT here. The arena's beam colour is the plain category colour
+// (`delivery.projectileColor` overrides only PROJECTILE bodies, never a beam — see `makeProjectile`
+// above), while the card's `color` is a card-wide ACCENT that also paints its swatch, its category
+// label and its ability cards, with its own `0xffffff` fallback. Folding those together would mean
+// changing what the card's accent is, which is not this helper's business.
+export const BEAM_TTL_MS = 80;
+
+export function beamSpawnFor(weapon) {
+  return {
+    ttl: weapon.delivery.burst?.wubOn ?? BEAM_TTL_MS,
+    // `drawBeam` still TAKES a heavy flag, so a future weapon can opt back into a fat beam
+    // deliberately rather than as a side effect of its projectile kind — but nothing does today.
+    heavy: false,
+  };
+}

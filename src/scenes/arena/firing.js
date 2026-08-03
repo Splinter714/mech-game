@@ -6,7 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeWedgeAlpha, nearestChainTarget } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeWedgeAlpha, nearestChainTarget, beamSpawnFor } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
 import { traceHitscan, traceHitscanPiercing } from '../../data/beamTrace.js';
@@ -934,7 +934,6 @@ export const FiringMixin = {
     // Persistent beam so sparks can linger after it fades. A continuously-held beam
     // (sustained/stream) keeps ONE beam object that re-pins to the muzzle each shot, so it
     // tracks the mech as it turns/moves; single-shot beams (pulse/rail) push a fresh one.
-    const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
     // 2026-08-01 playtest (Jackson: "make the laser beam AND held-portions of all laser weapons
     // the same thickness/size/dimensions whatever as the current beam laser, because that one
     // looks right"). `heavy` fattens everything drawBeam draws — glow 17px vs 11, core 4px vs
@@ -946,7 +945,11 @@ export const FiringMixin = {
     // same consistency and not a regression. `drawBeam` still TAKES the parameter, so a future
     // weapon can opt back into a heavy beam deliberately rather than as a side effect of its
     // projectile kind.
-    const heavy = false;
+    // #633: both that decision and the beam's TTL now come from `beamSpawnFor` (data/delivery.js)
+    // rather than being spelled out here AND again in the catalog card's own beam push — the two
+    // had already drifted (the card's TTL fallback was 130, not 80). Values are unchanged on this
+    // side; the card is the one that moved.
+    const { ttl: beamTtl, heavy } = beamSpawnFor(w.weapon);
     // 2026-08-02 playtest: the beam's END TAPER is pinned to this absolute distance from the muzzle
     // rather than to whatever length the shot actually drew, so a beam clamped short by a wall,
     // a unit or foliage stays full-width into the impact instead of narrowing to a point there.
