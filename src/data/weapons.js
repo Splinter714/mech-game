@@ -836,24 +836,28 @@ export const WEAPONS = {
   // `spreadAngle`, the angular fan. And 2026-08-02: "make the burst for new missiles much
   // tighter, one after the other much closer in time, almost overlapping one another."
   //
-  // WHAT IT LOOKS LIKE NOW (2026-08-02: "can we make new missiles fire 6 at once"). The volley is
-  // simultaneous — `burst.interval` 20 -> 0, so all six leave on the same frame. They leave on
-  // essentially the same heading (`spreadAngle: 0`; the only angular offset is the ±0.3°
-  // alternating weave stagger every 'weave' burst weapon gets, which is cosmetic), then splay
-  // sideways as each steers to its own aim point 6/18/30px off-centre either way — a 60px-wide
-  // WALL of missiles. Convergence is deliberately left ON (no `salvoNoConverge`): the offsets decay
-  // to zero late in flight so all six still HIT, which is what a homing missile should do. Add
-  // `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
+  // WHAT IT LOOKS LIKE NOW. All six leave the tubes inside ~100ms — one per frame at 60fps,
+  // which is as tight as a staggered burst can get before rounds start sharing a frame and the
+  // ripple collapses into a single simultaneous pop. They leave on essentially the same heading
+  // (`spreadAngle: 0`; the only angular offset left is the ±0.3° alternating weave stagger every
+  // 'weave' burst weapon gets, which is cosmetic), then splay out sideways as each one steers to
+  // its own aim point 6/18/30px off-centre either way — a 60px-wide WALL of missiles rather than
+  // a fan or a ripple. Convergence is deliberately left ON (no `salvoNoConverge`): the offsets
+  // decay to zero late in flight so all six still HIT, which is what a homing missile should do.
+  // Add `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
   //
-  // The interval is the ONLY thing that changed for this (Jackson: "only the mount should have
-  // changed and the burst count, not the projectile flight or anything else like that"). The first
-  // attempt swapped `burst` for `pattern: 'spread'` to get simultaneity — which also moves the
-  // weapon onto a different branch of `planEmissions` and silently dropped the weave stagger. It
-  // stays a burst; the burst is just instantaneous now, so every other flight property is untouched.
-  //
-  // `burstShuffle` (#635) came off with the same change: it randomised WHICH slot launched on which
-  // beat, and with zero beats between launches there is no order left to randomise. The mechanism
-  // stays in delivery.js for any future staggered weapon.
+  // ⚠ 2026-08-02 — THE INTERVAL IS LOAD-BEARING; DO NOT TAKE IT TO 0. "Fire 6 at once" was tried
+  // (interval 20 -> 0) and broke the weapon; Jackson: "the issue is the lack of burst interval,
+  // that's all." It costs two things at once, and the second is the non-obvious one:
+  //   • VISUAL — the six rounds spawn at one point on one heading and only splay later via their
+  //     homing offsets, so the volley reads as a single fat missile instead of six.
+  //   • AUDIO — `scheduleFireCues` (audio/fireCues.js) plays ONE cue at t=0 and retriggers another
+  //     for every sub-shot with `delay > 0`. Six staggered rounds = six bangs, a ripple. At
+  //     interval 0 every delay is 0 and the scheduler deliberately collapses them into that single
+  //     shared cue, so the weapon drops to one pop. Nothing in the weapon entry hints at this.
+  // The stagger is doing real work; ~20ms is already the floor (one frame at 60fps). If a tighter
+  // volley is ever wanted, the honest lever is `lateral` spawn offsets so the six rounds leave from
+  // the rack's six tubes — separation from POSITION rather than from TIME — not a shorter interval.
   //
   // (#631 is what made `spreadAngle: 0` possible. The lateral offset used to be derived FROM the
   // launch fan, so a salvo with no fan had no lateral separation either, and this entry carried a
@@ -868,7 +872,8 @@ export const WEAPONS = {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
       velocity: 700,                                  // squarely between 400 and 1000
       count: 6,                                       // both parents fire 6
-      burst: { interval: 0 },                         // all 6 on ONE frame — see the note above
+      burst: { interval: 20 },                        // "almost overlapping" — ~1 round per frame
+      burstShuffle: true,                             // don't sweep left→right; re-roll the order each pull
       spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
       salvoSpread: 30,                                // the separation, all of it: lateral px
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle
