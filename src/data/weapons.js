@@ -937,7 +937,12 @@ export const WEAPONS = {
       // where the web sat while making one tower vs one enemy meaningfully real (24 per 0.5s =
       // 48 dps concentrated, for a stationary trap the enemy has to stand inside). This is the
       // weapon's main balance dial — first number, Jackson's to retune live.
-      hazard: { kind: 'pylon', radius: 70, pulseDamage: 24, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
+      // #626 playtest follow-up (Jackson: "increase tesla pylon range"). radius 70 -> 150. The 70
+      // was inherited from the LINKING era, where it measured against a connecting SEGMENT that
+      // could span up to 220px — a long capture corridor. As a plain circle around a single tower
+      // it was only ~2x a mech's own 32px hit radius, so enemies walked past untouched. 150 gives
+      // one tower a real footprint to defend without approaching the old web's reach.
+      hazard: { kind: 'pylon', radius: 150, pulseDamage: 24, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
     },
   }),
 };
