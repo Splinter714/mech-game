@@ -27,13 +27,34 @@
 //                   (art/smokePuff.js). Only the roiling is different: the card animates drift/
 //                   breathe off its own loop clock instead of hanging two repeating tweens per
 //                   puff, because a card rebuilds its cloud every few seconds.
-//   droneLauncher   REAL COUNT + REAL MOVEMENT, stand-in art. The squad size is `randomDroneCount`
-//                   and every drone is flown by the real `stepFriendlyDroneOrbit` on the real
-//                   `FRIENDLY_DRONE_TUNING` (scaled to card px), so the swarm churns/separates/
-//                   leashes exactly like the summoned one. They draw as small rotor chips rather
-//                   than the real Recon Drone airframe: at a card's scale the airframe is ~3px of
-//                   mush, and baking a whole vehicle texture set per catalog would cost far more
-//                   than the read is worth.
+//   droneLauncher   REAL, as of #628 — count, movement AND art. The squad size is
+//                   `randomDroneCount` and every drone is flown by the real
+//                   `stepFriendlyDroneOrbit` on the real `FRIENDLY_DRONE_TUNING` (scaled to card
+//                   px), so the swarm churns/separates/leashes exactly like the summoned one; and
+//                   each one is now the ACTUAL Recon Drone airframe, raised from the same
+//                   `ensureFriendlyDroneTextures` call the arena's own summon makes
+//                   (scenes/arena/friendlyDrones.js) — same builder, same dark player-tinted
+//                   palette, nosed along its travel direction with its rotor overlay spinning at
+//                   the arena's own rate. This replaces the two-crossed-lines "rotor chip" stand-in
+//                   #534 drew, on Jackson's reading that the arena looks better than the card did.
+//                   The old objection here was that the airframe is "~3px of mush" at card scale —
+//                   true only if you scale it by the card's raw world→px factor. Sized against the
+//                   CASTER instead (the drone is the same fraction of the mech it escorts that it
+//                   is in the arena) it comes out bigger than the chip it replaces, and the
+//                   texture-cost objection was answered by #612 already: it is ONE bake per accent
+//                   colour, shared by every card and reused by the arena.
+//   empTrap         NEW in #628 (it had no card at all — #621 shipped noting the gap: "EMP Trap's
+//                   catalog card will just show the idle caster mech with no special animation").
+//                   REAL SCATTER + REAL NODE ART: `trapCount` traps ringed around the caster at the
+//                   registry's own `scatterRadiusMin`..`Max`, each drawn by `drawMineNode`
+//                   (art/abilityFx.js) — literally the same call `_drawHazard` makes for a planted
+//                   trap in the arena — and opened with `empCastRings`, the cast burst
+//                   `plantEmpTraps` plays. The one thing that is a stand-in is the DETONATION: a
+//                   trap fires when an enemy walks into it, and a card has no enemies, so after the
+//                   traps have sat armed for a beat the card discharges them itself with the shared
+//                   `aoeBlastRings` spec at the trap's own real `hazardRadius`, in the trap's own
+//                   colour. Same "derive the stand-in from the ability's own registry data" rule as
+//                   everything else here.
 //   cloak           REAL, as of #612. The card runs the actual effect on the actual mech: the
 //                   per-pixel greyscale re-bake of that build's own part textures
 //                   (`desaturateTexture`, the same call arena/abilities.js's `setCloakVisual`
@@ -59,8 +80,9 @@
 // gating, so a whole column of cards is animating at once and you can compare them at a glance.
 // Two deliberate deviations, both because ability timing is on a completely different scale from a
 // weapon's fire cadence:
-//   * the REST between loops is a short fixed gap, not the ability's real 4-15s cooldown, which
-//     would leave a card blank for most of its life. A thin sweeping arc around the caster during
+//   * the REST between loops is a short fixed gap, not the ability's real cooldown (a flat 4s
+//     across the whole catalog since #628, previously 4-18s), which would leave a card blank for
+//     most of its life. A thin sweeping arc around the caster during
 //     that gap says "recharging" without pretending to be a real cooldown readout.
 //   * a long `duration` is capped at PREVIEW_MAX_ACTIVE_MS. Drone Launcher's real 12s window on a
 //     ~200px card reads as a frozen loop, not as a long ability.
@@ -74,12 +96,23 @@ import { ABILITIES } from '../data/abilities.js';
 import { getWeapon } from '../data/weapons.js';
 import { makeProjectile, stepProjectile } from '../data/delivery.js';
 import { nearestInterceptTarget } from '../data/interceptor.js';
-import { randomDroneCount, stepFriendlyDroneOrbit, FRIENDLY_DRONE_TUNING } from '../data/friendlyDroneAI.js';
+import {
+  randomDroneCount, stepFriendlyDroneOrbit, FRIENDLY_DRONE_TUNING, DRONE_COUNT_MAX,
+} from '../data/friendlyDroneAI.js';
 import { MEDIUM_PLAYER_CONFIG } from '../data/chassis/player/mediumPlayer.js';
 import { drawProjectileBody } from '../art/index.js';
-import { aoeBlastRings, interceptRings, ringsDuration, drawFxRings, INTERCEPT_BOLT_COLOR } from '../art/abilityFx.js';
+import {
+  aoeBlastRings, interceptRings, ringsDuration, drawFxRings, INTERCEPT_BOLT_COLOR,
+  empCastRings, drawMineNode, EMP_TRAP_COLOR,
+} from '../art/abilityFx.js';
+// #628: the arena's OWN friendly-drone texture builder, so a card's squad is the same airframe the
+// summon spawns rather than a lookalike. Importing an arena module from the UI is the same shape as
+// casterMech.js reaching into arena/abilities.js for the real Cloak constants.
+import { ensureFriendlyDroneTextures } from '../scenes/arena/friendlyDrones.js';
 import { ensureSmokeTextures, smokePuffLayout, smokePuffScale } from '../art/smokePuff.js';
-import { CasterMech, CasterCloak, CASTER_WORLD_PX, CASTER_BODY_FRAC, CLOAK_ALPHA } from './casterMech.js';
+import {
+  CasterMech, CasterCloak, CASTER_WORLD_PX, CASTER_PART_PX, CASTER_BODY_FRAC, CLOAK_ALPHA,
+} from './casterMech.js';
 
 // ── Timeline ───────────────────────────────────────────────────────────────────────────────────
 const REST_MS = 900;                 // preview-only gap between loops — NOT the real cooldown
@@ -114,6 +147,14 @@ export function burstDistance(def) {
   return def.speedMult ? BASE_SPEED * def.speedMult * (def.duration ?? 0) : 0;
 }
 
+// #628: how far out an EMP Trap cast actually reaches — the furthest a trap can land, plus that
+// trap's own hazard radius, since the card discharges each one at its real radius. Every other
+// ability states its extent as a single `range`/`radius`; this one's is two registry fields
+// together, so it gets a named derivation rather than a magic entry in the max() below.
+export function empTrapExtent(def) {
+  return (def.scatterRadiusMax ?? 0) + (def.hazardRadius ?? 0);
+}
+
 // How much WORLD space this ability's effect occupies — the largest of whatever spatial numbers
 // its registry entry actually carries.
 export function previewExtent(def) {
@@ -122,6 +163,7 @@ export function previewExtent(def) {
     def.radius ?? 0,
     burstDistance(def),
     def.effect === 'droneLauncher' ? FRIENDLY_DRONE_TUNING.leashRadius : 0,
+    def.effect === 'empTrap' ? empTrapExtent(def) : 0,
     PERSONAL_EXTENT,
   );
 }
@@ -153,6 +195,32 @@ const FX_REF_CASTER_R = 26;
 const DASH_GHOSTS = 3;
 const DASH_GHOST_ALPHA = 0.34;
 
+// #628: one drone's texture square as a fraction of the caster's, for the legibility reason
+// spelled out at its use in `setStage`. Calibrated so the drawn airframe (about a third of its own
+// canvas) lands a little wider than the ~5px vector chip it replaces — recognisably a quad-rotor,
+// still clearly an escort rather than a second mech. PLAYTEST DIAL: raise it if the swarm reads as
+// specks, lower it if the drones crowd the mech they orbit.
+const DRONE_CASTER_FRAC = 0.6;
+
+// #628, EMP Trap: how long the scattered traps sit ARMED on the card before it discharges them.
+// The ability's own `duration` is only the 0.15s activation beat (the traps outlive it on their own
+// 7s `life`, see data/abilities.js), so without a hold the card would flash and be empty — and 7s
+// of motionless dots is the "frozen loop" PREVIEW_MAX_ACTIVE_MS exists to prevent. Long enough to
+// read the ring of pulsing warning lights, short enough that the loop keeps moving.
+const EMP_TRAP_HOLD_MS = 2200;
+// Floors, in card px, for the two things an EMP Trap card draws at the hazard's own radius (55px
+// world, which compresses to ~9px on a stage this size). The scatter POSITIONS are never floored —
+// where the traps land is spatial data and stays proportional, same rule as every other extent on a
+// card; these two are the decoration ON a trap, in the same category as the intercept spark that's
+// already sized against the card rather than the world.
+//
+// The node floor is set from how the arena's own node READS rather than picked: `drawMineNode`
+// strokes its ring at 0.28 of the radius it's given, so an arena trap's ring is ~15px against a
+// ~65px mech, i.e. a bit under a quarter of the mech's height. 16 puts the card's ring at the same
+// fraction of the (legibility-inflated) mech standing next to it.
+const EMP_NODE_MIN_PX = 16;
+const EMP_BLAST_MIN_PX = 10;
+
 export class AbilityCardPreview {
   // `index` staggers the loop start across a column so several ability cards don't pulse in
   // lockstep — the same trick the weapon cards' `cd: this.cards.length * 120` seed plays.
@@ -167,11 +235,20 @@ export class AbilityCardPreview {
     this.effect = def.effect;
     this.accent = accent;
     this.layer = scene.add.container(0, 0);   // everything this preview owns, under the card's fxG
-    // Two bands inside it, in the arena's own depth order: smoke is ground FX, the mech standing in
-    // it draws over it. (The card's fxG — blasts, drones, rounds — is above both.)
+    // Three bands inside it, in the arena's own depth order: smoke, the mech standing in it, and
+    // (#628) the drone squad flying over both — the arena's DEPTH.FLYING_UNITS (3.5) sits above the
+    // player's DEPTH.UNITS (3) for exactly that reason. The card's fxG — blasts, trap nodes, rounds
+    // — is above all three.
+    //
+    // Smoke stays BELOW the caster here even though #628 lifted the arena's own cloud above every
+    // unit (DEPTH.SMOKE): in the arena hiding what's inside it is the entire point of the ability,
+    // whereas a catalog card exists to show you the ability AND whose mech is casting it (#612), and
+    // burying that mech under the cloud on a ~245x80 stage would defeat the card. Deliberate
+    // divergence, not an oversight.
     this.smokeLayer = scene.add.container(0, 0);
     this.casterLayer = scene.add.container(0, 0);
-    this.layer.add([this.smokeLayer, this.casterLayer]);
+    this.droneLayer = scene.add.container(0, 0);
+    this.layer.add([this.smokeLayer, this.casterLayer, this.droneLayer]);
 
     // The caster mech itself, plus Dash's motion ghosts (its own trail IS the read — Dash has no
     // arena FX beyond the movement) and Cloak's real flatten. All three are per-card sprite stacks
@@ -194,9 +271,11 @@ export class AbilityCardPreview {
     this.travelMs = burstDistance(def) > 0 ? (def.duration ?? 0) * 1000 : 0;
     this.activeMs = this.travelMs || clamp(previewDurationMs, MIN_ACTIVE_MS, PREVIEW_MAX_ACTIVE_MS);
     // Extra time after the burst window for a trailing effect to finish: Jump Blast's landing
-    // blast fires on the deactivate edge, Smoke Screen's cloud fades out.
+    // blast fires on the deactivate edge, Smoke Screen's cloud fades out, and (#628) EMP Trap's
+    // traps sit armed on the ground long after the 0.15s cast beat that planted them.
     this.settleMs = this.effect === 'jumpBlast' ? ringsDuration(aoeBlastRings(1, 0)) + 60
-      : this.effect === 'smokeScreen' ? 420 : 0;
+      : this.effect === 'smokeScreen' ? 420
+        : this.effect === 'empTrap' ? EMP_TRAP_HOLD_MS : 0;
     this.cycleMs = this.activeMs + this.settleMs + REST_MS;
 
     this.t = -((index * 230) % REST_MS);   // negative = still waiting for its first loop
@@ -204,7 +283,10 @@ export class AbilityCardPreview {
     this._fx = [];        // transient ring sets: { x, y, rings, scale, age, life, bolt }
     this._rounds = [];    // Anti-Missile: live incoming rounds (real delivery-sim projectiles)
     this._drones = [];    // Drone Launcher: live squad (real friendlyDroneAI state)
+    this._droneViews = []; // #628: one real Recon Drone sprite stack per possible squad member
     this._puffs = [];     // Smoke Screen: stamped Images + their per-puff animation phases
+    this._traps = [];      // #628, EMP Trap: the scattered trap nodes, in card px
+    this._empFired = false; // #628: has this loop already discharged its traps?
     this._spawnCd = 0;
     this.stage = null;
   }
@@ -234,6 +316,7 @@ export class AbilityCardPreview {
       this.def.radius ?? 0,
       this.def.range ?? 0,
       this.def.effect === 'droneLauncher' ? FRIENDLY_DRONE_TUNING.leashRadius : 0,
+      this.def.effect === 'empTrap' ? empTrapExtent(this.def) : 0,
       PERSONAL_EXTENT / 2,
     );
     const travel = burstDistance(this.def);
@@ -262,8 +345,28 @@ export class AbilityCardPreview {
     // a flat 11% of travel (what the chip trail used): mech-sized ghosts 11% apart on a short burst
     // are a smear, and the point of the trail is reading distinct positions along the path.
     this.ghostGapFrac = this.pxTravel > 0 ? clamp(this.casterR / this.pxTravel, 0.08, 0.3) : 0;
+    // #628: how big one drone's airframe is drawn. Its texture canvas is the same CASTER_PART_PX
+    // square a mech part is, so this is a fraction of the caster's own drawn footprint.
+    //
+    // NOT strictly proportional, and the exception is deliberate. In the arena a drone's sprite is
+    // ~0.12 of a mech part's square (friendlyDrones.js), and only about a third of that
+    // square is airframe (the canvas carries the rotor-swing headroom every vehicle texture does),
+    // so carrying the real ratio onto a card whose whole mech is ~26px tall lands the drone at
+    // roughly THREE pixels of visible rotor — which is exactly the "~3px of mush" objection that
+    // put a vector chip here in #534 in the first place. The chip it replaces was itself drawn at
+    // ~0.28 of the caster's radius for the same reason. So the squad is drawn bigger than life, at
+    // a fixed fraction of the caster, in the same spirit as the caster's own legibility clamp above
+    // and the intercept spark's card-scaled size below. Nothing SPATIAL is affected — where the
+    // drones fly (orbit, leash, separation) is still the real tuning through `pxPerWorld`.
+    this.droneSpriteScale = (this.casterPx * DRONE_CASTER_FRAC) / CASTER_PART_PX;
+    // EMP Trap's own numbers in card px. The scatter band is spatial (proportional, like every
+    // radius/range here); the hazard radius is floored only where it's DRAWN — see the constants.
+    this.pxScatterMin = (this.def.scatterRadiusMin ?? 0) * this.pxPerWorld;
+    this.pxScatterMax = (this.def.scatterRadiusMax ?? 0) * this.pxPerWorld;
+    this.pxHazardRadius = (this.def.hazardRadius ?? 0) * this.pxPerWorld;
     this._placeCaster();
     this._buildSmoke();
+    this._buildDrones();
     this._begin();
   }
 
@@ -304,6 +407,7 @@ export class AbilityCardPreview {
     if (this.effect === 'antiMissile') this._stepAntiMissile(dt, ms);
     else if (this.effect === 'droneLauncher') this._stepDrones(dt);
     else if (this.effect === 'smokeScreen') this._stepSmoke();
+    else if (this.effect === 'empTrap') this._stepEmpTraps();
 
     for (const f of this._fx) f.age += ms;
     if (this._fx.some((f) => f.age >= f.life)) this._fx = this._fx.filter((f) => f.age < f.life);
@@ -324,6 +428,8 @@ export class AbilityCardPreview {
       this._pushRings(cx - this.pxTravel / 2, cy, aoeBlastRings(this.pxRadius * 0.55, 0xbfe8ff));
     } else if (this.effect === 'droneLauncher') {
       this._spawnSquad();
+    } else if (this.effect === 'empTrap') {
+      this._scatterTraps();
     }
   }
 
@@ -392,7 +498,51 @@ export class AbilityCardPreview {
     this._rounds.push(p);
   }
 
-  // ── Drone Launcher: the real squad size, flown by the real orbit AI ─────────────────────────
+  // ── Drone Launcher: the real squad size, flown by the real orbit AI, in the real airframe ───
+
+  // #628: one sprite stack per POSSIBLE squad member, built once per layout and then shown/hidden
+  // as each loop's `randomDroneCount` lands — a squad respawns every few seconds, and churning
+  // GameObjects at that cadence is exactly what `_buildSmoke` already refuses to do. The textures
+  // themselves are the arena's own (`ensureFriendlyDroneTextures`): one bake per accent colour for
+  // the whole catalog, reused by the arena if the player's colour matches the card's accent.
+  _buildDrones() {
+    if (this.effect !== 'droneLauncher') return;
+    const key = ensureFriendlyDroneTextures(this.scene, this.accent);
+    if (!this._droneViews.length) {
+      for (let i = 0; i < DRONE_COUNT_MAX; i++) {
+        // Hull + rotor overlay, the same two sprites `_spawnFriendlyDrone` assembles. Its third,
+        // the ground shadow, is skipped: it's a 0.28-alpha black ellipse, which says "airborne"
+        // over lit terrain and says nothing at all over a card's near-black stage.
+        const hull = this.scene.add.sprite(0, 0, `${key}_hull`);
+        const turret = this.scene.add.sprite(0, 0, `${key}_turret`);
+        const view = this.scene.add.container(0, 0, [hull, turret]).setVisible(false);
+        view.hull = hull;
+        view.turret = turret;
+        this.droneLayer.add(view);
+        this._droneViews.push(view);
+      }
+    }
+    for (const v of this._droneViews) {
+      v.hull.setScale(this.droneSpriteScale);
+      v.turret.setScale(this.droneSpriteScale);
+    }
+  }
+
+  // Pose this frame's squad. Mirrors `_updateFriendlyDrones`: the hull noses along its travel
+  // direction (the art points -y at rotation 0, hence the +PI/2 the arena uses too) and the turret
+  // overlay is the spinning rotor blur. Views past the live squad size are simply hidden.
+  _updateDroneViews(alpha) {
+    for (let i = 0; i < this._droneViews.length; i++) {
+      const v = this._droneViews[i];
+      const d = this._drones[i];
+      if (!d || alpha <= 0) { v.setVisible(false); continue; }
+      v.setVisible(true);
+      v.setAlpha(alpha);
+      v.setPosition(d.x, d.y);
+      v.hull.rotation = d.angle + Math.PI / 2;
+      v.turret.rotation = d.rotorSpin;
+    }
+  }
 
   _spawnSquad() {
     const { cx, cy } = this.stage;
@@ -494,6 +644,55 @@ export class AbilityCardPreview {
     this._puffs.length = 0;
   }
 
+  // ── EMP Trap: the real scatter, the real node visual (#628) ─────────────────────────────────
+
+  // The cast. This is `plantEmpTraps` (scenes/arena/abilities.js) with the same arithmetic, in card
+  // px: `trapCount` traps spread evenly around a full circle from a random start angle, each with
+  // the same +/-20%-of-a-step jitter, at a random distance in the registry's own scatter band. Same
+  // opening flash too — `empCastRings` is what `_impactFx` plays for the cast (see art/abilityFx.js).
+  _scatterTraps() {
+    const { cx, cy } = this.stage;
+    const count = this.def.trapCount ?? 5;
+    const step = (Math.PI * 2) / count;
+    const base = Math.random() * Math.PI * 2;
+    this._traps = [];
+    this._empFired = false;
+    for (let i = 0; i < count; i++) {
+      const a = base + i * step + (Math.random() - 0.5) * step * 0.4;
+      const d = this.pxScatterMin + Math.random() * (this.pxScatterMax - this.pxScatterMin);
+      this._traps.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d });
+    }
+    this._pushRings(cx, cy, empCastRings(), { scale: this.fxScale });
+  }
+
+  // The discharge, once per loop, when the traps' hold window is up. A real trap fires when an
+  // enemy walks into it and there are no enemies on a card, so this is the one invented beat on
+  // this preview — deliberately built from the ability's OWN data (the shared `aoeBlastRings` spec
+  // at the trap's real `hazardRadius`, in the trap's real colour) rather than from a new look, and
+  // deliberately at the END of the hold so what the card mostly shows is traps sitting armed, which
+  // is what the ability mostly does.
+  _stepEmpTraps() {
+    if (this._empFired || !this._traps.length) return;
+    if (this.t < this.activeMs + this.settleMs) return;
+    this._empFired = true;
+    const r = Math.max(EMP_BLAST_MIN_PX, this.pxHazardRadius);
+    for (const t of this._traps) this._pushRings(t.x, t.y, aoeBlastRings(r, EMP_TRAP_COLOR));
+    this._traps = [];
+  }
+
+  // Every live trap's armed warning light, straight through the arena's own `drawMineNode`. Drawn
+  // into the card's shared fxG (above the caster) rather than into a ground layer of its own the way
+  // the arena's hazards sit below every unit: the scatter puts the ring of traps clear of the mech
+  // in the middle, so nothing is occluded, and a second Graphics per card for five dots isn't worth
+  // the object. The pulse rides the scene clock, so the whole ring throbs in lockstep exactly as a
+  // freshly-planted arena scatter does.
+  _drawTraps(g, alpha) {
+    if (!this._traps.length) return;
+    const now = this.scene.time?.now ?? this.t;
+    const r = Math.max(EMP_NODE_MIN_PX, this.pxHazardRadius);
+    for (const t of this._traps) drawMineNode(g, t.x, t.y, r, EMP_TRAP_COLOR, now, this.fxScale, alpha);
+  }
+
   // ── Draw ────────────────────────────────────────────────────────────────────────────────────
 
   // A soft cross-fade over the loop seam so the reset (the caster snapping back to its start,
@@ -523,7 +722,9 @@ export class AbilityCardPreview {
 
     // #612: the caster is real sprites, not vector work, so it's posed/faded before the alpha
     // early-out below — at a <= 0 it has to be actively HIDDEN, where a Graphics simply isn't drawn.
+    // #628: the drone squad is real sprites now too, and hides on the same terms.
     this._updateCaster(a, px, py);
+    this._updateDroneViews(a);
     if (a <= 0) return;
 
     if (this.effect === 'antiMissile') this._drawEnvelope(g, a);
@@ -532,7 +733,7 @@ export class AbilityCardPreview {
       drawProjectileBody(g, p.x, p.y, p.angle, p.kind, p.color, (p.scale || 1) * 0.7, p.dist);
     }
 
-    if (this.effect === 'droneLauncher') this._drawDrones(g, a);
+    if (this.effect === 'empTrap') this._drawTraps(g, a);
 
     for (const f of this._fx) {
       if (f.bolt && f.age < 70) {
@@ -621,20 +822,9 @@ export class AbilityCardPreview {
     }
   }
 
-  _drawDrones(g, alpha) {
-    // A drone is a fraction of the mech it escorts — the same relationship the chip's own 0.55x
-    // drone had to it, restated against the mech that replaced the chip.
-    const r = Math.max(1.6, this.casterR * 0.28);
-    for (const d of this._drones) {
-      g.fillStyle(this.accent, 0.9 * alpha).fillCircle(d.x, d.y, r * 0.55);
-      // Two crossed rotor arms spun by the same rate the arena spins the real airframe's blur.
-      g.lineStyle(1, this.accent, 0.55 * alpha);
-      for (let k = 0; k < 2; k++) {
-        const a = d.rotorSpin + k * Math.PI / 2;
-        g.lineBetween(d.x - Math.cos(a) * r, d.y - Math.sin(a) * r, d.x + Math.cos(a) * r, d.y + Math.sin(a) * r);
-      }
-    }
-  }
+  // #628 removed `_drawDrones` — the vector "rotor chip" (an accent dot with two crossed spinning
+  // lines) that stood in for a drone through #534. The squad is the real Recon Drone airframe now;
+  // see `_buildDrones`/`_updateDroneViews` above and this module's header.
 
   // The ability's real `range`, drawn as the point-defense envelope everything inside gets shot
   // down within.
@@ -649,10 +839,16 @@ export class AbilityCardPreview {
     this.caster?.destroy();
     for (const gh of this.ghosts) gh.destroy();
     this.ghosts.length = 0;
+    // #628: the squad's sprite stacks. `this.layer.destroy()` below would take them with it (they're
+    // parented into droneLayer), but they're released explicitly for the same reason the caster and
+    // the puffs are — this class owns them, so it disposes of them rather than relying on a parent.
+    for (const v of this._droneViews) v.destroy();
+    this._droneViews.length = 0;
     this.layer.destroy();
     this._fx.length = 0;
     this._rounds.length = 0;
     this._drones.length = 0;
+    this._traps.length = 0;
     this.stage = null;
   }
 }

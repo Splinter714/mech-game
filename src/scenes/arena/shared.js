@@ -174,8 +174,24 @@ export const DEPTH = {
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text
                       // — momentary feedback that should read clearly over whatever it's on.
+  // #628 (Jackson: "increase z-order of smoke screen above everything else" -> asked whether that
+  // includes world markers -> "Above units and effects, below world markers"). Smoke Screen's puffs
+  // (stealth.js `_spawnSmokeCloud`) used to stamp at GROUND_FX (1), down in the ground-decal band
+  // with napalm's burning patch and planted hazards — so every mech, projectile, impact burst and
+  // explosion drew straight OVER the cloud, which is why a deployed screen read as a stain on the
+  // floor rather than as something you can't see through. A real obscurant already BLOCKS the
+  // enemy firing-lane raycast (`smokeBlocksPoint`, #507), so it has to look like it too: at 5.5 it
+  // covers units (2/2.75/3/3.5), projectiles (4) and impact/death FX (5).
+  //
+  // Deliberately NOT "the top." The tier stops one step below WORLD_UI (6) so the objective
+  // beacon, powerup/salvage markers and floating damage numbers stay legible THROUGH the cloud —
+  // those are navigational/readout aids, not things in the world that smoke could physically hide,
+  // and burying them would make a screen you deployed yourself cost you your own wayfinding.
+  // Another fractional slot, for the same "don't renumber every existing tier" reason DOCK_FX
+  // (1.5) / COVER_CANOPY (2.5) / LARGE_GROUND_UNITS (2.75) / LOS_DIM (2.9) use (#289).
+  SMOKE: 5.5,
   WORLD_UI: 6,        // world-space markers: the mission objective beacon, powerup/salvage
-                      // beacons — always legible above units and FX.
+                      // beacons — always legible above units and FX (and, per #628, above smoke).
 };
 
 // #113/#289/#327: which DEPTH tier a unit's view belongs at. The PLAYER stays at DEPTH.UNITS

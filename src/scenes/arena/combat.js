@@ -20,8 +20,17 @@ import { DORMANT } from '../../data/awareness.js';
 // there for the full list of gated call sites and how to revert.
 import { WEAPON_IMPACT_SOUNDS_ENABLED } from '../../audio/sfxParams.js';
 import { listenerOf, primaryPlayerOf, statusSpotColorsFor } from './players.js';
-import { breakCloakOnDeath } from './abilities.js';
+import { activeEffectRange, breakCloakOnDeath } from './abilities.js';
 import { getWeapon } from '../../data/weapons.js';
+
+// #628: Anti-Missile's own cyan — the colour its intercept rings (art/abilityFx.js) and its garage
+// card's defended envelope (ui/abilityPreview.js `_drawEnvelope`) are both already drawn in, named
+// here now that the arena draws that envelope too.
+const ANTI_MISSILE_COLOR = 0x5ec8e0;
+// How long the mech→intercept-point zap bolt is held, in ms. The card's own number (`f.age < 70`)
+// — a one-frame flash at 60fps was the original intent, and 70ms keeps it visible at low frame
+// rates without becoming a lingering beam.
+const INTERCEPT_BOLT_MS = 70;
 
 // #576: which weapon CATEGORY is behind this hit, for the category-vs-layer multipliers
 // (data/shield.js). Derived from the `meta.weaponId` every real weapon-damage path already
@@ -388,6 +397,49 @@ export const CombatMixin = {
     this.tweens.add({ targets: c, scale: r1 / r0, alpha: 0, duration: dur, onComplete: () => this._freeImpactCircle(c) });
   },
 
+  // #628: the same ring `_burst` draws, GROWN BY RADIUS instead of by SCALE — so its outline keeps
+  // a constant width the whole way out instead of fattening as the ring expands.
+  //
+  // This is the one concrete thing the garage's ability card was doing that the arena wasn't
+  // (Jackson on Shield Burst: "garage looks better"). Both surfaces play the identical ring spec
+  // from art/abilityFx.js, but they RENDER it differently: the card replays it with
+  // `drawFxRings`, which strokes each ring at a flat ~2px whatever radius it has reached, while
+  // `_burst` above starts a 2px-stroked circle at `r0` and tweens the game object's SCALE up to
+  // `r1 / r0` — and a Phaser shape's stroke is part of the shape, so it scales too. Shield Burst's
+  // shockwave ring grows 0.3r -> 1.05r, i.e. 3.5x, which turns a crisp 2px shockwave into a ~7px
+  // smeared band by the time it reaches the ability's actual radius. Growing the radius directly
+  // is what the card is already doing, so the arena now reads the same way.
+  //
+  // Deliberately NOT applied to `_burst` itself. Every impact spark, death explosion and debris
+  // puff in the game goes through that, at small radii where a thickening stroke is part of the
+  // established look and nobody asked for a change; this is used only by `_aoeBlastFx` below, for
+  // the one stroked ring in an ability blast. Not pooled either (unlike `_burst`): an ability
+  // activation is a rare, deliberate event, so one Arc per blast created and destroyed — the same
+  // trade `_floatText` already makes — beats teaching the shared pool a second growth mode and
+  // risking a recycled circle being resized by a tween that outlived it.
+  _burstRing(x, y, r0, r1, col, alpha, dur, width = 2) {
+    const c = this.add?.circle?.(x, y, r0);
+    // No real display list (a hand-rolled test double): fall back to the pooled scale-grown ring,
+    // which is what this replaced — the visual difference is the whole point, the behaviour isn't.
+    if (!c) return this._burst(x, y, r0, r1, col, alpha, dur, true);
+    c.setStrokeStyle(width, col, alpha);
+    c.setDepth(DEPTH.IMPACT_FX);
+    const grow = { r: r0 };
+    const span = r1 - r0;
+    this.tweens.add({
+      targets: grow, r: r1, duration: dur,
+      // Radius, not scale: `setRadius` rebuilds the arc's own path, so the stroke stays `width`.
+      // The fade is read back off the radius rather than from the tween's own progress — the
+      // default ease is linear, so the two are the same number, and this way the whole callback is
+      // plain arithmetic on the target it was handed.
+      onUpdate: () => {
+        c.setRadius(grow.r);
+        c.setAlpha(span > 0 ? 1 - (grow.r - r0) / span : 0);
+      },
+      onComplete: () => c.destroy(),
+    });
+  },
+
   // #494/#527: Anti-Missile Defense's own dedicated "shot down" feedback — deliberately NOT a
   // reuse of `_impactFx` above. Reusing it (the original #494 implementation) read as an
   // ordinary ballistic spark tinted a slightly different color — indistinguishable from the
@@ -400,18 +452,58 @@ export const CombatMixin = {
   // random spark in open air. Its SFX is its own cue (`Audio.ui('antiMissile')`), not
   // `Audio.impact(weaponId)` — playing the enemy weapon's own impact sound here would
   // misleadingly suggest THEIR shot connected.
+  // #628 fixed the zap bolt, which was never actually visible. It was drawn into `projFx` straight
+  // from here — but here is reached from `_handleAbilities`, which ArenaScene.update runs BEFORE
+  // `_updateProjectiles`, and the first thing `_updateProjectiles` does is `projFx.clear()`. So the
+  // line was wiped in the same frame it was drawn, every time, and the arena's intercept has in
+  // practice only ever been the spark. The card, which has no such ordering, drew its bolt for the
+  // first 70ms of each kill — one of the two things Jackson was seeing when he said the garage
+  // preview of this ability looks better than the arena. The bolt is now QUEUED here and stroked by
+  // `_drawAbilityFx` below, which runs after the clear, and holds for the card's own 70ms.
   _interceptFx(px, py, x, y) {
-    const g = this.projFx;
-    if (g && g.lineStyle) {
-      g.lineStyle(2, INTERCEPT_BOLT_COLOR, 0.85);
-      g.beginPath();
-      g.moveTo(px, py);
-      g.lineTo(x, y);
-      g.strokePath();
-    }
+    (this._interceptBolts ??= []).push({ px, py, x, y, at: this.time?.now ?? 0 });
     // Core flash, cyan shockwave ring, cyan afterglow fill — see art/abilityFx.js.
     for (const r of interceptRings()) this._burst(x, y, r.r0, r.r1, r.color, r.alpha, r.dur, r.stroke);
     Audio.ui('antiMissile');
+  },
+
+  // #628: the per-frame world-space draw for ABILITIES THAT ARE CURRENTLY ON — the arena half of
+  // "make Anti-Missile match its garage card." Called from ArenaScene.update AFTER
+  // `_updateProjectiles` has cleared `projFx`, the same window `_drawStatusEffects`/`_drawAimLine`
+  // already draw in; drawing it from the ability tick itself is exactly the mistake the bolt was
+  // stuck in (see `_interceptFx`).
+  //
+  // Two things, both lifted straight off the card (ui/abilityPreview.js `_drawEnvelope` + the
+  // `f.bolt` branch of its `draw`), with no mechanical change to the ability at all — the scan and
+  // the kill are untouched, this only draws what was already happening:
+  //   * THE DEFENDED ENVELOPE. The card outlines the ability's real `range` for as long as it's
+  //     active, which is what makes it read as a protective bubble you are standing inside. The
+  //     arena drew nothing at all — a burst window with no visible extent, where the only feedback
+  //     was a spark that may or may not go off depending on whether anything was shot at you.
+  //   * THE ZAP BOLT, per the note above.
+  // The card strokes the envelope at 1px because its whole envelope is ~38px across; at the real
+  // 220px world radius that is a hairline, so the width is the one number not copied verbatim.
+  _drawAbilityFx() {
+    const g = this.projFx;
+    if (!g?.lineStyle) return;
+    const now = this.time?.now ?? 0;
+    for (const p of this.players ?? []) {
+      if (p.dead) continue;
+      const range = activeEffectRange(p, 'antiMissile');
+      // Same colour/alpha the card uses while the ability is live (`_drawEnvelope`, active pass).
+      if (range > 0) g.lineStyle(2, ANTI_MISSILE_COLOR, 0.5).strokeCircle(p.x, p.y, range);
+    }
+    const bolts = this._interceptBolts;
+    if (!bolts?.length) return;
+    for (const b of bolts) {
+      if (now - b.at >= INTERCEPT_BOLT_MS) continue;
+      g.lineStyle(2, INTERCEPT_BOLT_COLOR, 0.85);
+      g.beginPath();
+      g.moveTo(b.px, b.py);
+      g.lineTo(b.x, b.y);
+      g.strokePath();
+    }
+    this._interceptBolts = bolts.filter((b) => now - b.at < INTERCEPT_BOLT_MS);
   },
 
   // #498: a big, radius-SIZED "you felt that" AoE blast — a bright core flash plus a shockwave
@@ -428,7 +520,15 @@ export const CombatMixin = {
   // blast, at two different radii/tints).
   _aoeBlastFx(x, y, radius, color = 0xffcf8a) {
     // Core flash, shockwave ring, afterglow fill — the geometry lives in art/abilityFx.js.
-    for (const r of aoeBlastRings(radius, color)) this._burst(x, y, r.r0, r.r1, r.color, r.alpha, r.dur, r.stroke);
+    // #628: the two FILL rings still ride the pooled `_burst` (a scaled disc looks identical to a
+    // grown one), but the STROKED shockwave now goes through `_burstRing` so its outline stays as
+    // crisp as the garage card's — see that method for the full why. Shield Burst is what Jackson
+    // called out, and Jump Blast's launch pop/landing blast come through here too: they play the
+    // same shared ring spec on the same card renderer, so they converge on it for the same reason.
+    for (const r of aoeBlastRings(radius, color)) {
+      if (r.stroke) this._burstRing(x, y, r.r0, r.r1, r.color, r.alpha, r.dur);
+      else this._burst(x, y, r.r0, r.r1, r.color, r.alpha, r.dur, false);
+    }
     const cam = this.cameras?.main;
     if (cam?.shake) {
       // Live-chat ask (2026-07-31), "screen shake needs to be less overall": cap 8 → 5 and the

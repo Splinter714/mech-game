@@ -2,6 +2,7 @@
 // draw), plus the persistent-beam and burning-ground passes. Methods use `this` (the
 // ArenaScene); composed onto the prototype via Object.assign.
 import { drawProjectileBody, drawBeam, drawGroundFire } from '../../art/index.js';
+import { drawMineNode, EMP_TRAP_COLOR } from '../../art/abilityFx.js';
 import { livePlayersOf, otherLivePlayers, targetPlayerFor } from './players.js';
 import { damageInRadius } from '../../data/aoe.js';
 import { computeImpulse } from '../../data/force.js';
@@ -1005,10 +1006,11 @@ export const ProjectilesMixin = {
       // #621: an EMP Trap (`hz.disable` set) gets its own bright electric-blue warning light
       // instead — same pulsing "warning light" idiom, distinct at a glance from both a real
       // player mine and an enemy one.
-      const mineColor = hz.disable ? 0x33ccff : (hz.owner === 'enemy' ? 0x33e6ff : 0xff5533);
-      const pulse = 0.5 + 0.5 * Math.sin(now / 160);
-      g.lineStyle(2, mineColor, 0.3 + pulse * 0.5).strokeCircle(hz.x, hz.y, hz.radius * 0.28 + pulse * 2);
-      g.fillStyle(mineColor, 0.85).fillCircle(hz.x, hz.y, 3.5);
+      const mineColor = hz.disable ? EMP_TRAP_COLOR : (hz.owner === 'enemy' ? 0x33e6ff : 0xff5533);
+      // #628: the pulse itself moved to `drawMineNode` (art/abilityFx.js) unchanged — same two
+      // draw calls, same numbers, called here at scale 1 — so the garage's EMP Trap card can stamp
+      // the real node visual rather than a lookalike. Nothing about the arena's look changed.
+      drawMineNode(g, hz.x, hz.y, hz.radius, mineColor, now);
     } else if (hz.kind === 'field') {
       const t = now / 1000;
       // Playtest pass: the drawn orb uses `visualRadius` (defaults to the real pull `radius` for

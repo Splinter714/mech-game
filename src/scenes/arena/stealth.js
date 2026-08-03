@@ -79,8 +79,11 @@ export const StealthMixin = {
     // only the Phaser stamping + the two endlessly-repeating tweens on top.
     for (const { ox, oy, r, texKey, baseAlpha } of smokePuffLayout(radius)) {
       const scale = smokePuffScale(r);
+      // #628: DEPTH.SMOKE (5.5), not GROUND_FX (1) — a cloud you can't see through has to draw
+      // over the units/projectiles/impacts inside it, and stops just below WORLD_UI so the
+      // objective/powerup markers and damage numbers stay readable. See that constant's comment.
       const view = this.add.image(player.x + ox, player.y + oy, texKey)
-        .setDepth(DEPTH.GROUND_FX)
+        .setDepth(DEPTH.SMOKE)
         .setScale(scale)
         .setRotation(Math.random() * Math.PI * 2)
         .setAlpha(baseAlpha);

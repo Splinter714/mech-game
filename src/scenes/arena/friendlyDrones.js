@@ -68,19 +68,35 @@ function friendlyDroneTextureKey(accent) {
   return `friendlyDrone_${(accent ?? DEFAULT_ACCENT).toString(16)}`;
 }
 
+// The sprite scale one summoned drone is drawn at — the enemy Recon Drone's own size multiplier on
+// the shared mech/vehicle scale, i.e. how big a drone is relative to the mech it escorts. Named
+// (rather than inlined, as it was) now that #628 gave the garage card the same airframe and had to
+// reason about this ratio to decide how big to draw it there.
+const FRIENDLY_DRONE_SPRITE_SCALE = ARENA_MECH_SCALE * (ENEMY_KINDS.drone.scale ?? 1);
+
+// Build (once) the `<key>_hull` / `<key>_turret` textures for a friendly drone in `accent`, and
+// return the key. #628 factored this out of `_spawnFriendlyDrone` so the garage catalog's ability
+// preview can raise the SAME textures from the SAME def — one call site for "what a friendly drone
+// is made of", so the card can't drift from the summon (and, when the card's accent happens to
+// match the player's colour, the arena simply reuses the texture the garage already baked).
+export function ensureFriendlyDroneTextures(scene, accent = DEFAULT_ACCENT) {
+  const key = friendlyDroneTextureKey(accent);
+  if (!scene.textures.exists(`${key}_turret`)) {
+    // Same Recon Drone art builder + geometry the hostile swarm uses (art/vehicles/drone.js),
+    // just with `themeColor`/`palette` swapped to the owner's dark player-tinted look.
+    buildVehicleTextures(scene, key, {
+      ...ENEMY_KINDS.drone, themeColor: accent, palette: vehicleDarkPalette(accent),
+    });
+  }
+  return key;
+}
+
 export const FriendlyDronesMixin = {
   _spawnFriendlyDrone(player) {
     this._despawnFriendlyDrone(player);
     const accent = player.color ?? DEFAULT_ACCENT;
-    const key = friendlyDroneTextureKey(accent);
-    if (!this.textures.exists(`${key}_turret`)) {
-      // Same Recon Drone art builder + geometry the hostile swarm uses (art/vehicles/drone.js),
-      // just with `themeColor`/`palette` swapped to the owner's dark player-tinted look.
-      buildVehicleTextures(this, key, {
-        ...ENEMY_KINDS.drone, themeColor: accent, palette: vehicleDarkPalette(accent),
-      });
-    }
-    const scale = ARENA_MECH_SCALE * (ENEMY_KINDS.drone.scale ?? 1);
+    const key = ensureFriendlyDroneTextures(this, accent);
+    const scale = FRIENDLY_DRONE_SPRITE_SCALE;
     const count = randomDroneCount();
     const drones = [];
     for (let i = 0; i < count; i++) {

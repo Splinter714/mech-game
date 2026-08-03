@@ -52,6 +52,23 @@ export const JUMP_BLAST_DAMAGE = 32;
 // effect for the actual scan/destroy logic (data/interceptor.js's `nearestInterceptTarget` is
 // still the reusable target-selection primitive underneath it). Starting numbers, Jackson's own
 // to retune live, not locked.
+
+// #628 — THE 4-SECOND CAP. Jackson: "decrease cooldowns for all abilities significantly" ->
+// asked how much -> "all cut to 4 seconds at most". So every entry below is `min(previous, 4)`:
+// cloak 5, jumpBlast 6, shieldBurst 8, smokeScreen 12, antiMissile 13, droneLauncher 15 and
+// empTrap 18 all come down to 4; Dash was already at DASH_COOLDOWN (4) and is unchanged. The cap
+// is a flat rule, not seven independently-tuned numbers — anything that needs to breathe again
+// after playtest moves on its own, but the starting point for all of them is the same 4.
+//
+// TWO CONSEQUENCES, both raised with him BEFORE he confirmed the cap, both deliberate — they are
+// noted here (and at the two entries themselves) so a later reader doesn't file them as bugs:
+//   1. empTrap's 18 was the LONGEST cooldown in the game on purpose (#621) — the counterweight
+//      for a full move+fire stun that can catch up to 5 enemies in one scatter. At 4s a stun is
+//      nearly always available, which makes this the likeliest of the set to want walking back.
+//   2. droneLauncher (duration 12) and smokeScreen (duration 6) now have cooldowns SHORTER than
+//      their own durations. Nothing stacks — `canActivate` (data/abilityState.js) also gates on
+//      `!state.active`, so a second press mid-window is the same no-op it always was — but the
+//      practical effect is that both are re-summonable the INSTANT they expire, with no gap.
 export const ABILITIES = {
   dash: {
     name: 'Dash',
@@ -66,7 +83,7 @@ export const ABILITIES = {
   shieldBurst: {
     name: 'Shield Burst',
     effect: 'shieldBurst',
-    cooldown: 8,
+    cooldown: 4,      // #628: was 8 — the flat 4s cap.
     duration: 0.15,   // just long enough to read as a beat, not a real "burst window"
     radius: 90,
     damage: 30,
@@ -77,7 +94,7 @@ export const ABILITIES = {
   jumpBlast: {
     name: 'Jump Blast',
     effect: 'jumpBlast',
-    cooldown: 6,
+    cooldown: 4,      // #628: was 6 — the flat 4s cap.
     duration: JUMP_BLAST_BURST_DURATION,
     speedMult: JUMP_BLAST_SPEED_MULT,
     radius: JUMP_BLAST_RADIUS,
@@ -86,13 +103,20 @@ export const ABILITIES = {
   // #497: summons a lightweight friendly drone that orbits the player and auto-fires at nearby
   // enemies for the ability's `duration`, then despawns. `duration` doubles as the drone's
   // lifespan on the SAME abilityState burst window every other ability uses — no new state
-  // machine needed. `cooldown` > `duration` so there's a real gap after it expires before a
-  // fresh one can be summoned (re-pressing mid-flight is a no-op like every other ability, since
-  // `canActivate` also gates on `!state.active`).
+  // machine needed.
+  //
+  // #628 CORRECTED A STALE CLAIM HERE. This comment used to read "`cooldown` > `duration` so
+  // there's a real gap after it expires before a fresh one can be summoned" — true at 15/12, and
+  // FALSE now that the cap put the cooldown at 4 against a 12s duration. What is still true is the
+  // part that was only ever the parenthetical: re-pressing mid-flight is a no-op, because
+  // `canActivate` gates on `!state.active` as well as on the cooldown. So nothing stacks and a
+  // squad is never doubled — but the cooldown is long spent by the time the squad expires, so a
+  // fresh one is available the instant the old one despawns. That is the intended #628 behaviour,
+  // not an oversight.
   droneLauncher: {
     name: 'Drone Launcher',
     effect: 'droneLauncher',
-    cooldown: 15,
+    cooldown: 4,      // #628: was 15 — the flat 4s cap; deliberately shorter than `duration`.
     duration: 12,
   },
   // #500: personal stealth — visually fades the mech to a grey wireframe, blocks the same
@@ -111,7 +135,7 @@ export const ABILITIES = {
   cloak: {
     name: 'Cloak',
     effect: 'cloak',
-    cooldown: 5,
+    cooldown: 4,      // #628: was 5 — the flat 4s cap.
     duration: null,
     breaksOnFire: true,
   },
@@ -120,17 +144,21 @@ export const ABILITIES = {
   // standing in it (co-op cover), not just whoever cast it. Its lifetime rides the SAME
   // abilityState burst window as Drone Launcher's summon (`duration` = how long the cloud
   // lingers), spawned/despawned on the activate/deactivate edges.
+  //
+  // #628: like Drone Launcher above, its cooldown is now SHORTER than its own `duration` — a
+  // fresh cloud can go down the moment the last one dissipates. Deliberate; `canActivate`'s
+  // `!state.active` gate is what still stops two clouds existing at once.
   smokeScreen: {
     name: 'Smoke Screen',
     effect: 'smokeScreen',
-    cooldown: 12,
+    cooldown: 4,      // #628: was 12 — the flat 4s cap; deliberately shorter than `duration`.
     duration: 6,
     radius: 100,
   },
   antiMissile: {
     name: 'Anti-Missile Defense',
     effect: 'antiMissile',
-    cooldown: 13,
+    cooldown: 4,      // #628: was 13 — the flat 4s cap.
     duration: 3.5,
     range: 220,
   },
@@ -151,18 +179,24 @@ export const ABILITIES = {
   // (mirrors Shield Burst) — the traps themselves outlive that beat on their own `life` timer, same
   // as a planted mine/field hazard always has.
   //
-  // PLAYTEST DIAL, first to tune: `disableDuration` (2.5s) x `cooldown` (18s). This is the
-  // strongest of the three CC options Jackson was offered (full stun vs. movement-only vs.
-  // firing-only) — a scatter of 5 traps can plausibly stun several enemies at once, so both the
-  // per-hit stun window and the cooldown between casts are deliberately tighter/longer than every
-  // other ability here (next-highest cooldown is Drone Launcher's 15s) so one trap-scatter can't
-  // trivialize a pack of enemies. `trapCount` (5) mirrors Proximity Mines' old scatter; the
-  // scatter-radius band (50-100px around the player) and hazard radius/armDelay/life (55/0.3/7)
-  // mirror that weapon's own numbers, just re-centered on the player instead of a lobbed toss.
+  // PLAYTEST DIAL, first to tune: `disableDuration` (2.5s) x `cooldown`. This is the strongest of
+  // the three CC options Jackson was offered (full stun vs. movement-only vs. firing-only) — a
+  // scatter of 5 traps can plausibly stun several enemies at once, which is why #621 gave it the
+  // longest cooldown in the game (18s, against a then-next-highest of Drone Launcher's 15s) so one
+  // trap-scatter couldn't trivialize a pack of enemies. `trapCount` (5) mirrors Proximity Mines'
+  // old scatter; the scatter-radius band (50-100px around the player) and hazard radius/armDelay/
+  // life (55/0.3/7) mirror that weapon's own numbers, just re-centered on the player.
+  //
+  // #628 REMOVED THAT COUNTERWEIGHT, knowingly. The flat 4s cap applies here like everywhere else,
+  // so the game's deliberately-longest cooldown is now the same as everything else's and a full
+  // stun is nearly always available. Jackson was told this before confirming the cap and confirmed
+  // it anyway — so it is intended, NOT an oversight of #621's balance reasoning. Of the seven
+  // abilities the cap touched, this is the one most likely to need walking back after playtest;
+  // if it does, this entry's `cooldown` is the dial (the 18 above is the number it came from).
   empTrap: {
     name: 'EMP Trap',
     effect: 'empTrap',
-    cooldown: 18,
+    cooldown: 4,      // #628: was 18 — the flat 4s cap. See the note above before retuning.
     duration: 0.15,
     trapCount: 5,
     scatterRadiusMin: 50,
