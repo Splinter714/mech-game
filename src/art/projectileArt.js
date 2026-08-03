@@ -33,6 +33,32 @@ const SPARKS_ENABLED = true;
 // and three copies of 0.85 is exactly how they would drift apart.
 const TAPER_START = 0.85;
 
+// The perpendicular wobble every beam and charge-wedge side shares.
+//
+// 2026-08-01 playtest (Jackson: "for the held beam, we at one point decided I wanted the beginning
+// of the beam to warble AND for it to fully connect to the mount, which kinda makes those first two
+// segments warble very differently from one another. could that be related?"). It was exactly that.
+//
+// The old form sampled the sine at each segment's CENTRE and used that one value for BOTH of its
+// endpoints, then hard-overrode the very first endpoint to 0 to pin the beam to the muzzle. Two
+// defects fell out: every segment was a straight line at a constant offset, so consecutive
+// segments stepped rather than joined (a staircase, ~0.14px per step); and segment 0 alone had to
+// cross the FULL warble amplitude within its own 7px length to satisfy the pin — a measured 7.8°
+// kink at the muzzle while every other segment sat at 0°. That lone sharp diagonal is the "chunk"
+// that read as the beam being cut.
+//
+// Now the sine is sampled at the segment's own ENDPOINTS, so neighbours share a value exactly and
+// there is no step anywhere; and the pin is a smooth RAMP (smoothstep over the first/last `RAMP`
+// of the length) instead of an override, so the amplitude eases to zero at the muzzle and the tip
+// rather than being yanked there. Worst kink anywhere is now 3.2°, down from 7.8°, and it still
+// meets the mount at exactly zero offset — the original intent, without the artifact.
+const WARBLE_RAMP = 0.08;
+function warbleOffset(t, phase, s) {
+  const u = Math.max(0, Math.min(1, Math.min(t, 1 - t) / WARBLE_RAMP));
+  const ease = u * u * (3 - 2 * u);   // smoothstep: no corner where the ramp reaches full
+  return Math.sin(phase * 0.04 + t * Math.PI * 3) * 1.3 * s * ease;
+}
+
 // #493 follow-up: the charge-lance telegraph's cone/wedge — a rounded far edge (the circular
 // arc from `chargeArcPoints`, not the original straight chord between the two corner points)
 // filled in a handful of concentric bands whose alpha fades with distance from the apex
@@ -169,9 +195,10 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
     if (segAlpha <= 0.004 || w <= 0.02) continue;
     let w0 = 0, w1 = 0;
     if (warble) {
-      const warp = Math.sin(warble.phase * 0.04 + tc * Math.PI * 3) * 1.3 * (warble.s ?? 1);
-      w0 = t0 === 0 ? 0 : warp;   // pinned at the apex and the tip, exactly like the beam core
-      w1 = t1 === 1 ? 0 : warp;
+      // Same endpoint sampling + smooth end-ramp as the beam core (see `warbleOffset`) — the
+      // wedge sides had the identical centre-sampled/hard-pinned defect.
+      w0 = warbleOffset(t0, warble.phase, warble.s ?? 1);
+      w1 = warbleOffset(t1, warble.phase, warble.s ?? 1);
     }
     g.lineStyle(w, color, segAlpha); strokeSides(r0, r1, w0, w1);
   }
@@ -244,9 +271,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const tc = (t0 + t1) / 2;
     const taperStart = TAPER_START;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
-    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
-    const warp0 = t0 === 0 ? 0 : warpRaw;
-    const warp1 = t1 === 1 ? 0 : warpRaw;
+    const warp0 = warbleOffset(t0, phase, s);
+    const warp1 = warbleOffset(t1, phase, s);
     g.lineStyle(glowW * taper, color, 0.18);
     g.lineBetween(x0 + nx * len * t0 + px * warp0, y0 + ny * len * t0 + py * warp0,
                   x0 + nx * len * t1 + px * warp1, y0 + ny * len * t1 + py * warp1);
@@ -261,9 +287,8 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const taperStart = TAPER_START;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
-    const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
-    const warp0 = t0 === 0 ? 0 : warpRaw;
-    const warp1 = t1 === 1 ? 0 : warpRaw;
+    const warp0 = warbleOffset(t0, phase, s);
+    const warp1 = warbleOffset(t1, phase, s);
     const ax = x0 + nx * len * t0 + px * warp0, ay = y0 + ny * len * t0 + py * warp0;
     const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
