@@ -11,7 +11,7 @@ import { gen, ART_SCALE } from './_frames.js';
 import { CATEGORIES } from '../data/categories.js';
 import { WEAPONS, WEAPON_IDS } from '../data/weapons.js';
 import { ABILITIES } from '../data/abilities.js';
-import { projectileKind, chargeArcPoints, chargeDistanceFade } from '../data/delivery.js';
+import { projectileKind, chargeArcPoints, chargeDistanceFade, CHARGE_CONE_MAX_DEG } from '../data/delivery.js';
 import { drawProjectileBody } from './projectiles/index.js';
 import { drawAbilityIcon } from './abilityIcons.js';
 
@@ -51,7 +51,14 @@ const SPARKS_ENABLED = true;
 // 1.5px wide, so they begin genuinely overlapping once their separation drops below that, and the
 // blend deepens continuously as they close. Branching to "draw once when nearly collapsed" would
 // introduce a visible pop at the threshold; the coincident case is just the limit of real overlap.
-export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1) {
+//
+// #632 — `warble` (optional, `{ phase, s, glowW, coreW }`). Null/omitted is the static wedge the charge-up
+// TELEGRAPH has always drawn. Supplied, the two cone sides pick up the exact perpendicular sine
+// wobble the beam core uses, so the RELEASE burst (drawBeam's `coneDeg` path) reads as the same
+// energy material as an ordinary laser instead of a static cone with a generic beam laid on top.
+// It's a parameter rather than a second function on purpose: the geometry, the fade curve and the
+// collapse behaviour above must stay one implementation.
+export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1, warble = null) {
   const halfAngle = (coneDeg * Math.PI) / 180 / 2;
   if (reach <= 0 || alpha <= 0.002) return;
   // The only part that genuinely cannot survive a 0° cone: the filled bands and the rounded far
@@ -88,15 +95,54 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
 
   // Straight cone sides (apex → corner), faded the same way band-by-band so they thin toward
   // the tip instead of ending in one hard, fully-opaque line.
-  for (let i = 0; i < BANDS; i++) {
-    const r0 = reach * (i / BANDS), r1 = reach * ((i + 1) / BANDS);
-    const segAlpha = Math.min(1, alpha * chargeDistanceFade((i + 0.5) / BANDS) * 1.3);
-    if (segAlpha <= 0.004) continue;
-    g.lineStyle(1.5, color, segAlpha);
-    g.lineBetween(x + Math.cos(angle - halfAngle) * r0, y + Math.sin(angle - halfAngle) * r0,
-                  x + Math.cos(angle - halfAngle) * r1, y + Math.sin(angle - halfAngle) * r1);
-    g.lineBetween(x + Math.cos(angle + halfAngle) * r0, y + Math.sin(angle + halfAngle) * r0,
-                  x + Math.cos(angle + halfAngle) * r1, y + Math.sin(angle + halfAngle) * r1);
+  //
+  // #632: when warbling, each side is displaced along ITS OWN perpendicular by the beam core's
+  // wobble term — same `phase * 0.04 + tc * PI * 3` sine, same 1.3px amplitude, same sign for both
+  // sides. Same sign is what makes the #630 collapse check hold: at 0° the two sides share a
+  // direction, therefore share a perpendicular, therefore warble in lockstep and land on top of
+  // each other as ONE wobbling line — geometrically the same figure the straight beam core draws.
+  // (Mirroring the sign would split them into two counter-wobbling lines at collapse instead.)
+  // The warbling pass also subdivides finer — 6 bands can't carry a 1.5-cycle sine — but samples
+  // the identical `chargeDistanceFade` alpha curve, just at more points.
+  //
+  // The sides also take on the straight beam's own WEIGHT as the cone closes: `focus` runs 0 (cone
+  // wide open) → 1 (collapsed), read off `CHARGE_CONE_MAX_DEG` exactly the way `chargeWedgeAlpha`
+  // reads its own `closed` so no third curve exists to drift. At focus 0 the sides are the same
+  // 1.5px hairlines they always were and there is no glow — a wide sloppy burst still reads as a
+  // CONE, not as two laser rails in a V. As focus → 1 they thicken to the beam's `coreW` and the
+  // beam's outer glow fades in at its own 0.18, so a nearly-collapsed release is the straight beam
+  // (drawn twice, coincident — see the deliberate double-blend note above). That continuity matters
+  // because the release BELOW 0.5° actually falls through to the real straight beam in `drawBeam`;
+  // without the focus ramp the last sliver of charge would visibly pop from hairline to full beam.
+  const sideSegs = warble ? 48 : BANDS;
+  const focus = warble ? Math.max(0, Math.min(1, 1 - coneDeg / CHARGE_CONE_MAX_DEG)) : 0;
+  const sideW = warble ? 1.5 + ((warble.coreW ?? 2.6) - 1.5) * focus : 1.5;
+  const sideGlowW = warble ? (warble.glowW ?? 11) : 0;
+  // Both sides' directions are loop-invariant; `qL`/`qR` are their own perpendiculars.
+  const aL = angle - halfAngle, aR = angle + halfAngle;
+  const cL = Math.cos(aL), sL = Math.sin(aL), qLx = -sL, qLy = cL;
+  const cR = Math.cos(aR), sR = Math.sin(aR), qRx = -sR, qRy = cR;
+  const strokeSides = (r0, r1, w0, w1) => {
+    g.lineBetween(x + cL * r0 + qLx * w0, y + sL * r0 + qLy * w0,
+                  x + cL * r1 + qLx * w1, y + sL * r1 + qLy * w1);
+    g.lineBetween(x + cR * r0 + qRx * w0, y + sR * r0 + qRy * w0,
+                  x + cR * r1 + qRx * w1, y + sR * r1 + qRy * w1);
+  };
+  for (let i = 0; i < sideSegs; i++) {
+    const t0 = i / sideSegs, t1 = (i + 1) / sideSegs;
+    const r0 = reach * t0, r1 = reach * t1;
+    const dfade = chargeDistanceFade((i + 0.5) / sideSegs);
+    const segAlpha = Math.min(1, alpha * dfade * 1.3);
+    const glowAlpha = warble ? Math.min(1, dfade * 1.3) * 0.18 * focus : 0;
+    if (segAlpha <= 0.004 && glowAlpha <= 0.004) continue;
+    let w0 = 0, w1 = 0;
+    if (warble) {
+      const warp = Math.sin(warble.phase * 0.04 + ((t0 + t1) / 2) * Math.PI * 3) * 1.3 * (warble.s ?? 1);
+      w0 = t0 === 0 ? 0 : warp;   // pinned at the apex and the tip, exactly like the beam core
+      w1 = t1 === 1 ? 0 : warp;
+    }
+    if (glowAlpha > 0.004) { g.lineStyle(sideGlowW, color, glowAlpha); strokeSides(r0, r1, w0, w1); }
+    if (segAlpha > 0.004) { g.lineStyle(sideW, color, segAlpha); strokeSides(r0, r1, w0, w1); }
   }
 
   // The rounded far edge itself — the curved silhouette boundary, drawn as one continuous
@@ -118,9 +164,18 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
 // `heavy` thickens everything for the rail lance. `coneDeg` (#493 follow-up, default 0 — every
 // non-charge weapon is unaffected): the charge-lance's release-time cone width, in degrees —
 // see `drawChargeWedge` above. 0 draws exactly the beam this always drew; > 0 bursts a faded,
-// rounded wedge behind the beam first, sized to the beam's own length, so a shot released
-// before full charge visibly reads as a wide, sloppy burst rather than the clean tight beam a
-// full-charge release still produces (chargeConeAngleDeg(1) === 0).
+// rounded wedge sized to the beam's own length, so a shot released before full charge visibly
+// reads as a wide, sloppy burst rather than the clean tight beam a full-charge release still
+// produces (chargeConeAngleDeg(1) === 0).
+//
+// #632 — the cone path draws the WEDGE INSTEAD OF the straight beam body, not on top of it. It
+// used to flash a static wedge and then fire an entirely unrelated generic laser through it, so a
+// release read as "a cone flashed, and also a laser went off". Now the wedge itself carries the
+// warble (its sides) and the sparkle (flecks scattered across the cone's width), and the generic
+// under-line/glow/core are skipped — one coherent shape made of the same material as every other
+// beam. The `coneDeg = 0` branch below is the untouched original body: every other hitscan weapon
+// in the game (pulse/beam/rail laser, chain-bolt hops, the sustained charge beam, enemy beams,
+// pylon zaps, the lab's icon previews) passes coneDeg 0 and is bit-for-bit unaffected.
 export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase = 0, sparkAlpha = 1, coneDeg = 0) {
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.sqrt(dx * dx + dy * dy);
@@ -132,8 +187,17 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const coreW = (heavy ? 4 : 2.6) * s;
   const SEGS = heavy ? 48 : 64;
 
+  // The charge-release cone, as a half-angle in radians; 0 for every ordinary beam. Everything
+  // #632 added is gated on this being non-zero, so the ordinary path is exactly what it was.
+  const coneHalf = coneDeg > 0.5 ? (coneDeg * Math.PI) / 180 / 2 : 0;
+  const baseAngle = coneHalf > 0 ? Math.atan2(ny, nx) : 0;
+
   if (sparkAlpha >= 1) {
-  if (coneDeg > 0.5) drawChargeWedge(g, x0, y0, Math.atan2(ny, nx), coneDeg, len, color, 0.85);
+  if (coneHalf > 0) {
+    // Charge release: the warbling wedge IS the beam body. No under-line, glow or core — the
+    // wedge's own sides carry the wobble, and take the beam's glow/core weights as the cone closes.
+    drawChargeWedge(g, x0, y0, baseAngle, coneDeg, len, color, 0.85, { phase, s, glowW, coreW });
+  } else {
   // #421 legibility: a thin dark under-line the length of the beam, drawn BEFORE the glow/core,
   // so a pale energy/support beam (cyan/green) holds an edge against light ground (snow, sand)
   // instead of the low-alpha glow washing into it. Slightly narrower than the core so it reads
@@ -173,6 +237,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const bx = x0 + nx * len * t1 + px * warp1, by = y0 + ny * len * t1 + py * warp1;
     g.lineStyle(coreW * taper, color, 0.85); g.lineBetween(ax, ay, bx, by);
   }
+  } // end straight-beam (coneDeg 0) body
   } // end sparkAlpha >= 1 block
 
   if (!SPARKS_ENABLED) return;
@@ -182,6 +247,15 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   // stroke, uncaptured. One tag for both spark passes; they're the same visual idea (crackling
   // energy) at two different scales, not two things worth separating in the dissector.
   g.layer?.('sparks');
+  // #632: on the charge-release path the flecks scatter across the CONE instead of along a single
+  // centre line. Each fleck rolls its own lateral fraction u ∈ [-1,1] (re-rolled every cycle by the
+  // same hash-the-cycle trick that re-rolls `t`) and sits at `baseAngle + u * coneHalf`, i.e. on a
+  // ray of the wedge at radius `len * t` — polar, so a fleck can never escape the wedge's rounded
+  // far edge the way a flat `t * width` offset would at the corners. The perpendicular `drift` (the
+  // fleck flying off the beam) still rides on top. At coneHalf → 0 every ray is the axis and this
+  // reduces exactly to the straight-beam placement, which is why the `else` below is literally the
+  // original expression: coneHalf is 0 for every non-charge weapon and the branch never runs.
+  const spark01 = (a, b) => { const h = Math.sin(a * 61.7 + b * 17.3) * 24634.6345; return h - Math.floor(h); };
   // Splatter sparks: chunky dots near the beam, each on its own slow oscillation.
   const sparkCount = heavy ? 10 : 12;
   const maxDrift = (heavy ? 18 : 13) * s;
@@ -198,8 +272,15 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const rMax = (heavy ? 4.0 : 2.8) * s;
     const r = rMax * life;              // shrinks to nothing as it flies off
     if (r < 0.5) continue;
-    const sx = x0 + nx * len * t + px * sign * drift;
-    const sy = y0 + ny * len * t + py * sign * drift;
+    let sx, sy;
+    if (coneHalf > 0) {
+      const a = baseAngle + (spark01(cycle, i) * 2 - 1) * coneHalf;
+      sx = x0 + Math.cos(a) * len * t + px * sign * drift;
+      sy = y0 + Math.sin(a) * len * t + py * sign * drift;
+    } else {
+      sx = x0 + nx * len * t + px * sign * drift;
+      sy = y0 + ny * len * t + py * sign * drift;
+    }
     // Fleck: a short streak perpendicular to the beam, with a bright hot center dot.
     const fx = px * r * 1.6, fy = py * r * 1.6;
     g.lineStyle(r * 0.9, color, sparkAlpha); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
@@ -218,8 +299,17 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const life = 1 - drift / (coreW / 2);
     const r = (heavy ? 1.4 : 1.0) * s * life;
     if (r < 0.3) continue;
-    const sx = x0 + nx * len * t + px * sign * drift;
-    const sy = y0 + ny * len * t + py * sign * drift;
+    // Same cone scatter as the splatter pass above — on a release these crackle across the whole
+    // wedge rather than hugging a centre line that isn't there any more.
+    let sx, sy;
+    if (coneHalf > 0) {
+      const a = baseAngle + (spark01(cycle, i + 7) * 2 - 1) * coneHalf;
+      sx = x0 + Math.cos(a) * len * t + px * sign * drift;
+      sy = y0 + Math.sin(a) * len * t + py * sign * drift;
+    } else {
+      sx = x0 + nx * len * t + px * sign * drift;
+      sy = y0 + ny * len * t + py * sign * drift;
+    }
     const fx = px * r * 1.4, fy = py * r * 1.4;
     g.lineStyle(r * 0.8, color, 1.0); g.lineBetween(sx - fx, sy - fy, sx + fx, sy + fy);
     g.fillStyle(0xffffff, 1.0); g.fillCircle(sx, sy, r * 0.5);
