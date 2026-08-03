@@ -264,10 +264,10 @@ export default class ArenaScene extends Phaser.Scene {
     // tier is what puts the fog under the player/flyers and over everything on the ground.
     this._initVisibility();
     this.groundFx = this.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning-ground patches (napalm) + planted hazards (#525)
-    this.fx = this.add.graphics().setDepth(DEPTH.PROJECTILES);        // instant beams / muzzle flash / slash (timed clear)
-    this.beamFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks (redrawn each frame)
-    this.projFx = this.add.graphics().setDepth(DEPTH.PROJECTILES);    // travelling projectiles (redrawn each frame)
-    this.chargeFx = this.add.graphics().setDepth(DEPTH.PROJECTILES); // #493: charge-up telegraph (redrawn each frame)
+    this.fx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);        // instant beams / muzzle flash / slash (timed clear)
+    this.beamFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);   // persistent beams + dying sparks (redrawn each frame)
+    this.projFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);    // travelling projectiles (redrawn each frame)
+    this.chargeFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX); // #493: charge-up telegraph (redrawn each frame)
     this.projectiles = [];
     this.beams = [];
     this.dyingBeams = [];

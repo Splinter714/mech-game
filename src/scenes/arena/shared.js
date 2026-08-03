@@ -147,6 +147,21 @@ export const DEPTH = {
   // what keeps "Wall turrets should be visible from inside or outside, right?" true without
   // punching a hole in the fog. Still below UNITS (3), so the player is never obscured.
   WALLS: 2.95,
+  // 2026-08-01 playtest (Jackson: "z-order of laser 'projectiles/beams/whatever' should be below
+  // the z-order of the weapon mount art"). Weapon FX — beams, travelling rounds, the charge
+  // telegraph, muzzle flash/slash — used to sit at PROJECTILES (4), above every unit, so a beam
+  // drew straight over the barrel that fired it. They now sit just UNDER the player (3), so a shot
+  // emerges from beneath its own mount instead of painting over it.
+  //
+  // Slotted above WALLS (2.95) and above both ground-enemy tiers (2 / 2.75), so weapon FX still
+  // read clearly over terrain and over enemy mechs — the only things that now draw OVER a beam are
+  // the player (3) and flyers (3.5).
+  //
+  // Two consequences worth knowing, both deliberate: these are SHARED layers (one Graphics for
+  // player and enemy fire alike), so INCOMING fire also renders behind your mech now; and a shot
+  // at a flying unit passes behind it. If incoming fire becomes hard to read, the fix is to split
+  // the layer by owner rather than to lift this tier back over the units.
+  WEAPON_FX: 2.97,
   UNITS: 3,           // the player — never dimmed, and never obscured by any GROUND unit.
                       // (Flyers deliberately DO pass over the player — see FLYING_UNITS.)
   // #327: FLYING enemy views (helicopter, drone) render ABOVE the player. History: #306 gave them
@@ -170,6 +185,11 @@ export const DEPTH = {
   // old 3.6 tier, which read wrong — #395 follow-up). Another fractional slot, for the same
   // "no renumbering" reason 2.5/2.75/2.9 use.
   DOCK_BORDER: 1.8,
+  // NO LONGER USED by any layer (2026-08-01) — the four weapon-FX Graphics that lived here
+  // (`fx`/`beamFx`/`projFx`/`chargeFx`, in both ArenaScene and BaseScene) moved DOWN to
+  // WEAPON_FX (2.97) so a shot no longer paints over the mount that fired it. Kept as a named
+  // tier rather than deleted: it's the obvious slot for any future FX that genuinely should fly
+  // over every unit, and removing it would renumber nothing while losing that meaning.
   PROJECTILES: 4,     // in-flight rounds, persistent beams, muzzle flash / melee slash — flying
                       // over the units they're headed toward or past.
   IMPACT_FX: 5,       // impact bursts, death explosions, outpost-collapse debris, floating text

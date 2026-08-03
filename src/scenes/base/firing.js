@@ -73,10 +73,10 @@ export const BaseFiringSeams = {
 // tell which scene it's running in.
 export function createBaseFiringState(scene) {
   scene.groundFx = scene.add.graphics().setDepth(DEPTH.GROUND_FX);   // burning ground + planted hazards
-  scene.fx = scene.add.graphics().setDepth(DEPTH.PROJECTILES);       // melee slash (timed clear)
-  scene.beamFx = scene.add.graphics().setDepth(DEPTH.PROJECTILES);   // persistent beams + dying sparks
-  scene.projFx = scene.add.graphics().setDepth(DEPTH.PROJECTILES);   // travelling projectiles
-  scene.chargeFx = scene.add.graphics().setDepth(DEPTH.PROJECTILES); // charge-up telegraph
+  scene.fx = scene.add.graphics().setDepth(DEPTH.WEAPON_FX);       // melee slash (timed clear)
+  scene.beamFx = scene.add.graphics().setDepth(DEPTH.WEAPON_FX);   // persistent beams + dying sparks
+  scene.projFx = scene.add.graphics().setDepth(DEPTH.WEAPON_FX);   // travelling projectiles
+  scene.chargeFx = scene.add.graphics().setDepth(DEPTH.WEAPON_FX); // charge-up telegraph
   scene.projectiles = [];
   scene.beams = [];
   scene.dyingBeams = [];
