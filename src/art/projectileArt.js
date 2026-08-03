@@ -33,6 +33,12 @@ const SPARKS_ENABLED = true;
 // and three copies of 0.85 is exactly how they would drift apart.
 const TAPER_START = 0.85;
 
+// Beam stroke weights, in design px before the caller's `s` scale. The standard pair is what
+// EVERY beam in the game draws at (see `heavy` below and firing.js's note) — the heavy pair is
+// dormant, kept so a future weapon can opt into a fatter beam deliberately.
+const BEAM_GLOW_W = 8, BEAM_CORE_W = 1.8;
+const BEAM_HEAVY_GLOW_W = 17, BEAM_HEAVY_CORE_W = 4;
+
 // The perpendicular wobble every beam and charge-wedge side shares.
 //
 // 2026-08-01 playtest (Jackson: "for the held beam, we at one point decided I wanted the beginning
@@ -241,8 +247,14 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   const nx = dx / len, ny = dy / len;   // beam direction
   const px = -ny, py = nx;              // perpendicular
 
-  const glowW = (heavy ? 17 : 11) * s;
-  const coreW = (heavy ? 4 : 2.6) * s;
+  // 2026-08-01 playtest (Jackson: "can you make the default laser beam thinner overall?"). The
+  // standard pair came down glow 11 -> 8 and core 2.6 -> 1.8, both ~28-30% thinner. Since `heavy`
+  // is pinned false everywhere now (see firing.js — every laser draws at these dimensions), THESE
+  // are the numbers every beam in the game actually uses; the heavy pair is retained only for a
+  // future weapon that deliberately opts in. Named so they're one obvious dial rather than four
+  // magic numbers inline.
+  const glowW = (heavy ? BEAM_HEAVY_GLOW_W : BEAM_GLOW_W) * s;
+  const coreW = (heavy ? BEAM_HEAVY_CORE_W : BEAM_CORE_W) * s;
   const SEGS = heavy ? 48 : 64;
 
   // The charge-release cone, as a half-angle in radians; 0 for every ordinary beam. Everything
