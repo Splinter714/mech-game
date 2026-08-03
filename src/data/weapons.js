@@ -836,7 +836,7 @@ export const WEAPONS = {
       spreadAngle: 2,                                 // token fan — ONLY to index each round's slot
       salvoSpread: 30,                                // the real separation: lateral px, not angle
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle
-      arcBump: 1.05,
+      arcProfile: 'steepDrop', arcBump: 1.05,         // swarmRack's hard terminal plunge (his ask)
     },
   }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
