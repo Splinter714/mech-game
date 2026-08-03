@@ -22,6 +22,10 @@ const KEYS = {
   // #558: the player-facing master volume slider. Numeric (0..1), not a flag, so it gets its
   // own load/save pair below rather than going through loadFlag/saveFlag.
   volume: 'mech-game-volume-v1',
+  // #629: the gamepad aim-assist toggle (#620's turret pull). A real player-facing preference,
+  // not a diagnostic readout — and the only flag here that defaults ON, so it doesn't go
+  // through loadFlag (which defaults OFF); see loadAimAssist below.
+  aimAssist: 'mech-game-aim-assist-v1',
 };
 
 function loadFlag(key) {
@@ -56,6 +60,19 @@ export function saveShowAiDebug(enabled) { saveFlag(KEYS.aiDebug, enabled); }
 // mirrors the old always-on shop.js UNLOCK_ALL flag, purely for dev/testing convenience.
 export function loadDevUnlockAll() { return loadFlag(KEYS.unlockAll); }
 export function saveDevUnlockAll(enabled) { saveFlag(KEYS.unlockAll, enabled); }
+
+// #629: gamepad aim assist (#620), default ON — matches the behaviour that shipped with #620, so
+// nothing changes for a player who never opens the pause menu. Because the default is ON, the
+// stored value is read as "anything but an explicit '0' means on" rather than loadFlag's
+// "only '1' means on" — an absent key (never toggled, or localStorage blocked) reads as ON.
+export function loadAimAssist() {
+  try {
+    return localStorage.getItem(KEYS.aimAssist) !== '0';
+  } catch {
+    return true;
+  }
+}
+export function saveAimAssist(enabled) { saveFlag(KEYS.aimAssist, enabled); }
 
 // #558: master volume, 0..1, defaults to 1 (unchanged from today's implicit full volume) so an
 // existing player's experience doesn't change until they touch the new slider.

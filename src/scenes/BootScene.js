@@ -8,7 +8,7 @@ import {
 } from '../data/events.js';
 import {
   loadShowVersion, loadShowPerf, loadShowControlMethod, loadShowAiDebug,
-  loadDevUnlockAll, loadMasterVolume,
+  loadDevUnlockAll, loadMasterVolume, loadAimAssist,
 } from '../data/pauseSettings.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
@@ -44,6 +44,10 @@ export default class BootScene extends Phaser.Scene {
     this.registry.set('showAiDebug', loadShowAiDebug());
     // #555: the pause menu's "UNLOCK ALL WEAPONS" dev toggle — off by default (real progression).
     this.registry.set('devUnlockAll', loadDevUnlockAll());
+    // #629: the gamepad aim-assist preference (#620), ON by default. Seeded here like the rest so
+    // arena/locomotion.js can read the LIVE channel every frame; the pause-menu row and the
+    // arena's D-pad UP bind both write this same channel, so a mid-sortie flip is felt instantly.
+    this.registry.set('aimAssist', loadAimAssist());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).

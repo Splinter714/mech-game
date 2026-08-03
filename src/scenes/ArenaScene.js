@@ -33,6 +33,7 @@ import { showsPlayerColor } from '../data/players.js';
 import { hudPlayerSnapshot, minimapEnemyDots } from '../data/hudLayout.js';
 import { DEPTH, GAMEPLAY_ZOOM } from './arena/shared.js';
 import { wirePauseMenu } from './PauseMenuScene.js';
+import { saveAimAssist } from '../data/pauseSettings.js';
 
 // #246: the player's full-mech shield — a real trait present from the start of every sortie
 // (most enemy mechs get NONE at all — see data/enemies.js/enemyKinds.js for which enemy kinds
@@ -289,6 +290,21 @@ export default class ArenaScene extends Phaser.Scene {
     });
   }
 
+  // #629: flip #620's gamepad aim assist from the field (D-pad UP, polled as a rising edge in
+  // update() so a held direction can't rapid-toggle). Writes the SAME `aimAssist` registry channel
+  // + localStorage key the pause menu's AIM ASSIST row uses — one source of truth — so the row
+  // shows the flipped state next time the menu opens, and the pad shows the menu's. The registry
+  // write is what locomotion.js picks up on the very next frame; `saveAimAssist` just makes it
+  // survive a reload. Float text because a silent toggle is indistinguishable from a dead button —
+  // same feedback the M-key mute toggle uses.
+  _toggleAimAssist() {
+    const next = this.registry.get('aimAssist') === false;
+    this.registry.set('aimAssist', next);
+    saveAimAssist(next);
+    Audio.ui('menuNav');
+    this._floatText(this.px, this.py - 30, next ? 'AIM ASSIST ON' : 'AIM ASSIST OFF', '#5ec8e0');
+  }
+
   // The per-frame loop is a thin orchestrator: each step is a mixin method (drive, gait,
   // firing, sprint, enemy AI, projectiles/beams/ground-fire), called in the original
   // order. The few lines of overlay drawing + ammo regen stay inline.
@@ -410,8 +426,14 @@ export default class ArenaScene extends Phaser.Scene {
     if (this.padEdges.pressed(PAD.SELECT)) { this.toGarage(); return; }
     if (this.padEdges.pressed(PAD.A)) this._onInteractPressed?.();   // #517: pad A's interact bind
     // #625: the D-pad's four dev bindings (add enemy / reset enemies / toggle AI move / toggle AI
-    // fire) moved into the pause menu's dev rows. The D-pad is deliberately UNBOUND in the arena
-    // now — nothing was repurposed onto it.
+    // fire) moved into the pause menu's dev rows, leaving the whole D-pad free.
+    // #629 (Jackson: "can we get a d-pad toggle also?") claims exactly ONE of those four freed
+    // directions — UP — for the aim-assist toggle, so it can be flipped mid-fight without opening
+    // the pause menu (feeling it back-to-back in the same engagement is the point). DOWN/LEFT/
+    // RIGHT stay unbound. Same registry channel + localStorage key as the pause-menu AIM ASSIST
+    // row, not a second parallel flag: whichever path flips it, the other reflects it immediately
+    // (locomotion.js reads the live channel every frame; the menu row reads it on open).
+    if (this.padEdges.pressed(PAD.DPAD_UP)) this._toggleAimAssist();
     // ── Indirect-fire lock (#62, rework #252): mirrors direct-fire convergence's live pick
     // instantly (no charge-up, no maintain timer) — blind fire onto the target's last-known/
     // predicted position when convergence is aimed at a currently-hidden enemy. Homing/arcing

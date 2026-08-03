@@ -8,8 +8,12 @@
 // (#558) is a slider, not an ON/OFF toggle — it renders its own widget in PauseMenuScene rather
 // than the shared toggle-row label. UNLOCK_ALL (#555) is a normal persisted toggle, alongside
 // the other dev-diagnostic rows, that replaces the old hardcoded shop.js UNLOCK_ALL flag.
+// AIM ASSIST (#629) is a normal persisted toggle, but unlike the diagnostic rows it's a real
+// player-facing preference (and the one row here that defaults ON) — it sits next to MOVEMENT
+// FEEL because both are control-feel dials rather than readouts. It's also the only setting with
+// a second live input path: the arena's D-pad UP flips the same registry channel mid-fight.
 export const PAUSE_ROWS = [
-  'version', 'volume', 'movement', 'perf', 'controlMethod', 'aiDebug', 'unlockAll',
+  'version', 'volume', 'movement', 'aimAssist', 'perf', 'controlMethod', 'aiDebug', 'unlockAll',
 ];
 
 // #529: dev-only NAVIGATION rows, appended after the base five when the pause menu is opened
@@ -32,6 +36,7 @@ export const PAUSE_ROW_TITLES = {
   version: 'VERSION NUMBER',
   volume: 'VOLUME',
   movement: 'MOVEMENT FEEL',
+  aimAssist: 'AIM ASSIST (PAD)',
   perf: 'PERF READOUT',
   controlMethod: 'CONTROL METHOD',
   aiDebug: 'AI DEBUG READOUT',

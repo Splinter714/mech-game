@@ -43,6 +43,7 @@ import {
   loadShowVersion, saveShowVersion, loadShowPerf, saveShowPerf,
   loadShowControlMethod, saveShowControlMethod, loadShowAiDebug, saveShowAiDebug,
   loadDevUnlockAll, saveDevUnlockAll, loadMasterVolume, saveMasterVolume,
+  loadAimAssist, saveAimAssist,
 } from '../data/pauseSettings.js';
 
 const UI = {
@@ -64,6 +65,11 @@ const TOGGLE_ROWS = {
   aiDebug: { channel: 'showAiDebug', load: loadShowAiDebug, save: saveShowAiDebug },
   // #555: replaces the old hardcoded shop.js UNLOCK_ALL flag with a dev-menu toggle.
   unlockAll: { channel: 'devUnlockAll', load: loadDevUnlockAll, save: saveDevUnlockAll },
+  // #629: #620's gamepad aim assist. Same registry+localStorage shape as the rest, but it's the
+  // one channel that also has a live in-arena toggle (D-pad UP, ArenaScene) writing to it — so
+  // `_refreshRows` reading the registry (not a cached value) is what keeps this row's label
+  // correct after the pad flipped it mid-sortie. Defaults ON, hence `!== false` below.
+  aimAssist: { channel: 'aimAssist', load: loadAimAssist, save: saveAimAssist, defaultOn: true },
 };
 
 // #558: step size for the VOLUME row's D-pad LEFT/RIGHT adjustment (mouse/touch drag on the
@@ -184,6 +190,14 @@ export default class PauseMenuScene extends Phaser.Scene {
     Audio.setParam('master', v);
   }
 
+  // A plain toggle row's live ON/OFF, straight off the registry (never a cached copy — #629's AIM
+  // ASSIST can be flipped from the arena's D-pad while this menu is closed). `defaultOn` rows read
+  // an unset channel as ON; every other row reads it as OFF, the long-standing `=== true` default.
+  _toggleOn(id) {
+    const t = TOGGLE_ROWS[id];
+    return t.defaultOn ? this.registry.get(t.channel) !== false : this.registry.get(t.channel) === true;
+  }
+
   // Pull each row's current label off the live registry/player state. Called on create() and
   // again after any toggle/action, so the menu never shows a stale value.
   _refreshRows() {
@@ -214,9 +228,7 @@ export default class PauseMenuScene extends Phaser.Scene {
         row.label.setColor(UI.text);
         row.enabled = true;
       } else {
-        const t = TOGGLE_ROWS[row.id];
-        const on = this.registry.get(t.channel) === true;
-        row.label.setText(toggleRowLabel(row.id, on)).setColor(UI.text);
+        row.label.setText(toggleRowLabel(row.id, this._toggleOn(row.id))).setColor(UI.text);
         row.enabled = true;
       }
     }
@@ -263,7 +275,7 @@ export default class PauseMenuScene extends Phaser.Scene {
       else this._arenaDebug?.toggleAi?.(id === 'aiMove' ? 'move' : 'fire');
     } else {
       const t = TOGGLE_ROWS[id];
-      const next = this.registry.get(t.channel) !== true;
+      const next = !this._toggleOn(id);
       this.registry.set(t.channel, next);
       t.save(next);
     }
