@@ -867,6 +867,7 @@ export const WEAPONS = {
       burst: { interval: 20 },                        // "almost overlapping" — ~1 round per frame
       spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
       salvoSpread: 30,                                // the separation, all of it: lateral px
+      burstShuffle: true,                             // don't sweep left→right; re-roll the launch order each pull
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle
       arcProfile: 'steepDrop', arcBump: 1.05,         // swarmRack's hard terminal plunge (his ask)
     },

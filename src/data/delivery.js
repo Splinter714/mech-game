@@ -542,8 +542,25 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     const fanCone = d.burstFan ? ((d.spreadAngle ?? DEFAULT_SPREAD_DEG) * Math.PI) / 180 : 0;
     const flankChord = fanCone ? 2 * (weapon.range?.opt ?? 160) * Math.sin(fanCone / 2) : 0;
     const halfDepth = (d.burstFanDepth ?? flankChord) / 2;
+    // 2026-08-02 playtest (Jackson, on New Missiles: "is the offset they come out with always
+    // happening in the same order for each missile? like is it the leftmost missile first, then
+    // next to the right, then next to the right...? how can we randomize which offset missile
+    // comes out first?"). It was — because ONE index `i` was doing two unrelated jobs: it set the
+    // launch DELAY (`i * interval`) and it set the formation POSITION (`centredSlot(i, n)`). So a
+    // volley always swept rigidly left→right, every pull, identically.
+    //
+    // `burstShuffle` splits them. The formation is unchanged — the same n evenly-spaced slots,
+    // still symmetric about the aim line, still covering the same width — only WHICH slot goes out
+    // on which beat is permuted, re-rolled per trigger pull. That's deliberately not the same as
+    // randomising the offsets themselves (`burstScatter`, which Plasma Arc uses): random offsets
+    // clump and leave gaps, while a shuffled order keeps the salvo's even coverage and just stops
+    // it reading as a mechanical wipe.
+    const order = d.burstShuffle && !scatterHalfCone ? shuffledIndices(n) : null;
     const out = [];
     for (let i = 0; i < n; i++) {
+      // `pi` = this shot's POSITION index (where it sits in the formation); `i` stays its ORDER
+      // index (when it leaves the tube). Identical without `burstShuffle`.
+      const pi = order ? order[i] : i;
       // #631: a `burstScatter` volley's rounds have no ordered formation — their position IS the
       // random draw, by design ("saturate a small area instead of stacking on one point"). So the
       // normalised draw doubles as this bolt's `slot`, which keeps Plasma Arc's lateral offsets
@@ -551,11 +568,13 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
       // line. Every other burst weapon takes the ordered index position.
       const scatterPos = scatterHalfCone ? (Math.random() * 2 - 1) : 0;   // −1 … +1
       const scatter = scatterPos * scatterHalfCone;
+      // Stagger stays on `i`, not `pi`: it's a cosmetic alternation that keeps CONSECUTIVE
+      // launches from overlapping perfectly, so it's about order, not position.
       const stagger = staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0;
-      const c = i - (n - 1) / 2;   // centred index: −…0…+
+      const c = pi - (n - 1) / 2;   // centred POSITION index: −…0…+
       const fanOffset = fanCone && n > 1 ? (c / (n - 1)) * fanCone : 0;
       const distOffset = fanCone ? (c === 0 ? halfDepth : -halfDepth) : 0;
-      const slot = scatterHalfCone ? scatterPos : centredSlot(i, n);
+      const slot = scatterHalfCone ? scatterPos : centredSlot(pi, n);
       out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval, distOffset, slot }));
     }
     return { mode, shots: out };
@@ -584,6 +603,19 @@ function shot({ delay = 0, angleOffset = 0, lateral = 0, distOffset = 0, slot = 
 // needing an angular fan to know which round is which.
 function centredSlot(i, n) {
   return n > 1 ? (2 * i) / (n - 1) - 1 : 0;
+}
+
+// [0..n-1] in a random order — a Fisher-Yates shuffle, so every permutation is equally likely and
+// each position appears exactly once. Used by `burstShuffle` to permute which formation slot goes
+// out on which beat of a burst, without changing the formation itself.
+function shuffledIndices(n) {
+  const a = [];
+  for (let i = 0; i < n; i++) a.push(i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
 }
 
 // n rounds/beams fired at once in parallel lanes, centred on the aim line (no fan — every
