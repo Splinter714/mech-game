@@ -14,6 +14,16 @@ import { draw as shadow } from './shadow.js';
 
 export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug, shadow };
 
+// Per-KIND base scale, composed with (not replacing) a weapon's own `delivery.scale`. This is the
+// dial for "every round of this kind is too big/small", as opposed to `delivery.scale`, which is
+// for one weapon being deliberately off-size relative to its siblings (Repeater 0.75, Cluster
+// Salvo 0.8, Caustic Lobber 1.6). Because every render path funnels through `drawProjectileBody`
+// below — arena rounds, weapon-catalog icons, live card previews, ability previews — one entry
+// here retunes all of them at once and they cannot drift apart.
+// 2026-08-02, Jackson: "make missile projectiles somewhat smaller." Missiles are the only kind
+// tuned away from 1 so far; the other six are unlisted and default to 1, unchanged.
+const KIND_SCALE = { missile: 0.8 };
+
 // A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
 // flame flicker (the arena passes the round's distance; icons pass 0). Computes the heading
 // vector once and dispatches to the registered kind (default `slug`).
@@ -26,6 +36,7 @@ export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug, shad
 // original direct-coordinate draw untouched.
 export function drawProjectileBody(g, x, y, angle, kind, color, s = 1, phase = 0, foreshorten = 1) {
   const drawKind = PROJECTILE_ART[kind] ?? PROJECTILE_ART.slug;
+  s *= KIND_SCALE[kind] ?? 1;
   if (foreshorten !== 1) {
     g.save();
     g.translateCanvas(x, y);
