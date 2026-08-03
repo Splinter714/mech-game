@@ -51,11 +51,21 @@ const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 // round. Direction is a fixed SCREEN vector (not per-round), so every lofting projectile on screen
 // agrees on where the light is: down-and-right, i.e. lit from the upper left. Offset is 0 at ground
 // level and peaks at apex, so a round always meets its own shadow at launch and at impact.
+// 2026-08-02 revision (Jackson: "those shadows look horrible, too big, bad shape, and offset
+// poorly"). All three, fixed in kind:
+//   • SHAPE — it was an axis-aligned squat ellipse (width × 0.42), i.e. a fat blob, under a round
+//     that is long and thin. The shadow is now drawn ROTATED to the round's own heading via the
+//     same canvas transform `drawProjectileBody` uses for foreshortening, so it's a slim streak
+//     lying along the missile rather than a puddle under it.
+//   • SIZE — 9→12px wide was as long as the missile itself and several times its width. Now
+//     roughly the sprite's own footprint, and missiles just got 20% smaller besides (#638).
+//   • OFFSET — 15px at apex threw the shadow most of a hex away from its round. Halved.
 const SHADOW_DIR_X = Math.SQRT1_2, SHADOW_DIR_Y = Math.SQRT1_2;   // 45°, down-right
-const SHADOW_MAX_OFFSET = 15;     // px the shadow trails behind the round at full apex
-const SHADOW_BASE_W = 9;          // px ellipse width on the ground (height is 0.42 of this)
-const SHADOW_GROW_W = 3;          // px of extra width at apex — bigger + further reads as higher
-const SHADOW_ALPHA = 0.3;         // flat: the old version faded out exactly when it should read most
+const SHADOW_MAX_OFFSET = 7;      // px the shadow trails behind the round at full apex
+const SHADOW_LEN = 8;             // px along the round's heading — about the sprite's own length
+const SHADOW_WID = 2.6;           // px across it; thin, matching a missile's silhouette
+const SHADOW_GROW = 0.25;         // fraction of extra size at apex — higher reads as slightly bigger
+const SHADOW_ALPHA = 0.26;        // flat: the old version faded out exactly when it should read most
 
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
@@ -1244,9 +1254,13 @@ export const ProjectilesMixin = {
       // impact) the offset is 0, so the round still meets its shadow exactly where it leaves the
       // ground and where it lands — the two moments where a lie would be visible.
       const lift = h * SHADOW_MAX_OFFSET;
-      const sx = p.x + SHADOW_DIR_X * lift, sy = p.y + SHADOW_DIR_Y * lift;
-      const sw = SHADOW_BASE_W + h * SHADOW_GROW_W;
-      g.fillStyle(0x000000, SHADOW_ALPHA).fillEllipse(sx, sy, sw, sw * 0.42);
+      const grow = (1 + h * SHADOW_GROW) * (p.scale || 1);
+      g.save();
+      g.translateCanvas(p.x + SHADOW_DIR_X * lift, p.y + SHADOW_DIR_Y * lift);
+      g.rotateCanvas(p.angle);                                // lie ALONG the round, not under it
+      g.fillStyle(0x000000, SHADOW_ALPHA);
+      g.fillEllipse(0, 0, SHADOW_LEN * grow, SHADOW_WID * grow);
+      g.restore();
       // #377: derive a sprite PITCH from where we are in the arc. arcForeshorten reads the arc's
       // vertical velocity (dh/dt of the same loft curve) — steep while climbing off the muzzle
       // and while plunging onto the target, ~flat across the apex — and returns an along-axis
