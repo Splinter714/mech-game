@@ -52,7 +52,7 @@ const SPARKS_ENABLED = true;
 // blend deepens continuously as they close. Branching to "draw once when nearly collapsed" would
 // introduce a visible pop at the threshold; the coincident case is just the limit of real overlap.
 //
-// #632 — `warble` (optional, `{ phase, s, glowW, coreW }`). Null/omitted is the static wedge the charge-up
+// #632 — `warble` (optional, `{ phase, s }`). Null/omitted is the static wedge the charge-up
 // TELEGRAPH has always drawn. Supplied, the two cone sides pick up the exact perpendicular sine
 // wobble the beam core uses, so the RELEASE burst (drawBeam's `coneDeg` path) reads as the same
 // energy material as an ordinary laser instead of a static cone with a generic beam laid on top.
@@ -105,19 +105,22 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
   // The warbling pass also subdivides finer — 6 bands can't carry a 1.5-cycle sine — but samples
   // the identical `chargeDistanceFade` alpha curve, just at more points.
   //
-  // The sides also take on the straight beam's own WEIGHT as the cone closes: `focus` runs 0 (cone
-  // wide open) → 1 (collapsed), read off `CHARGE_CONE_MAX_DEG` exactly the way `chargeWedgeAlpha`
-  // reads its own `closed` so no third curve exists to drift. At focus 0 the sides are the same
-  // 1.5px hairlines they always were and there is no glow — a wide sloppy burst still reads as a
-  // CONE, not as two laser rails in a V. As focus → 1 they thicken to the beam's `coreW` and the
-  // beam's outer glow fades in at its own 0.18, so a nearly-collapsed release is the straight beam
-  // (drawn twice, coincident — see the deliberate double-blend note above). That continuity matters
-  // because the release BELOW 0.5° actually falls through to the real straight beam in `drawBeam`;
-  // without the focus ramp the last sliver of charge would visibly pop from hairline to full beam.
+  // The sides stay 1.5px HAIRLINES at every cone width, warbling or not.
+  //
+  // 2026-08-01 playtest (Jackson: "can you avoid making the sides of the arc get thicker upon
+  // release?"). #632's first cut ramped the sides toward the straight beam's `coreW` and faded in
+  // its 11px outer glow as the cone closed, to keep a nearly-collapsed release continuous with the
+  // real beam. He looked at it and wants the thin line — the same hairline vocabulary the telegraph
+  // uses, all the way through the release. So both ramps are gone and the width is constant.
+  //
+  // KNOWN CONSEQUENCE, deliberate: `drawBeam` only routes here when `coneDeg > 0.5`, so a FULL
+  // charge (cone exactly 0°) falls through to the ordinary straight beam — 2.6px core plus an 11px
+  // glow — while a 99%-charge release (cone ~1.8°) now draws as thin warbling hairlines. Two very
+  // similar player actions, two different weights. That discontinuity is the price of the thin
+  // look and is worth knowing if a full-charge shot ever reads as unexpectedly heavy next to a
+  // near-full one.
   const sideSegs = warble ? 48 : BANDS;
-  const focus = warble ? Math.max(0, Math.min(1, 1 - coneDeg / CHARGE_CONE_MAX_DEG)) : 0;
-  const sideW = warble ? 1.5 + ((warble.coreW ?? 2.6) - 1.5) * focus : 1.5;
-  const sideGlowW = warble ? (warble.glowW ?? 11) : 0;
+  const sideW = 1.5;
   // Both sides' directions are loop-invariant; `qL`/`qR` are their own perpendiculars.
   const aL = angle - halfAngle, aR = angle + halfAngle;
   const cL = Math.cos(aL), sL = Math.sin(aL), qLx = -sL, qLy = cL;
@@ -133,16 +136,14 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
     const r0 = reach * t0, r1 = reach * t1;
     const dfade = chargeDistanceFade((i + 0.5) / sideSegs);
     const segAlpha = Math.min(1, alpha * dfade * 1.3);
-    const glowAlpha = warble ? Math.min(1, dfade * 1.3) * 0.18 * focus : 0;
-    if (segAlpha <= 0.004 && glowAlpha <= 0.004) continue;
+    if (segAlpha <= 0.004) continue;
     let w0 = 0, w1 = 0;
     if (warble) {
       const warp = Math.sin(warble.phase * 0.04 + ((t0 + t1) / 2) * Math.PI * 3) * 1.3 * (warble.s ?? 1);
       w0 = t0 === 0 ? 0 : warp;   // pinned at the apex and the tip, exactly like the beam core
       w1 = t1 === 1 ? 0 : warp;
     }
-    if (glowAlpha > 0.004) { g.lineStyle(sideGlowW, color, glowAlpha); strokeSides(r0, r1, w0, w1); }
-    if (segAlpha > 0.004) { g.lineStyle(sideW, color, segAlpha); strokeSides(r0, r1, w0, w1); }
+    g.lineStyle(sideW, color, segAlpha); strokeSides(r0, r1, w0, w1);
   }
 
   // The rounded far edge itself — the curved silhouette boundary, drawn as one continuous
@@ -196,7 +197,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   if (coneHalf > 0) {
     // Charge release: the warbling wedge IS the beam body. No under-line, glow or core — the
     // wedge's own sides carry the wobble, and take the beam's glow/core weights as the cone closes.
-    drawChargeWedge(g, x0, y0, baseAngle, coneDeg, len, color, 0.85, { phase, s, glowW, coreW });
+    drawChargeWedge(g, x0, y0, baseAngle, coneDeg, len, color, 0.85, { phase, s });
   } else {
   // #421 legibility: a thin dark under-line the length of the beam, drawn BEFORE the glow/core,
   // so a pale energy/support beam (cyan/green) holds an edge against light ground (snow, sand)
