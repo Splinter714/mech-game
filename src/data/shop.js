@@ -18,6 +18,9 @@ export const STARTING_UNLOCKED = ['autocannon', 'pulseLaser', 'clusterRocket', '
 export const SHOP_COSTS = {
   autocannon: 0, pulseLaser: 0, clusterRocket: 0, machineGun: 0,
   shotgun: 75, streakPod: 90,
+  // Temporary sandbox missile (2026-08-01) — priced between its two parents, streakPod (90) and
+  // swarmRack (150). Listed only so it isn't silently DEFAULT_COST; retune or drop with the weapon.
+  newMissiles: 120,
   flamethrower: 125, napalm: 140, swarmRack: 150,
   // #118: plasmaLance graduated off the shelved list. Priced between shotgun/streakPod and
   // beamLaser — it's a strong 2-slot heavy hitter (~20 sustained dps, long range) but not the

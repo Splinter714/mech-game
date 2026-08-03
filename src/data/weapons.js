@@ -793,6 +793,52 @@ export const WEAPONS = {
     // same smooth 0.35 ramp-in, turn rate left at the engine ceiling it already pins to.
     delivery: { hit: 'projectile', guidance: 'homing', velocity: 1000, wobble: 'weave', count: 6, burst: { interval: 70 }, path: 'arcing', homingBlendStart: 0 },
   }),
+  // TEMPORARY SANDBOX WEAPON (2026-08-01). Jackson: "make a new one just called new missiles or
+  // something temporary so I can work on something; I want something somewhere between swarm rack
+  // and streak pod; between as far as projectile speed, but also kinda burst+spread, but less of a
+  // spread out burst." A scratch entry for him to tune live — rename/retire it freely, nothing
+  // else in the codebase depends on it.
+  //
+  // The two parents sit at opposite corners of the missile design space:
+  //   swarmRack — SPREAD (all 6 at once in a 14° fan, salvoSpread 40), SLOW (velocity 400)
+  //   streakPod — BURST (6 staggered 70ms apart, no fan at all), FAST (velocity 1000)
+  // Follow-up (same conversation): "no actual fan, more like they're separated horizontally but
+  // not by fanning." That's `salvoSpread` — a per-round LATERAL offset in px — rather than
+  // `spreadAngle`, the angular fan.
+  //
+  // BUT THE TWO ARE COUPLED, which is the non-obvious part and the thing to know when retuning:
+  // a round's lateral offset is derived FROM its position in the launch fan — `angleOffset` over
+  // the half-cone, a centred -1..+1, times `salvoSpread` (see `salvoAimOffset`, data/delivery.js).
+  // With `spreadAngle: 0` every round's `angleOffset` is 0, so every offset is 0 and the salvo
+  // collapses back into a single line. The fan can't be removed outright; it has to stay just
+  // wide enough to INDEX each round's position.
+  //
+  // So: a token 2° fan (barely visible as fanning — the rounds leave the tubes near-parallel)
+  // carrying a large 30px lateral offset. The separation you see is the offset, not the fan.
+  // Convergence is deliberately left ON (no `salvoNoConverge`): the offsets decay to zero late in
+  // flight so all six still HIT, which is what a homing missile should do. Add
+  // `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
+  //
+  // No bespoke mount art on purpose: with no `WEAPON_MOUNT_ART` entry it falls back to the
+  // generic `missile` category mount, which HAS its own `BARREL_SPECS` entry — so the drawn art
+  // and the muzzle-tip shots spawn from stay in agreement (no #233/#584 drift), which a bespoke
+  // mount without a matching spec would have broken.
+  newMissiles: w({
+    id: 'newMissiles', name: 'New Missiles', category: 'missile',
+    damage: 8,                                        // between 6.933 and 9.3
+    range: { min: 245, opt: 980, max: 1650 },         // midpoint of 280/1050/1750 and 210/910/1540
+    ammoMax: 9, cycleTime: 1450,                      // between 14/1100 and 4/1800 — ~13.1s burst
+    delivery: {
+      hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
+      velocity: 700,                                  // squarely between 400 and 1000
+      count: 6,                                       // both parents fire 6
+      burst: { interval: 70 },                        // streakPod's stagger — this is the "burst"
+      spreadAngle: 2,                                 // token fan — ONLY to index each round's slot
+      salvoSpread: 30,                                // the real separation: lateral px, not angle
+      wobble: 'weave',                                // streakPod's tighter weave, not the jostle
+      arcBump: 1.05,
+    },
+  }),
   clusterRocket: w({ // dumbfire clump that stays tight — no spread, no guidance
     id: 'clusterRocket', name: 'Cluster Salvo', category: 'missile',
     // #77 tuning follow-up: range 3x'd (0/220/320 → 0/660/960, kept at the low end of the 3-4x
