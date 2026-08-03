@@ -305,11 +305,20 @@ export function arcForeshorten(t, profile = 'lob', minScale = ARC_PITCH_MIN_SCAL
 // way) and just gives each round its own slightly-offset aim point, which then decays to the
 // true target late. Two pure pieces:
 //
-//   * `salvoAimOffset` — the round's own lateral offset in px, taken from its position in the
-//     launch fan (`angleOffset` / half-cone, a centred −1…+1) times the weapon's
+//   * `salvoAimOffset` — the round's own lateral offset in px: its normalised SLOT in the volley
+//     (a centred −1…+1, see `slot` on each planned shot) times the weapon's
 //     `delivery.salvoSpread`. Deterministic per round, NOT re-rolled per frame — a re-roll
 //     would read as jitter, and warble is the 'jostle' wobble's job. The outermost missile in
-//     the fan aims furthest off, so the salvo holds the shape it launched in.
+//     the volley aims furthest off, so the salvo holds the shape it launched in.
+//
+// #631 — LATERAL OFFSET IS NO LONGER DERIVED FROM THE FAN. This used to read the slot off the
+// round's LAUNCH ANGLE (`angleOffset` / half-cone), which silently coupled two conceptually
+// independent things: with `spreadAngle: 0` every `angleOffset` was 0, so every lateral offset
+// was 0 and the salvo collapsed into a single line — you could not ask for "separated
+// horizontally but not by fanning" without a token fan to index against. The angle was only ever
+// standing in for the round's POSITION in the volley, which `planEmissions` already knows from
+// its index. So each planned shot now carries its own `slot` and `salvoSpread` works with or
+// without a fan. `angleOffset` is untouched and still drives the actual launch heading.
 //   * `salvoConvergeFalloff` — how much of that offset still applies, keyed to the round's
 //     REMAINING DISTANCE to its target: full while further out than `SALVO_CONVERGE_START_PX`,
 //     then a cosine decay to exactly zero by `SALVO_CONVERGE_DONE_PX`. That last gap is
@@ -341,13 +350,12 @@ export function salvoConvergeFalloff(remainingDist) {
   return 0.5 + 0.5 * Math.cos(Math.PI * k);
 }
 
-export function salvoAimOffset(d, angleOffset) {
+// `slot` is the round's normalised position in its volley (−1 … +1, centred), as planEmissions
+// stamped it — see `centredSlot` below. Nothing here reads `spreadAngle` any more (#631).
+export function salvoAimOffset(d, slot) {
   const spread = d.salvoSpread || 0;                     // opt-in per weapon; 0 = off (the default)
-  if (!spread || !angleOffset) return 0;
-  const halfCone = (((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2;
-  if (!halfCone) return 0;
-  const fanPos = Math.max(-1, Math.min(1, angleOffset / halfCone));   // −1 … +1 across the fan
-  return spread * fanPos;
+  if (!spread || !slot) return 0;
+  return spread * Math.max(-1, Math.min(1, slot));
 }
 
 const ARRIVAL_SPEED_LIMIT = 0.35;  // max fractional speed nudge either way (Swarm Rack convergence)
@@ -388,10 +396,15 @@ export function projectileKind(weapon) {
 }
 
 // What one trigger pull emits. Returns { mode, shots } where mode is 'hitscan' |
-// 'contact' | 'projectile' and each shot is { delay, angleOffset, lateral }:
+// 'contact' | 'projectile' and each shot is { delay, angleOffset, lateral, slot }:
 //   delay        ms to wait before this sub-shot (multi-pulse/multi-missile burst); 0 = now
 //   angleOffset  radians off the aim line (spread fan, a cluster's tiny jitter, or stagger)
 //   lateral      px perpendicular to the shot (a cluster's parallel offset)
+//   slot         this round's normalised position in the volley, −1 … +1 centred (#631) —
+//                leftmost/first −1, centre 0, rightmost/last +1; 0 for a lone shot. Purely
+//                an INDEX, independent of whether the volley fans: it's what salvoAimOffset
+//                turns into a per-round lateral aim offset, so `salvoSpread` no longer needs
+//                a `spreadAngle` to read a position off.
 // The caller turns each into a real shot from its current muzzle/aim.
 //
 // #137: `opts.countMult` scales the weapon's `delivery.count` (see `emissionCount` below) —
@@ -451,7 +464,7 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     if (!jitterRad) return { mode, shots: laneShots(n, d) };
     const streamShots = [];
     for (let i = 0; i < n; i++) {
-      streamShots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad }));
+      streamShots.push(shot({ angleOffset: (Math.random() - 0.5) * 2 * jitterRad, slot: centredSlot(i, n) }));
     }
     return { mode, shots: streamShots };
   }
@@ -462,19 +475,28 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
   if (n > 1 && !d.burst && d.pattern !== 'spread') return { mode, shots: laneShots(n, d) };
 
   const shots = [];
-  const cone = ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180;
+  // #631: `??`, not `||` — an explicit `spreadAngle: 0` now means a genuinely ZERO-width fan
+  // (swarmRack/newMissiles want their separation from `salvoSpread` alone), while OMITTING the
+  // field still falls back to the house 16°. Those two used to be indistinguishable; weapons.js's
+  // DELIVERY_DEFAULTS stopped defaulting the field to 0 so they can be told apart.
+  const cone = ((d.spreadAngle ?? DEFAULT_SPREAD_DEG) * Math.PI) / 180;
   const clusterSpacing = d.clusterSpacing || CLUSTER_SPACING;   // per-weapon clump tightness (#51)
   // #243: the max random emission stagger of a jittered spread is per-weapon tunable
   // (`delivery.spreadJitterDelay`, ms) — how raggedly a chaotic fan's shots leave the muzzle.
   const jitterDelay = d.spreadJitterDelay ?? SPREAD_JITTER_DELAY;
   for (let i = 0; i < fan; i++) {
     const c = fan > 1 ? (i - (fan - 1) / 2) : 0;   // centred index: −…0…+
+    const slot = centredSlot(i, fan);              // #631: the same index, normalised to −1…+1
     if (d.cluster) {
-      shots.push(shot({ lateral: c * clusterSpacing }));
+      shots.push(shot({ lateral: c * clusterSpacing, slot }));
     } else if (fan > 1) {
       const jitter = jitterRad ? (Math.random() - 0.5) * 2 * jitterRad : 0;
       const fireDelay = jitterRad ? Math.random() * jitterDelay : 0;
-      shots.push(shot({ angleOffset: (c / (fan - 1)) * cone + jitter, delay: fireDelay }));
+      // `slot` is the CLEAN index position, deliberately not re-derived from the jittered launch
+      // angle: the round's place in the formation is where it was aimed, not where the jitter
+      // happened to throw it. For an unjittered fan (Swarm Rack) the two are identical anyway —
+      // `(c/(fan−1))·cone` over the half-cone `cone/2` is exactly `2c/(fan−1)`, i.e. this.
+      shots.push(shot({ angleOffset: (c / (fan - 1)) * cone + jitter, delay: fireDelay, slot }));
     } else if (jitterRad) {
       // A single continuously-streamed shot (Flamethrower, #46) still gets the same
       // per-shot angle jitter a multi-pellet spread would use — each rapid-fire particle
@@ -499,7 +521,7 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     // lateral aim offset — that offset (not this launch angle, which the seeker corrects) is what
     // actually holds the scatter through the lock-tracking descent. Distinct from the weave stagger
     // above (tiny, alternating, cosmetic); a weapon could carry both, so they add.
-    const scatterHalfCone = d.burstScatter ? (((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2 : 0;
+    const scatterHalfCone = d.burstScatter ? (((d.spreadAngle ?? DEFAULT_SPREAD_DEG) * Math.PI) / 180) / 2 : 0;
     // 2026-07-31 (Plasma Coater ask, "launch in a pattern where they'll land in a small
     // triangle"): a `burstFan` weapon spreads its staggered shots across a small, FIXED,
     // deterministic cone — the SAME centered-index fan math `pattern: 'spread'` uses (below),
@@ -517,17 +539,24 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
     // it defaults to matching the LEFT/RIGHT chord between the two flanking shots at the
     // weapon's own optimal range, so the triangle reads as roughly equilateral rather than a
     // stretched sliver in either direction. Zero randomness throughout, unlike `burstScatter`.
-    const fanCone = d.burstFan ? ((d.spreadAngle || DEFAULT_SPREAD_DEG) * Math.PI) / 180 : 0;
+    const fanCone = d.burstFan ? ((d.spreadAngle ?? DEFAULT_SPREAD_DEG) * Math.PI) / 180 : 0;
     const flankChord = fanCone ? 2 * (weapon.range?.opt ?? 160) * Math.sin(fanCone / 2) : 0;
     const halfDepth = (d.burstFanDepth ?? flankChord) / 2;
     const out = [];
     for (let i = 0; i < n; i++) {
-      const scatter = scatterHalfCone ? (Math.random() * 2 - 1) * scatterHalfCone : 0;
+      // #631: a `burstScatter` volley's rounds have no ordered formation — their position IS the
+      // random draw, by design ("saturate a small area instead of stacking on one point"). So the
+      // normalised draw doubles as this bolt's `slot`, which keeps Plasma Arc's lateral offsets
+      // randomly scattered exactly as before rather than snapping them into a tidy, evenly-spaced
+      // line. Every other burst weapon takes the ordered index position.
+      const scatterPos = scatterHalfCone ? (Math.random() * 2 - 1) : 0;   // −1 … +1
+      const scatter = scatterPos * scatterHalfCone;
       const stagger = staggered ? staggerRad * (i % 2 === 0 ? 1 : -1) : 0;
       const c = i - (n - 1) / 2;   // centred index: −…0…+
       const fanOffset = fanCone && n > 1 ? (c / (n - 1)) * fanCone : 0;
       const distOffset = fanCone ? (c === 0 ? halfDepth : -halfDepth) : 0;
-      out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval, distOffset }));
+      const slot = scatterHalfCone ? scatterPos : centredSlot(i, n);
+      out.push(shot({ angleOffset: scatter + stagger + fanOffset, delay: i * d.burst.interval, distOffset, slot }));
     }
     return { mode, shots: out };
   }
@@ -535,8 +564,26 @@ export function planEmissions(weapon, { countMult = 1 } = {}) {
   return { mode, shots };
 }
 
-function shot({ delay = 0, angleOffset = 0, lateral = 0, distOffset = 0 } = {}) {
-  return { delay, angleOffset, lateral, distOffset };
+function shot({ delay = 0, angleOffset = 0, lateral = 0, distOffset = 0, slot = 0 } = {}) {
+  return { delay, angleOffset, lateral, distOffset, slot };
+}
+
+// #631: round `i` of `n`'s normalised, centred position in its volley — −1 … +1, evenly spaced,
+// 0 for a single round. The same centred-index math the patterns above already use to place a
+// shot (`c = i − (n−1)/2`, in laneShots and the cluster/fan branches), just rescaled to a unit
+// range so it can be read as a POSITION rather than an angle or a pixel count. This is the source
+// `salvoSpread` reads, which is why lateral separation now works with `spreadAngle: 0`.
+//
+// `lateral` AND `salvoSpread` ARE NOT THE SAME THING, and a weapon could legitimately want both:
+//   * `lateral` (px) offsets where the round SPAWNS and therefore where it flies — genuinely
+//     parallel physical tracks, the dumbfire lane/clump geometry (Repeater, Cluster Salvo).
+//   * `salvoSpread` (px) offsets where a HOMING round AIMS — every round leaves the same muzzle
+//     but steers at its own point off the target, and that offset decays late (see
+//     salvoConvergeFalloff) so the salvo splays in flight and still converges onto the hit.
+// Decoupling salvoSpread from the fan doesn't make it redundant with `cluster`; it just stops it
+// needing an angular fan to know which round is which.
+function centredSlot(i, n) {
+  return n > 1 ? (2 * i) / (n - 1) - 1 : 0;
 }
 
 // n rounds/beams fired at once in parallel lanes, centred on the aim line (no fan — every
@@ -547,7 +594,7 @@ function laneShots(n, d) {
   if (n <= 1) return [shot()];
   const spacing = d.streamSpacing || STREAM_SPACING;
   const out = [];
-  for (let i = 0; i < n; i++) out.push(shot({ lateral: (i - (n - 1) / 2) * spacing }));
+  for (let i = 0; i < n; i++) out.push(shot({ lateral: (i - (n - 1) / 2) * spacing, slot: centredSlot(i, n) }));
   return out;
 }
 
@@ -566,11 +613,15 @@ export function emissionCount(delivery, countMult = 1) {
 // Build a round's kinematic state. The caller supplies `maxDist` (its own travel budget:
 // the arena's target/lob distance, the Lab's stage width) and may tack on scene-specific
 // fields (owner, trail) afterward.
-// `angleOffset` (#377 follow-up, optional): this shot's own offset off the salvo's centre
-// bearing — what planEmissions handed the caller for this round of a fanned spread. Only used
-// to derive the round's late-converging aim offset (salvoAimOffset above); a caller that omits
-// it, or a weapon with no `salvoSpread`, gets 0 and the old behaviour exactly.
-export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }) {
+// `slot` (#631, optional): this round's normalised −1…+1 position in the volley, straight off the
+// planned shot (planEmissions stamps it). It derives the round's late-converging lateral aim
+// offset (salvoAimOffset above). A caller that omits it, or a weapon with no `salvoSpread`, gets
+// 0 and no offset at all.
+// (This took `angleOffset` until #631, when the aim offset stopped being read off the launch
+// fan — nothing in here needs the launch angle any more. `angleOffset` is still very much alive
+// on the CALLER side: firing.js uses it for the actual launch heading and for
+// arrivalSpeedMultiplier below, which genuinely wants an angle rather than a slot.)
+export function makeProjectile(weapon, x, y, angle, { maxDist, slot = 0 }) {
   const d = weapon.delivery || {};
   // A jittered-spread weapon (Flamethrower, #46) also gets a per-particle speed variance so
   // the flame front looks ragged/chaotic rather than a uniform wall advancing in lockstep.
@@ -655,7 +706,7 @@ export function makeProjectile(weapon, x, y, angle, { maxDist, angleOffset = 0 }
     // #377 follow-up: this round's own lateral aim offset (px), fixed for its whole flight and
     // faded out late by salvoConvergeFalloff — see salvoAimOffset above. 0 for every weapon
     // that doesn't opt in via `delivery.salvoSpread`.
-    aimOffset: salvoAimOffset(d, angleOffset),
+    aimOffset: salvoAimOffset(d, slot),
     // #434: a salvo whose offset should NOT converge — each bolt HOLDS its lateral aim offset all
     // the way to impact, so a saturating volley (Plasma Arc) stays spread across an area instead of
     // tightening onto one point at the last moment (the Swarm Rack behaviour, salvoConvergeFalloff).

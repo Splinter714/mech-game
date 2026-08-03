@@ -137,9 +137,14 @@
 
 import { CATEGORY_IDS } from './categories.js';
 
+// #631: `spreadAngle` is deliberately NOT defaulted here any more. It used to default to 0, and
+// every consumer read it as `d.spreadAngle || DEFAULT_SPREAD_DEG` — so "0" and "unset" were the
+// same thing and both meant the 16° house fan. Now that a weapon can genuinely want NO fan
+// (swarmRack/newMissiles separate laterally instead), the two have to be tellable apart:
+// `spreadAngle: 0` means exactly zero degrees, and OMITTING it still gets DEFAULT_SPREAD_DEG.
 const DELIVERY_DEFAULTS = {
   hit: 'projectile', velocity: 500, path: 'straight', guidance: null,
-  pattern: 'single', count: 1, spreadAngle: 0, fireRate: 0, splash: 0,
+  pattern: 'single', count: 1, fireRate: 0, splash: 0,
 };
 
 function w(def) {
@@ -728,7 +733,8 @@ export const WEAPONS = {
     // the salvo read as a single line — the fan and the jostle wobble were being erased by
     // the seeker, not by anything wrong with the fan. Each round now steers at a point up to
     // 48px to the side of the true target (which side, and how far, follows its own position
-    // in the launch fan, so the salvo holds its shape), and that offset decays to zero across
+    // in the salvo — its INDEX since #631, its place in the launch fan before that — so the
+    // salvo holds its shape), and that offset decays to zero across
     // t=0.80 -> 0.93 — the same beat as the steep terminal drop, with flight left to settle so
     // all six still connect. Tracking authority itself is UNTOUCHED: he said tracking feels
     // good, so the rounds steer just as hard as before, only at slightly different points.
@@ -769,7 +775,18 @@ export const WEAPONS = {
     //     apex sprite ~1.75x baseline instead of ~1.6x, so the up-then-drop lob is clearly
     //     visible. Rise/cruise/fall SHAPE (arcProfile 'steepDrop') is unchanged — only how tall
     //     the fake height renders. Other arcing weapons keep the subtle 0.6 default.
-    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 14, velocity: 400, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'steepDrop', arcBump: 1.05, salvoSpread: 40 },
+    // #631 (2026-08-02) — THE FAN IS OFF ON PURPOSE. Jackson: "for swarm rack, turn off the
+    // spread angle, keep only the salvo spread." `spreadAngle` 14 -> 0; `salvoSpread` stays 40,
+    // untouched. This is NOT a lost tuning value or an accidental regression — the 44 -> 14 pass
+    // above and the 48 -> 40 pass are both still history, and 14 was the last fan width before it
+    // was deliberately zeroed. All six missiles now LAUNCH on the same heading and get every bit
+    // of their separation from the lateral aim offset instead: they leave the rack as a parallel
+    // column, splay to their own aim points up to 40px either side of the target (the outermost
+    // pair ~80px apart, exactly the width the 48 -> 40 pass dialled in), then converge late and
+    // connect as before. Everything else — velocity, jostle, arc, converge window — is untouched.
+    // Only possible since #631 decoupled `salvoSpread` from `spreadAngle`; before it, a 0° fan
+    // zeroed the lateral offsets too and the salvo collapsed into a single line.
+    delivery: { hit: 'projectile', guidance: 'homing', pattern: 'spread', count: 6, spreadAngle: 0, velocity: 400, wobble: 'jostle', wobbleFrequency: 6.5, path: 'arcing', homingBlendStart: 0, arcProfile: 'steepDrop', arcBump: 1.05, salvoSpread: 40 },
   }),
   streakPod: w({    // one press unloads a quick staggered stream of seekers, then cools down
     id: 'streakPod', name: 'Streak Pod', category: 'missile',
@@ -804,20 +821,23 @@ export const WEAPONS = {
   //   streakPod — BURST (6 staggered 70ms apart, no fan at all), FAST (velocity 1000)
   // Follow-up (same conversation): "no actual fan, more like they're separated horizontally but
   // not by fanning." That's `salvoSpread` — a per-round LATERAL offset in px — rather than
-  // `spreadAngle`, the angular fan.
+  // `spreadAngle`, the angular fan. And 2026-08-02: "make the burst for new missiles much
+  // tighter, one after the other much closer in time, almost overlapping one another."
   //
-  // BUT THE TWO ARE COUPLED, which is the non-obvious part and the thing to know when retuning:
-  // a round's lateral offset is derived FROM its position in the launch fan — `angleOffset` over
-  // the half-cone, a centred -1..+1, times `salvoSpread` (see `salvoAimOffset`, data/delivery.js).
-  // With `spreadAngle: 0` every round's `angleOffset` is 0, so every offset is 0 and the salvo
-  // collapses back into a single line. The fan can't be removed outright; it has to stay just
-  // wide enough to INDEX each round's position.
+  // WHAT IT LOOKS LIKE NOW. All six leave the tubes inside ~100ms — one per frame at 60fps,
+  // which is as tight as a staggered burst can get before rounds start sharing a frame and the
+  // ripple collapses into a single simultaneous pop. They leave on essentially the same heading
+  // (`spreadAngle: 0`; the only angular offset left is the ±0.3° alternating weave stagger every
+  // 'weave' burst weapon gets, which is cosmetic), then splay out sideways as each one steers to
+  // its own aim point 6/18/30px off-centre either way — a 60px-wide WALL of missiles rather than
+  // a fan or a ripple. Convergence is deliberately left ON (no `salvoNoConverge`): the offsets
+  // decay to zero late in flight so all six still HIT, which is what a homing missile should do.
+  // Add `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
   //
-  // So: a token 2° fan (barely visible as fanning — the rounds leave the tubes near-parallel)
-  // carrying a large 30px lateral offset. The separation you see is the offset, not the fan.
-  // Convergence is deliberately left ON (no `salvoNoConverge`): the offsets decay to zero late in
-  // flight so all six still HIT, which is what a homing missile should do. Add
-  // `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
+  // (#631 is what made `spreadAngle: 0` possible. The lateral offset used to be derived FROM the
+  // launch fan, so a salvo with no fan had no lateral separation either, and this entry carried a
+  // token 2° fan purely to give each round a position to index against. That coupling is gone —
+  // `salvoSpread` now reads each round's index in the volley — so the fan is off for real.)
   //
   // No bespoke mount art on purpose: with no `WEAPON_MOUNT_ART` entry it falls back to the
   // generic `missile` category mount, which HAS its own `BARREL_SPECS` entry — so the drawn art
@@ -832,9 +852,9 @@ export const WEAPONS = {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
       velocity: 700,                                  // squarely between 400 and 1000
       count: 6,                                       // both parents fire 6
-      burst: { interval: 70 },                        // streakPod's stagger — this is the "burst"
-      spreadAngle: 2,                                 // token fan — ONLY to index each round's slot
-      salvoSpread: 30,                                // the real separation: lateral px, not angle
+      burst: { interval: 20 },                        // "almost overlapping" — ~1 round per frame
+      spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
+      salvoSpread: 30,                                // the separation, all of it: lateral px
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle
       arcProfile: 'steepDrop', arcBump: 1.05,         // swarmRack's hard terminal plunge (his ask)
     },

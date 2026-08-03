@@ -590,7 +590,7 @@ export const FiringMixin = {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset });
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset, slot: s.slot });
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -1118,10 +1118,13 @@ export const FiringMixin = {
     // Homing rounds steer toward `seekTarget` (the lock) each frame. A player round only homes
     // when it actually has a lock; without one it dumb-fires straight. Enemy rounds keep their
     // intrinsic homing (they chase the player downrange).
-    // #377 follow-up: `angleOffset` (this shot's own offset off the salvo centre bearing) is
-    // handed through so a fanned salvo can give each round its own late-converging aim offset
-    // — see salvoAimOffset. Every non-fanned caller passes the default 0 and is unaffected.
-    const round = makeProjectile(w.weapon, x, y, angle, { maxDist, angleOffset });
+    // #377 follow-up / #631: `meta.slot` (this round's normalised −1…+1 position in the volley,
+    // as planEmissions stamped it) is handed through so a salvo can give each round its own
+    // late-converging lateral aim offset — see salvoAimOffset. This used to be derived from
+    // `angleOffset`, which meant a salvo needed a fan to have any lateral spread at all; the
+    // index-derived slot works with or without one. Every caller that omits it (the Lab preview,
+    // a lone shot) passes the default 0 and is unaffected.
+    const round = makeProjectile(w.weapon, x, y, angle, { maxDist, slot: meta.slot ?? 0 });
     // #376: a lob now flies at its weapon's own `velocity`, identical at every range (see the
     // constant-horizontal-speed comment above). This block is kept — rather than deleted — so
     // the turn-rate re-derive below still runs for arcing rounds, and so a future per-shot

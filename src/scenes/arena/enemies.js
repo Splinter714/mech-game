@@ -1679,7 +1679,10 @@ export const EnemiesMixin = {
           // #491: `caster` (the actual enemy handle) is threaded through so a hazard this round
           // plants (Gravity Well's pull field) can exclude its own caster from the enemy-pull
           // loop — a mobile enemy carrying the weapon must not yank itself toward its own field.
-          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, null, { statKind, statShotId, spawnerKind, caster: e });
+          // #631: `slot` (this round's normalised position in the volley) rides along the same way
+          // the player path threads it, so an enemy-mounted salvoSpread weapon keeps its lateral
+          // separation here too.
+          this._spawnProjectile(w, ox, oy, baseAngle, 'enemy', s.angleOffset, null, fireAngle, null, { statKind, statShotId, spawnerKind, caster: e, slot: s.slot });
         }
       };
       if (s.delay > 0) this.time.delayedCall(s.delay, go); else go();
