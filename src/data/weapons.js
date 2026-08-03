@@ -869,7 +869,7 @@ export const WEAPONS = {
     ammoMax: 9, cycleTime: 1450,                      // between 14/1100 and 4/1800 — ~13.1s burst
     delivery: {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
-      velocity: 700,                                  // squarely between 400 and 1000
+      velocity: 400,                                  // 2026-08-02: matched to Swarm Rack, the slowest missile in the game (was 700)
       count: 6,                                       // both parents fire 6
       burst: { interval: 40 },                        // ~1 round every 2-3 frames; 200ms whole volley
       burstShuffle: true,                             // don't sweep left→right; re-roll the order each pull
