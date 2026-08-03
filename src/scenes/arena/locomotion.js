@@ -367,7 +367,11 @@ export const LocomotionMixin = {
     // `aim` to the target's bearing — reused here rather than a raw numeric lerp on the two
     // angles, which breaks near the ±π seam. Deliberately no distance/angle falloff: one flat
     // constant, the same "starting number, tune live" convention as every other feel dial.
-    if (intent.mode === 'pad' && p.convergeTarget) {
+    // #629: one more condition on the same block — the player-facing ON/OFF preference (pause-menu
+    // row + the arena's D-pad UP bind). Read LIVE off the registry every frame, never cached at
+    // scene start, so flipping it mid-fight is felt on the very next frame without a restart —
+    // that's the whole point of the toggle. `!== false` because it defaults ON (#620's behaviour).
+    if (intent.mode === 'pad' && p.convergeTarget && this.registry.get('aimAssist') !== false) {
       const offset = aimAngleOffset(p.x, p.y, aim, p.convergeTarget.x, p.convergeTarget.y);
       aim = Phaser.Math.Angle.Wrap(aim + offset * AIM_ASSIST_STRENGTH);
     }
