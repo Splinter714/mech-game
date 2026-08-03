@@ -124,7 +124,7 @@ export const NEON = {
   support:   { halo: 0x1f9c54, core: 0x6dff9e, hot: 0xd6ffe6, edge: 0xa6ffc6 },
   plasma:    { halo: 0x6e1fc9, core: 0xa04dff, hot: 0xf1e5ff, edge: 0xc38fff },
   fire:      { halo: 0xa9571a, core: 0xff7a18, hot: 0xfff0e5, edge: 0xffbe8f },
-  // #622: lightning — Chain Bolt/Link Pylons. CRITICAL (per #618's postmortem): `neonFor`
+  // #622: lightning — Chain Bolt/Tesla Pylons. CRITICAL (per #618's postmortem): `neonFor`
   // falls back to NEON.energy for a category missing here, which would glow a mismatched cyan
   // instead of the electric light blue the category color actually is.
   lightning: { halo: 0x2f9db8, core: 0x8fe8ff, hot: 0xf0fdff, edge: 0xc3f5ff },

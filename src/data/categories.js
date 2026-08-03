@@ -24,7 +24,7 @@ export const CATEGORIES = {
   // Ballistic's warm orange (0xffb24a) — if the two read as too similar in the catalog UI,
   // that's the first thing to revisit.
   fire:      { id: 'fire',      label: 'Fire',          color: 0xff7a18 },
-  // #622: new category — Chain Bolt / Link Pylons. Jackson: "electric light blue", deliberately
+  // #622: new category — Chain Bolt / Tesla Pylons. Jackson: "electric light blue", deliberately
   // lighter/more cyan than Laser's saturated 0x0088ff so the two families don't read the same at
   // a glance (an earlier yellow-white proposal was corrected to this).
   lightning: { id: 'lightning', label: 'Lightning',     color: 0x8fe8ff },

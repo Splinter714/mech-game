@@ -835,46 +835,49 @@ export const WEAPONS = {
       chain: { maxJumps: 3, jumpRange: 300, falloff: 0.7 },
     },
   }),
-  linkPylons: w({   // #623: one pull lobs a 5-pylon volley, staggered like Plasma Arc's
-    // saturating burst (see plasmaCannon's #434 VOLLEY REWORK comment above for the full
-    // rationale of each delivery field) — count:5 + burst.interval ripples the throw out
-    // ~70ms apart instead of one instant fan, burstScatter fans each pylon a random angle
-    // across spreadAngle (13°) so they don't stack on one landing point, and salvoSpread +
-    // salvoNoConverge give each pylon a persistent lateral offset (up to 46px) that doesn't
-    // converge, spreading the 5 landings across a small swath. Arc numbers (arcBump, fixedRange)
-    // kept from the original 2-pylon toss — same throw feel, just more charges.
-    // Once landed and armed, EVERY currently-alive pylon in the launch group links to every
-    // other alive pylon (a full web, not pairs) and PULSES damage to any enemy near any strand,
-    // on an interval, for a limited lifetime. A pylon dying independently shrinks the web; a
-    // group down to exactly 1 member goes inert (same rule as before, now reachable from 5
-    // instead of 2) — see scenes/arena/projectiles.js `_updatePylonLinks`/`_plantHazard`.
-    // Ammo: `ammoPerShot: true` (like Plasma Arc) means each of the 5 pylons spends its own
-    // magazine round rather than one flat charge per pull, so ammoMax scales up to match —
-    // mirrors plasmaCannon's own math exactly: ammoMax 3 -> 15 (5x, one round per pylon) so
-    // the magazine still covers 3 full pulls/casts of 5 pylons each (15 ÷ 5 = 3) before the
-    // mag empties and the automatic RELOAD_SECONDS (2s) reload kicks in. cycleTime is left at
-    // 2000ms (unchanged) since that governs the pull-to-pull cadence, not the per-pylon spend —
-    // 3 pulls × 2000ms = ~6.0s burst, then reload, exactly the same overall shape Gravity Well/
-    // the old 2-pylon version had, just 5 pylons landing per pull instead of 2.
-    id: 'linkPylons', name: 'Link Pylons', category: 'lightning',
+  linkPylons: w({   // #626: TESLA PYLONS — one lobbed tower per trigger pull.
+    // Jackson (#626): "link pylons should instead be pylons that zap proximity enemies instead
+    // of linking, like a tesla coil tower thing" + "let's maybe do 1 pylon per shot instead of 5
+    // at a time, and let's keep total damage per tick consistent and just spread it among the
+    // available targets."
+    // Once landed and armed, each pylon acts ALONE — no links, no web, no group. Every
+    // `pulseInterval` it zaps every live non-flying enemy inside its own `radius`, splitting
+    // `pulseDamage` EVENLY among them: one enemy eats the whole budget, five eat a fifth each,
+    // nobody in range means no zap that tick. A tower therefore can't out-damage its own budget
+    // however many enemies crowd it — but towers placed over time each carry a budget of their
+    // own, so overlapping several on the same ground is the intended way to scale this up. See
+    // scenes/arena/projectiles.js `_updatePylons`/`_plantHazard`.
+    // (#622/#623/#624's whole linking subsystem — the per-volley mesh, then the field-wide
+    // bounded-degree link graph, its cap/max-link-range constants and its connecting lines — is
+    // deleted, along with the 5-pylon staggered volley that fed it: `count`/`burst.interval`/
+    // `burstScatter`/`spreadAngle`/`salvoSpread`/`salvoNoConverge`/`ammoPerShot` are all gone.
+    // The arc/lob feel and the 350/450 range are kept exactly as the #623 playtest pass tuned
+    // them — they still read right for placing a single tower at mid range.)
+    // Ammo: one pull = one tower = one round, so no `ammoPerShot` and no volley multiplier —
+    // ammoMax 15 -> 5. cycleTime 2000 -> 1500ms so the magazine's towers actually COEXIST:
+    // 5 pulls x 1500ms = 7.5s to empty (plants at t=0/1.5/3.0/4.5/6.0), and with the hazard's
+    // 6s `life` + 0.3s `armDelay` the first tower is still standing as the fifth lands — all
+    // five overlap for a beat at the top of the magazine, which is the whole point of stacking
+    // budgets. Then the mag empties and the automatic RELOAD_SECONDS (2s) reload kicks in.
+    id: 'linkPylons', name: 'Tesla Pylons', category: 'lightning',
+    // NOTE the id stays `linkPylons` while the display name changes: weapon ids are persisted in
+    // saved builds (data/rosters.js), so renaming one breaks any save with it mounted. Exact same
+    // precedent as `timedCharge` displaying as "Proximity Mines" — see that entry's comment.
     // Direct-hit damage is inert on this weapon (a hazard-carrying round always plants instead
     // of resolving a normal hit, projectiles.js) — kept at a nominal floor only for weapon-card
     // math, same convention as Gravity Well.
-    // #623 playtest follow-up (Jackson: "link pylons don't have enough range and spread as they
-    // should"): both were still the ORIGINAL 2-pylon tight-toss numbers (150/190 range, 13°/46px
-    // spread), inherited unchanged when the volley grew to 5. A 5-pylon web is meant to blanket a
-    // real patch of ground, not land in a tight cluster near your feet — range roughly doubled
-    // (toward Gravity Well's old 380/520 mid-range reach) and spread widened so the 5 landings
-    // fan across enough space for the web's connecting segments to actually span something.
-    // Starting numbers, his to retune live like everything else.
     damage: 8, range: { min: 0, opt: 350, max: 450 },
-    ammoMax: 15, cycleTime: 2000,   // 3 volleys (15 ÷ 5 pylons/pull), ~6.0s burst, then reload
+    ammoMax: 5, cycleTime: 1500,   // 5 towers/mag, 7.5s burst, then reload
     delivery: {
       hit: 'projectile', path: 'arcing', velocity: 300, kind: 'plasma',
       fixedRange: true, arcBump: 1.3,
-      count: 5, burst: { interval: 70 }, ammoPerShot: true, burstScatter: true,
-      spreadAngle: 50, salvoSpread: 110, salvoNoConverge: true,
-      hazard: { kind: 'pylon', radius: 70, pulseDamage: 8, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
+      // #626: `pulseDamage` is now a per-tick TOTAL split among everything in `radius`, not a
+      // per-target amount, so it's retuned up from the old 8. The old 8 was charged to EACH enemy
+      // touching a web that typically caught a few at once, so 24 keeps a crowded tower roughly
+      // where the web sat while making one tower vs one enemy meaningfully real (24 per 0.5s =
+      // 48 dps concentrated, for a stationary trap the enemy has to stand inside). This is the
+      // weapon's main balance dial — first number, Jackson's to retune live.
+      hazard: { kind: 'pylon', radius: 70, pulseDamage: 24, pulseInterval: 0.5, armDelay: 0.3, life: 6 },
     },
   }),
 };

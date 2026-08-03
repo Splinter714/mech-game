@@ -378,15 +378,10 @@ export const FiringMixin = {
     // returned pull id is threaded to this pull's emissions so a connecting one books the hit
     // exactly once (accuracy). Null on a stubbed test scene with no accumulator.
     const pullId = this._statShotFired?.(w.weapon.id, player) ?? null;
-    // #622/#623: an id shared by every round THIS trigger pull spawns — Link Pylons' whole launch
-    // group (originally 2 charges, now 5 as of #623) stamped it onto their planted hazards
-    // (`_plantHazard`) so `_updatePylonLinks` could find every OTHER pylon from the same pull and
-    // mesh them into one web. #624 made linking field-wide and capacity-based instead of
-    // per-launch-group, so `pairId` no longer drives any linking decision — left as inert
-    // per-pylon provenance (`_plantHazard` still copies it onto the hazard) since nothing needed
-    // it removed. Harmless (an unused extra id) for every weapon that doesn't plant a hazard.
-    this._nextPairId = (this._nextPairId ?? 0) + 1;
-    const pairId = this._nextPairId;
+    // (#622/#623 also minted a `pairId` here — an id shared by every round one trigger pull spawns,
+    // used to group Link Pylons' launch volley into a single web. #624 made linking field-wide, and
+    // #626 deleted linking outright in favour of independent per-tower zapping, so it's gone: no
+    // reader remained anywhere.)
     // #500 (playtest follow-up — Jackson: "make cloak last until you fire a weapon instead of
     // lasting a finite amount of time"): the shot that breaks Cloak. Latched on THIS player (co-op:
     // only your own fire drops your own cloak) and consumed by the next ability tick
@@ -484,7 +479,7 @@ export const FiringMixin = {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
           // a wide-fan shot (Swarm Rack) needs the CENTRE bearing for its target-ahead test.
-          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset, pairId });
+          const round = this._spawnProjectile(w, ox, oy, baseAngle, 'player', s.angleOffset, null, aimAngle, player, { pullId, distOffset: s.distOffset });
           // Continuous in-flight sound (#56): only weapons with a `trajectory` stage defined
           // (missiles, plasma, napalm) get this — the delayed start doubles as the existing
           // "beat after launch" timing feel. The round is mutable and lives in
@@ -1094,10 +1089,6 @@ export const FiringMixin = {
       // round's `shooter` above already serves this role for the player side). Carried onto a
       // planted hazard so its pull loop can exclude its own caster.
       caster: meta.caster ?? null,
-      // #622: which trigger pull spawned this round — see the comment on `pairId` in fireWeapon.
-      // Carried onto a planted 'pylon' hazard (`_plantHazard`) so its two charges can find each
-      // other. null for every caller that doesn't pass one.
-      pairId: meta.pairId ?? null,
     };
     this.projectiles.push(pushed);
     return pushed;
