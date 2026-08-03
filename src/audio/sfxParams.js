@@ -154,6 +154,16 @@ export const DEFAULT_SFX = withQDefaults({
     fire: laserZapLayers({ damage: 34 }, false),
     impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
   },
+  // #627 Charge Beam — this `fire` cue is the LANCE RELEASE only (a heavy one-shot zap, pitched
+  // off its full-charge hit weight, same family as Rail Lance above). Its BEAM phase is a held
+  // loop and deliberately does NOT read from here: it borrows Beam Laser's loop voice via
+  // `delivery.beam.sfxId` (weapons.js), because one sfx id can only carry one `fire` layer set and
+  // a beam hum is the wrong sound for the finisher. `chargeBeam` is therefore NOT in HELD_WEAPONS
+  // below — if it were, scheduleFireCues would swallow the release cue too.
+  chargeBeam: {
+    fire: laserZapLayers({ damage: 60 }, false),
+    impact: [{ kind: 'noise', type: 'highpass', freq: 2600, freqEnd: 1400, dur: 0.06, gain: 0.10, attack: 0.002 }],
+  },
   // #117: plasmaLance — its own tuned cue, not a beamLaser/plasmaCannon reuse. #125: the
   // weapon's actual per-bolt damage dropped to 2 (traded for a 20/sec stream cadence), but the
   // fire cue was kept heavier/punchier than that to preserve the "look" Jackson wants kept.

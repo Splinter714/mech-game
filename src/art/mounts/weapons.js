@@ -67,6 +67,34 @@ function railLance(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
   glowDot(sg, bx, frontY - L, 2.2 * s, n);
 }
 
+// Charge Beam (#627) — the charge-lance-into-sustained-beam hybrid, so its silhouette has to read
+// as BOTH without just being Rail Lance again: a long emitter rod stepped by three lit FOCUSING
+// RINGS climbing toward the muzzle (the charge stages narrowing to the middle) and capped by a wide
+// aperture LENS (the beam it becomes). Rings AROUND the tube rather than Rail Lance's rails BESIDE
+// it, and a belled lens instead of a bare rod tip.
+// The rings are `detail`, not `barrel` — like Rail Lance's accelerator rails, nothing leaves the
+// mount through them; and the tag is re-set inside the loop (per this file's header rule) so the
+// lit slit stays drawn immediately over its own ring instead of all three slits being reordered
+// on top of all three rings.
+function chargeBeam(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
+  const L = barrelLen('chargeBeam', s, cap), w = 2.6 * s;
+  tag('collar');
+  rectC(sg, bx, frontY - L * 0.12, w * 2.6, 3 * s, T.deep);            // breech block
+  tag('barrel');
+  barrel(sg, T, bx, frontY - L / 2, w, L);                             // long emitter rod
+  for (const t of [0.34, 0.55, 0.76]) {                                // focusing rings = charge stages
+    tag('detail');
+    rectC(sg, bx, frontY - L * t, w * 2.0, 1.0 * s, T.faceDk);
+    tag('color');
+    emissive(sg, () => rectC(sg, bx, frontY - L * t, w * 2.0, 0.4 * s, n.core, 0.85));
+  }
+  tag('muzzle');
+  ellipseC(sg, bx, frontY - L * 0.93, w * 1.6, w * 0.7, T.faceDk);     // wide aperture lens ring
+  tag('color');
+  glowBar(sg, bx, frontY - L * 0.86, w * 0.6, L * 0.28, n);            // charged core down the bore
+  glowDot(sg, bx, frontY - L, 2.4 * s, n);                             // lens glow — the muzzle tip
+}
+
 // Plasma Arc — a wide-mouthed mortar-ish emitter that lobs a bolt: a flared cup on a short
 // neck with a fat plasma ball glowing at the mouth.
 function plasmaCannon(sg, T, bx, frontY, s, n, cap, partW, partH, tag) {
@@ -362,7 +390,7 @@ export const WEAPON_MOUNT_ART = {
   // railLance key is kept too, still pointing at the same fn, so the wall-turret enemy kind
   // (which mounts the shelved railLance weapon directly, bypassing the catalog) keeps its own
   // heavy-sniper mount silhouette instead of falling back to the generic energy category shape.
-  pulseLaser, beamLaser: railLance, railLance, plasmaCannon, plasmaCoater, flamethrower,
+  pulseLaser, beamLaser: railLance, railLance, chargeBeam, plasmaCannon, plasmaCoater, flamethrower,
   // ballistic
   autocannon, machineGun, shotgun, napalm,
   // missile

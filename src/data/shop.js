@@ -25,6 +25,12 @@ export const SHOP_COSTS = {
   // damage 2/bolt) still landing at ~20 sustained dps — price unchanged.
   plasmaLance: 150,
   beamLaser: 175, railLance: 225, plasmaCannon: 250,
+  // #627: Charge Beam is both of its parents in one mount (Charge Lance's charge + release, plus
+  // Beam Laser's sustained beam once focused), so it prices above both — over beamLaser's 175 and
+  // well over chargeLance, which is unlisted and therefore sits at DEFAULT_COST (100). Under
+  // railLance's 225: it's a hybrid with a real cost of entry (a 1.6s spin-up before a single beam
+  // tick lands, and a charge that eats a fifth of the magazine), not a flagship.
+  chargeBeam: 200,
 };
 
 const DEFAULT_COST = 100;
