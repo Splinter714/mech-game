@@ -836,30 +836,28 @@ export const WEAPONS = {
   // `spreadAngle`, the angular fan. And 2026-08-02: "make the burst for new missiles much
   // tighter, one after the other much closer in time, almost overlapping one another."
   //
-  // WHAT IT IS NOW — 2026-08-02, Jackson: "instead of 6 shot burst for new missiles, can we do a
-  // stream weapon where it fires as long as I hold it down, maybe a magazine size of like 20?"
-  // So it stopped being a burst weapon entirely: HOLD to pour missiles out at `fireRate` until the
-  // 20-round magazine runs dry, then the standard RELOAD lockout (Mech.js). Same family as
-  // Repeater/Flamethrower/Plasma Lance mechanically, but firing homing missiles at 5/s instead of
-  // bullets at 18/s. `count: 2` + `streamSpacing` makes it two parallel tubes rather than one, so
-  // it still reads as a RACK — which is also what the 6-tube Swarm Rack mount art it borrowed
-  // wants to look like.
+  // WHAT IT IS NOW — 2026-08-02, Jackson: "I want it to look/feel very much like current burst,
+  // but actually just do that same frequency of projectiles as it did with the 6 shot burst, but
+  // do it for up to 20 shots while holding it down; maybe that's not a stream?"
   //
-  // Ammo maths: ammo is spent once per `fireWeapon()` TICK, not per emitted round (see
-  // planEmissions' note on the stream branch), so the 2 lanes are free. 20 ticks at 5/s = 4.0s of
-  // held fire, 40 missiles out, then RELOAD. `ammoMax` and `fireRate` are the only two dials that
-  // set sustain; `count` changes volume of fire without costing anything.
+  // It IS a stream — the burst's 40ms spacing is just 25 rounds/second, so `pattern: 'stream'` with
+  // `fireRate: 25` reproduces the old cadence exactly and simply doesn't stop at 6. Hold the
+  // trigger and missiles keep leaving at that same rate until the 20-round magazine is dry, then
+  // the standard RELOAD lockout (Mech.js). Mechanically the same family as Repeater/Flamethrower/
+  // Plasma Lance; it just fires homing missiles instead of bullets.
   //
-  // ⚠ WHAT THE BURST USED TO CARRY, now that it's gone. The old 6-round burst had two properties
-  // that were NOT obvious from the data, and if this ever goes back to a burst, they matter:
-  //   • `salvoSpread` needs a VOLLEY to mean anything. It offsets each round by its slot position
-  //     within one emission, so a stream firing 2 lanes gives ±1 rather than the old 6-wide fan.
-  //     The 60px wall of missiles is gone; separation now comes from `streamSpacing` instead.
-  //   • The burst INTERVAL was also this weapon's sound design. `scheduleFireCues` (audio/
-  //     fireCues.js) retriggers the fire cue per sub-shot with `delay > 0`, so a 6-round stagger
-  //     was six bangs. Taking the interval to 0 once collapsed that to a single pop and broke the
-  //     weapon ("the issue is the lack of burst interval, that's all"). A stream sidesteps this —
-  //     each tick is its own `fireWeapon()` call and therefore its own cue.
+  // Ammo maths: ammo is spent once per `fireWeapon()` TICK, and a `count: 1` stream is one round
+  // per tick, so 20 rounds = 20 ticks at 25/s = **0.8s of held fire**, then a 2s reload. That is a
+  // hard, spiky duty cycle by construction — it's what "the burst's frequency, but 20 of them"
+  // arithmetically is. `ammoMax` is the dial if the window wants to be longer (50 -> 2.0s).
+  //
+  // ⚠ ONE THING THE BURST CARRIED THAT A count:1 STREAM CANNOT. `salvoSpread` (30px) offsets each
+  // round by its SLOT POSITION WITHIN ONE EMISSION — and a stream emits one round per tick, so
+  // every round is slot 0 and the offset is now inert. The old 6-round volley's 60px-wide sideways
+  // splay is therefore gone; consecutive missiles leave on the same line and only separate through
+  // the mech's own turning and their `weave` wobble. If that splay is wanted back, the lever is
+  // `count: 2` + `streamSpacing` (two parallel tubes, ±1 slots) at half the `fireRate` to hold the
+  // same rounds-per-second — NOT a shorter interval on a restored burst.
   //
   // (#631 is what made `spreadAngle: 0` possible. The lateral offset used to be derived FROM the
   // launch fan, so a salvo with no fan had no lateral separation either, and this entry carried a
@@ -879,8 +877,7 @@ export const WEAPONS = {
     delivery: {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
       velocity: 400,                                  // 2026-08-02: matched to Swarm Rack, the slowest missile in the game (was 700)
-      pattern: 'stream', fireRate: 5, count: 2,       // hold to fire; 2 parallel tubes at 5/s
-      streamSpacing: 14,                              // px between the two lanes — a rack, not one tube
+      pattern: 'stream', fireRate: 25, count: 1,      // hold to fire at the OLD BURST'S cadence (40ms)
       spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
       salvoSpread: 30,                                // the separation, all of it: lateral px
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle

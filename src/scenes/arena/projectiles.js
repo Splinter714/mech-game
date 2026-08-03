@@ -9,6 +9,7 @@ import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
 import { stepProjectile, leadAngle, segmentPointDistance, resolveSeekPoint, arcHomingBlend, arcLoft, arcForeshorten, salvoConvergeFalloff, stepWeakSeek, withinWeakSeekRadius, trackHomingSteering, homingGiveUpReason, beginHomingGiveUp, stepHomingGiveUp } from '../../data/delivery.js';
 import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid.js';
+import { DEPTH } from './shared.js';
 import { isSoftCover } from '../../data/terrain.js';
 import { LOS_REFRESH_MS } from './world.js';
 import { updateDotOutline, updateDotTint } from './shieldOutline.js';
@@ -47,32 +48,17 @@ const isFlameKind = (kind) => kind === 'flame' || kind === 'fire';
 // descending — see arcHomingBlend (data/delivery.js) for the ascent/descent blend curve, moved
 // there (#77 follow-up) so it's shared, pure, and unit-testable Phaser-free.
 
-// Arc-shadow tuning (2026-08-02) — see `_drawProjectile` for why the shadow moves rather than the
-// round. Direction is a fixed SCREEN vector (not per-round), so every lofting projectile on screen
-// agrees on where the light is: down-and-right, i.e. lit from the upper left. Offset is 0 at ground
-// level and peaks at apex, so a round always meets its own shadow at launch and at impact.
-// 2026-08-02 revision (Jackson: "those shadows look horrible, too big, bad shape, and offset
-// poorly"). All three, fixed in kind:
-//   • SHAPE — it was an axis-aligned squat ellipse (width × 0.42), i.e. a fat blob, under a round
-//     that is long and thin. The shadow is now drawn ROTATED to the round's own heading via the
-//     same canvas transform `drawProjectileBody` uses for foreshortening, so it's a slim streak
-//     lying along the missile rather than a puddle under it.
-//   • SIZE — 9→12px wide was as long as the missile itself and several times its width. Now
-//     roughly the sprite's own footprint, and missiles just got 20% smaller besides (#638).
-//   • OFFSET — 15px at apex threw the shadow most of a hex away from its round. Halved.
-const SHADOW_DIR_X = Math.SQRT1_2, SHADOW_DIR_Y = Math.SQRT1_2;   // 45°, down-right
-const SHADOW_MAX_OFFSET = 7;      // px the shadow trails behind the round at full apex
-const SHADOW_LEN = 8;             // px along the round's heading — about the sprite's own length
-const SHADOW_WID = 2.6;           // px across it; thin, matching a missile's silhouette
-const SHADOW_GROW = 0.25;         // fraction of extra size at apex — higher reads as slightly bigger
-const SHADOW_ALPHA = 0.26;        // flat: the old version faded out exactly when it should read most
-
 export const ProjectilesMixin = {
   _updateProjectiles(dt) {
     this.projFx.clear();
     // The above-units projectile layer (missiles) — same clear-and-repaint-every-frame contract.
-    // Optional-chained because the hand-built scene doubles and BaseScene only make `projFx`;
-    // `_drawProjectile` falls back to it, so a host without this layer just draws everything low.
+    // Created LAZILY here as well as in ArenaScene.create(), and that is load-bearing: a Vite HMR
+    // update swaps this module's code WITHOUT re-running a live scene's create(), so mid-session
+    // the new routing below would find no `projFxHigh`, silently fall back to the low layer, and
+    // the change would look like it simply hadn't worked (2026-08-02: "z order of missiles is still
+    // too low" — the code was already right; the running scene just had no layer to draw into).
+    // Also covers BaseScene and the hand-built scene doubles, which only make `projFx`.
+    if (!this.projFxHigh && this.add) this.projFxHigh = this.add.graphics().setDepth(DEPTH.PROJECTILES);
     this.projFxHigh?.clear();
     // #494/#546: anti-missile point defense used to run here as an always-on per-frame scan
     // (`_updateInterceptors`, gated on a passive core-slot equip choice). It's now an ACTIVE
@@ -1216,16 +1202,15 @@ export const ProjectilesMixin = {
   },
 
   _drawProjectile(p) {
-    // #639: a HIGH kind (missiles) draws its BODY above the units, but its arc shadow stays on the
-    // low layer with everything else — the shadow belongs to the ground it's cast on, and lifting
-    // it above the mech it passes over would be a worse artifact than the one this fixes.
+    // #639: a HIGH kind (missiles) draws its BODY above the units; every other kind stays on the
+    // low WEAPON_FX layer, which is what keeps a shot from painting over the mount that fired it.
     const g = this.projFx;
     const body = (HIGH_PROJECTILE_KINDS.has(p.kind) && this.projFxHigh) || g;
     // Arcing rounds fake "up and over" with SIZE alone — no vertical offset and, per #57
     // playtest feedback, NO sprite rotation/pitch. The body grows as the round lofts toward
-    // the "camera" and shrinks back down as it descends (a subtle parabolic scale pulse), and
-    // the ground shadow tightens beneath it — so the round reads as lofting over an obstacle
-    // while staying planted on its true ground position and flat to its heading. The lateral
+    // the "camera" and shrinks back down as it descends (a subtle parabolic scale pulse) — so the
+    // round reads as lofting over an obstacle while staying planted on its true ground position
+    // and flat to its heading. That size pulse is the ONLY height cue (see below). The lateral
     // undulation (jostle/weave, applied in stepProjectile) supplies the "arcing" wiggle.
     let scale = 1;
     let foreshorten = 1;
@@ -1240,27 +1225,14 @@ export const ProjectilesMixin = {
       // toss looks like a steep high pop and a far shot looks flat and skimming.
       const bump = p.arcBump ?? 0.6;                         // peak size gain at apex — per-weapon (delivery.arcBump), subtle grow-then-shrink
       scale = 1 + h * bump;
-      // 2026-08-02 (Jackson: "I'm not seeing the arc shadow at all, was there supposed to be one?
-      // def would look nice if it could have one"). There was code for one, and it could never
-      // have been visible: it drew a ≤8×3.4px ellipse at EXACTLY `p.x, p.y` — the same point the
-      // round body draws at, a frame-order moment later into the same graphics — so the sprite
-      // (~13px of missile plus its flame) sat right on top of it. It also SHRANK and faded as the
-      // round climbed, so at apex, where a shadow should read most, it was smallest and faintest.
-      //
-      // Something has to move for a shadow to exist at all, and #57 pinned the ROUND ("no vertical
-      // offset, no pitch" — it stays on its true ground position). So the SHADOW moves: it slides
-      // away along a fixed screen light direction in proportion to height, which is what actually
-      // sells the loft, and it grows and darkens slightly rather than vanishing. At h=0 (muzzle and
-      // impact) the offset is 0, so the round still meets its shadow exactly where it leaves the
-      // ground and where it lands — the two moments where a lie would be visible.
-      const lift = h * SHADOW_MAX_OFFSET;
-      const grow = (1 + h * SHADOW_GROW) * (p.scale || 1);
-      g.save();
-      g.translateCanvas(p.x + SHADOW_DIR_X * lift, p.y + SHADOW_DIR_Y * lift);
-      g.rotateCanvas(p.angle);                                // lie ALONG the round, not under it
-      g.fillStyle(0x000000, SHADOW_ALPHA);
-      g.fillEllipse(0, 0, SHADOW_LEN * grow, SHADOW_WID * grow);
-      g.restore();
+      // No ground shadow. There was code for one, it was never visible (a <=8x3.4px ellipse at
+      // exactly p.x,p.y, i.e. under the sprite that covers it a moment later), and the 2026-08-02
+      // attempt to make it real -- offset along a fixed light direction, since #57 pins the ROUND
+      // to its true ground position so only the shadow can move -- was rejected on sight:
+      // "those shadows look horrible, too big, bad shape, and offset poorly", then "remove missile
+      // shadows". The loft reads from the size pulse alone. Don't re-add one without a plan for
+      // the shape problem: a top-down shadow that can't sit under its round has to sit somewhere,
+      // and every offset direction is a visible lie.
       // #377: derive a sprite PITCH from where we are in the arc. arcForeshorten reads the arc's
       // vertical velocity (dh/dt of the same loft curve) — steep while climbing off the muzzle
       // and while plunging onto the target, ~flat across the apex — and returns an along-axis
