@@ -1,18 +1,27 @@
 // Shared shield-outline visual (#302). ONE implementation of "a unit with a live shield pool
 // wears a glowing rim hugging its own silhouette", driven by BOTH the player mech (the Shield
-// powerup / the mech's native shield layer) and any shielded enemy (helicopter's 30 —
-// data/enemyKinds.js; the carrier was shielded too until #436 moved it to pure armor). #302's
-// hard requirement: a future rework of the shield look must
-// change player and enemies together in ONE edit, so the technique, the colour, the alpha curve
-// and the hit-flash all live here and nothing outside this file knows how a shield is drawn.
+// powerup / the mech's native shield layer) and every shielded enemy: EVERY enemy mech (25/50/75 by
+// weight class — data/enemies.js), the gunship's 15 and the recon drone's 5 (data/enemyKinds.js; the
+// carrier was shielded too until #436 moved it to pure armor). #302's hard requirement: a future
+// rework of the shield look must change player and enemies together in ONE edit, so the technique,
+// the colour, the alpha curve and the hit-flash all live here and nothing outside this file knows
+// how a shield is drawn.
 //
 // The technique (originally #205, on the player only): this repo's Phaser build can't rely on a
-// WebGL-only postFX glow pipeline (the smoke/test harness can force the Canvas renderer via
-// `?canvas`, where glow FX don't run), so the outline is the classic cheap 2D "duplicate" trick —
-// for every sprite that makes up the unit's body, add a same-texture duplicate tinted solid
-// shield-blue (`setTintFill`), scaled up slightly, stacked BEHIND all the real parts. The real
-// artwork fully covers each duplicate except a thin rim at its silhouette edge, which reads as a
-// glowing outline hugging the unit's actual shape.
+// WebGL-only postFX glow pipeline (a Canvas-renderer run has no glow FX at all), so the outline is
+// the classic cheap 2D "duplicate" trick — for every sprite that makes up the unit's body, add a
+// duplicate tinted solid shield-blue (`setTintFill`) stacked BEHIND all the real parts, drawn from a
+// pre-baked SHELL raster of that sprite (its own art grown outward by a constant distance — see
+// art/_frames.js `bakeShellTextures`). The real artwork fully covers each duplicate except a thin
+// rim at its silhouette edge, which reads as a glowing outline hugging the unit's actual shape.
+//
+// #639 — WHY #302's one-edit rule needed enforcing rather than documenting: #397/#422 reworked that
+// technique (scaled duplicate + ADD blend → baked constant-margin dilation + NORMAL blend) by
+// changing the PLAYER's CALL SITE, because the look was configured through four `makeShieldOutline`
+// options and only the player's baked the rasters it needed. Enemies kept passing the defaults and
+// so kept the old look, for six issues, while this header still claimed one shared implementation.
+// Every unit now bakes shell rasters, and the four options are gone — a caller can no longer choose
+// a look, only describe its unit's structure, so the next rework really is one edit.
 //
 // Per-unit-type difference, and why it's just a `keys` argument: the player (and any mech-kind
 // enemy) is a `Mech` drawn as six pivoting part sprites, so its outline is six duplicates that
@@ -56,25 +65,32 @@ export function shieldPartKeys(def) {
   return def?.shieldOutlineParts ?? SHIELD_VEHICLE_PART_KEYS;
 }
 
-// #205 (playtest follow-up): how much bigger each outline duplicate is drawn than the real part
-// it shadows — just enough for a bright rim to peek out from behind every edge of the actual
-// silhouette, not a separate floating shape. The flash multiplier is the extra outward pop on an
-// absorbed hit.
-export const SHIELD_OUTLINE_SCALE_MULT = 1.14;
+// #205 (playtest follow-up): how much bigger a duplicate is drawn than the real part it shadows.
+// This is the LEGACY technique and is now only a safety net — see `makeShieldOutline`. Every unit
+// in the game bakes shell rasters, so nothing should reach it; a unit that does gets a visible (if
+// unevenly-thick) rim rather than no rim at all.
+export const SHIELD_OUTLINE_FALLBACK_SCALE_MULT = 1.14;
 
-// #397/#422: the PLAYER shell no longer uses a scale multiplier AT ALL (the old
-// SHIELD_PLAYER_SCALE_MULT is gone). A single % scale about the mech centre displaces each edge in
-// proportion to its own distance from that centre, so a mech that is wider than it is deep
-// necessarily wears a shell that is wider than it is deep — two passes of per-axis / per-part scale
-// algebra could not fix that, because the silhouette isn't a rectangle. The shell is now a BAKED
-// DILATION of the body art (mechArt.SHIELD_SHELL_PAD, `drawDilated`) drawn at the mech's EXACT
-// display scale — a constant outward distance on every side by construction. `dilated: true` on
-// `makeShieldOutline` selects that path. Enemies keep the classic scaled duplicate
-// (SHIELD_OUTLINE_SCALE_MULT), since they have no baked shell raster.
+// #397/#422/#639: the shell uses no scale multiplier AT ALL. A single % scale about the unit centre
+// displaces each edge in proportion to its own distance from that centre, so a mech that is wider
+// than it is deep necessarily wears a shell that is wider than it is deep — two passes of per-axis /
+// per-part scale algebra could not fix that, because the silhouette isn't a rectangle. The shell is
+// a BAKED DILATION of the unit's own art (mechArt.SHIELD_SHELL_PAD, baked by the shell pass in
+// art/_frames.js) drawn at the unit's EXACT display scale — a constant outward distance on every
+// side by construction.
 //
-// Optional-chained so the unit tests (which mock Phaser as `{}`) can import this module; the real
-// Phaser build always has BlendModes.NORMAL (=== 0). Only read at real sprite construction time.
-export const SHIELD_PLAYER_BLEND = Phaser.BlendModes?.NORMAL ?? 0;
+// #639: that was the PLAYER's path only for a long time, because only the player theme baked shell
+// rasters; enemies fell through to the scaled duplicate and an ADD blend, i.e. a visibly different
+// shield. Both bakes now happen for every unit (mechArt.js for mechs of any theme,
+// art/vehicles/index.js for every non-mech kind), so this is simply THE look and no caller chooses
+// it — which is what #302 asked for in the first place.
+//
+// Optional-chained so a Phaser-less import of this module still evaluates; the real Phaser build
+// always has BlendModes.NORMAL (=== 0). Only read at real sprite construction time.
+// NORMAL, not ADD: an even, crisp blue rim thrown by solid plating, rather than an additive one that
+// brightens wherever the unit's own emissive art sits behind it. It also can't accumulate a soft
+// baked halo into a bubble the way ADD did (#397 — see the muzzle-glow note in buildMechTextures).
+const SHIELD_OUTLINE_BLEND = Phaser.BlendModes?.NORMAL ?? 0;
 
 // ── Pure state/appearance logic (no Phaser — unit-tested in shieldOutline.test.js) ───────────
 
@@ -123,64 +139,39 @@ export function shieldAlphaCap(shield, pool) {
 // ── Phaser-side construction / per-frame upkeep ──────────────────────────────────────────────
 
 // Build the outline duplicates for one unit's view and return its visual state. `scale` is the
-// display scale of the real sprites (the outline is drawn slightly larger). Callers decide
-// whether a unit gets one at all: the PLAYER always does (its shield capacity can appear later,
-// when the Shield powerup grants a temporary pool to a zero-capacity chassis — Mech.grantTempShield), while an ENEMY only
-// gets one if its kind data configures a shield (`shieldPresent`), so the great majority of
-// enemies hold no outline sprites and make no per-frame call whatsoever.
-// `scaleMult`: how much bigger than the real part the rim is drawn — the ENEMY technique. Ignored
-// entirely when `dilated` is set (the player), where the margin comes from the art bake instead.
-// `blend` (#397): the outline's blend mode. Enemies default to ADD — a soft additive glow rim.
-// The PLAYER passes NORMAL. That started as half of the muzzle-glow FIX: an energy weapon used to
-// bake a big soft `glowDot` halo at the muzzle tip INTO its part texture, `setTintFill` floods that
-// faint halo to solid shield-blue, and under ADD blend the flooded halo accumulated into a round
-// bubble ballooning FORWARD off the gun (Jackson #397: "further expands the visual size of the
-// shield overlay, which looks ridiculous"). #433 later moved the glow out of the part entirely, so
-// that specific hazard is gone (see buildMechTextures) — but NORMAL stays as the player's look on
-// its own merits: an even, crisp blue rim thrown by the solid plating, rather than an additive one
-// that brightens wherever the mech's own emissive art sits behind it.
-// `bakedShell`: draw the duplicate from the part's baked `_shield` raster where one exists
-// (mechArt.buildMechTextures bakes a set for the player) instead of from the real part texture. A
-// part with no `_shield` variant (every enemy) falls back to its real texture, so nothing else
-// changes. The real→shell key mapping is stored on the returned state so the per-frame driver keeps
-// resolving through it (it never fights the walk-cycle frame-follow — the hull swaps frames and each
-// frame has its own shell raster).
-//   This was called `bodyOnly` through #397/#422, when those rasters were baked from the mech's
-// PLATING ONLY and the mounted guns deliberately poked out unshielded — see buildMechTextures for
-// why that cut existed (an energy weapon's soft muzzle halo, baked into the part back then, flooded
-// solid blue under setTintFill and ballooned the shell forward off the barrel) and why #433 removed
-// the cause. The 2026-07-31 ask put the guns back in the shell, so the old name now describes
-// nothing the rasters actually are; what the flag has ALWAYS meant is "use the baked shell raster",
-// which is what it now says.
-// `dilated` (#422): the PLAYER's shell rasters are already grown outward by a constant distance at
-// BAKE time (mechArt `drawDilated`/SHIELD_SHELL_PAD), so the duplicate is drawn at the mech's EXACT
-// display scale — no multiplier at all. That is what finally makes the margin the same on the wide
-// arm-to-arm axis and the shallow nose-to-tail axis: a dilation moves every silhouette edge by the
-// same distance, while ANY scale (uniform or per-axis) moves each edge in proportion to its own
-// distance from the centre. Enemies pass nothing and keep the classic `scale × scaleMult` duplicate.
+// display scale of the real sprites. Callers decide whether a unit gets one at all: the PLAYER
+// always does (its shield capacity can appear later, when the Shield powerup grants a temporary
+// pool to a zero-capacity chassis — Mech.grantTempShield), while an ENEMY only gets one if its kind
+// data configures a shield (`shieldPresent`), so the great majority of enemies hold no outline
+// sprites and make no per-frame call whatsoever.
+//
+// #639: the only things a caller passes are STRUCTURE — which sprites make up this unit's body
+// (`keys`), how big they're drawn (`scale`), where the duplicates land in the display list
+// (`attach`), and `color` for the plasma-coat reuse below. HOW a shield is drawn — the blend mode,
+// the baked-shell raster, the constant-distance dilation — is not a caller option at all any more.
+// It used to be four of them (`scaleMult`/`blend`/`bakedShell`/`dilated`), and that is precisely how
+// enemies ended up on a different-looking shield from the player's: #397/#422 changed the PLAYER's
+// call site, and nothing made the enemy call site come along. Per #302 this file is supposed to be
+// the one place that knows the answer, so now it simply is.
+//
 // `attach` (2026-07-31): where each duplicate lands in the display list. The default puts it BEHIND
 // everything already in the unit's own container, which is what every arena view is. The GARAGE lab
 // preview is not a container at all — it's a loose sprite stack living directly in the column layer
 // (art/mechView.js `makeMechParts`) — so it hands in its own adder and orders the shells itself.
 export function makeShieldOutline(scene, view, {
-  keys, scale, color = SHIELD_COLOR,
-  scaleMult = SHIELD_OUTLINE_SCALE_MULT, blend = Phaser.BlendModes.ADD, bakedShell = false,
-  dilated = false, attach = (o) => view.addAt(o, 0),
+  keys, scale, color = SHIELD_COLOR, attach = (o) => view.addAt(o, 0),
 }) {
-  // #422/#456: ONE constant scale for every part, set once at construction and never touched again
-  // — the shell's size is now a property of the art bake, not of the shield's strength.
-  const baseScale = dilated ? scale : scale * scaleMult;
   const outlines = {};
   const texMap = {};
-  // Resolve a real part texture to the shell raster that shadows it. Memoised, and a FUNCTION
+  // Resolve a real part texture to the baked shell raster that shadows it. Memoised, and a FUNCTION
   // rather than a fixed table because the hull swaps texture through the walk cycle: each frame
   // has its own shell raster (`..._hull_7_shield`), and the frame the outline was BUILT on is not
-  // the only one it will ever see. A part with no shell raster (every enemy) resolves to itself.
+  // the only one it will ever see.
   const resolveTex = (realKey) => {
     let mapped = texMap[realKey];
     if (mapped === undefined) {
       const shellKey = `${realKey}${SHIELD_SHELL_SUFFIX}`;
-      mapped = bakedShell && scene.textures?.exists?.(shellKey) ? shellKey : realKey;
+      mapped = scene.textures?.exists?.(shellKey) ? shellKey : realKey;
       texMap[realKey] = mapped;
     }
     return mapped;
@@ -189,6 +180,15 @@ export function makeShieldOutline(scene, view, {
     const real = view[key];
     if (!real) continue;
     const shieldKey = resolveTex(real.texture.key);
+    // #422/#456: ONE constant scale per sprite, set once here and never touched again — the shell's
+    // size is a property of the ART BAKE, not of the shield's strength, so nothing at runtime
+    // rescales it. The shell raster is already grown outward by a constant distance at bake time, so
+    // it is drawn at the unit's EXACT display scale.
+    //   The fallback is the pre-#422 percentage duplicate, and only fires for a sprite whose texture
+    // set somehow baked no shell. Nothing in the game should hit it (mech art bakes shells for every
+    // theme, vehicle art for every kind); a sprite that does still shows a rim, just an uneven one.
+    const dilated = shieldKey !== real.texture.key;
+    const baseScale = dilated ? scale : scale * SHIELD_OUTLINE_FALLBACK_SCALE_MULT;
     // #397 follow-up: the outline is anchored at its TEXTURE CENTRE (origin 0.5,0.5), never the
     // real part's origin — a shoulder/arm real origin is the convergence PIVOT (a joint set
     // toward the part's REAR, PART_PIVOT in mechArt.js), and anchoring there threw the shell
@@ -198,14 +198,14 @@ export function makeShieldOutline(scene, view, {
       .setOrigin(0.5, 0.5)
       .setScale(baseScale)
       .setTintFill(color)
-      .setBlendMode(blend)
+      .setBlendMode(SHIELD_OUTLINE_BLEND)
       .setVisible(false);
     outlines[key] = o;
     // Behind everything already in the container (the real parts) — order among the outlines
-    // themselves doesn't matter since they're additive-blended and fully hidden by the real art.
+    // themselves doesn't matter since each is fully hidden by the real art except at its rim.
     attach(o);
   }
-  return { outlines, active: false, t: 0, baseScale, flash: 0, texMap, resolveTex };
+  return { outlines, active: false, t: 0, flash: 0, texMap, resolveTex };
 }
 
 // Per-frame upkeep for ONE unit's outline. Shows/hides on the 0↔>0 edge (pickup / regen-back-up /
@@ -225,9 +225,9 @@ function reposeOutlineSprites(sv, view, alpha) {
   for (const key of Object.keys(sv.outlines)) {
     const real = view[key];
     const o = sv.outlines[key];
-    // Follow the real part's texture, but resolve through to the baked `_shield` shell raster for
-    // any part that has one (every player part). A part with no shell raster (every enemy) resolves
-    // straight back to the real key, so this is a no-op for them.
+    // Follow the real part's texture, but resolve through to its baked `_shield` shell raster —
+    // the hull swaps frames through the walk cycle and each frame has its own shell. A sprite with
+    // no shell raster resolves straight back to the real key (the fallback in makeShieldOutline).
     const desired = sv.resolveTex
       ? sv.resolveTex(real.texture.key)
       : (sv.texMap?.[real.texture.key] ?? real.texture.key);
@@ -303,8 +303,9 @@ export function updateShowroomShieldOutline(sv, view, delta) {
 // Jackson: the plasmaBurn DoT's visual should read as a COATING on the mech itself, "more like
 // the way shields are visualized, but a different color, like purple" — rather than the old
 // floating pulsing circle at the unit's centre point (`_drawStatusEffects`, projectiles.js).
-// Reuses `makeShieldOutline`'s sprite-construction (it already takes `color`/`blend`/`dilated`/
-// `bakedShell` as plain parameters, so no changes were needed there) and the geometry factored out
+// Reuses `makeShieldOutline`'s sprite-construction (it takes `color` as a plain parameter, so no
+// changes were needed there — and since #639 every other aspect of the look is shared with the
+// shield outright) and the geometry factored out
 // above; only the ALPHA driver differs, since a DoT has no "HP fraction" the way a shield pool
 // does — it's simply present or not, so the outline pulses steadily for as long as the effect is
 // on the target, rather than fading with remaining duration (duration ticks down in fixed-size

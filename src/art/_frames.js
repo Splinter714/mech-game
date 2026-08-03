@@ -8,6 +8,9 @@
 // the existing canvas without clearing, so we clear it first — otherwise old pixels
 // ghost through. Redrawing in place keeps the Texture object valid.
 export function gen(scene, key, w, h, drawFn) {
+  // #639: inside a shell pass, every `gen` call bakes exactly ONE texture — the DILATED shell of
+  // what it was asked to draw, under `<key><suffix>`. See `bakeShellTextures` below.
+  if (SHELL_PASS) return genShell(scene, key, w, h, drawFn);
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
   drawFn(g);
   if (scene.textures.exists(key)) {
@@ -22,7 +25,11 @@ export function gen(scene, key, w, h, drawFn) {
   // Vite folds this whole branch away in a production build (see main.js's identical guard on
   // the ArtPreviewScene/AudioScene registration for the same reasoning), so there is zero
   // runtime cost or risk in a shipped build.
-  if (import.meta.env.DEV) captureLayers(key, w, h, drawFn);
+  // #639: never captured for a SHELL raster. A shell is a mechanical dilation of art the dissect
+  // tool already has, so there is nothing to see in it — and capturing one would re-run the draw
+  // another DILATE_STEPS+1 times per raster, which every enemy mech now pays at spawn and on every
+  // damage reskin. That is dev-only cost with no dev-only benefit.
+  if (import.meta.env.DEV && !IN_SHELL_BAKE) captureLayers(key, w, h, drawFn);
 }
 
 // Dev-only art dissection: re-run `drawFn` into a recording graphics (`makeCaptureGraphics`)
@@ -114,18 +121,20 @@ export const ART_SCALE = 4;
 // glow would be, not a dark blob). The glow-only overlay stays the sole source of the muzzle colour,
 // so the reload blink's off phase reads as the colour vanishing to nothing, not blinking to dark.
 // #422: `ox`/`oy` translate every POSITIONAL argument (never a width/height/radius) by that many
-// DESIGN units before the R× scale-up. Zero by default, so every existing bake is byte-identical.
-// It exists for `drawDilated` below — the only way to grow a drawing by a fixed distance in EVERY
-// direction is to stamp the same drawing around a small circle, which needs a translate hook that
-// no per-part draw code has to know about.
+// DESIGN units before the R× scale-up. Zero outside a shell pass, so every ordinary bake is
+// byte-identical. It exists for the dilation below — the only way to grow a drawing by a fixed
+// distance in EVERY direction is to stamp the same drawing around a small circle, which needs a
+// translate hook that no per-part draw code has to know about. #639: seeded from the pass's
+// current ring stamp (`SHELL_OFFSET`), since the draw code builds this wrapper itself, inside the
+// `gen` callback, once per stamp.
 export function scaledGraphics(g, r = ART_SCALE) {
   const s = (n) => n * r;                       // sizes: never translated
   const px = (n) => (n + wrap.ox) * r;          // positional x
   const py = (n) => (n + wrap.oy) * r;          // positional y
   const wrap = {
     raw: g,
-    ox: 0,             // #422: design-unit translate applied to positional args (see drawDilated)
-    oy: 0,
+    ox: SHELL_OFFSET?.ox ?? 0,   // #422/#639: design-unit translate applied to positional args
+    oy: SHELL_OFFSET?.oy ?? 0,
     glowOnly: false,   // when true, only glow-primitive output reaches the canvas
     glowSkip: false,   // when true, glow-primitive output is suppressed (gun hardware still draws)
     _glow: false,      // set by glowDot/glowBar while emitting their layers
@@ -155,21 +164,55 @@ export function scaledGraphics(g, r = ART_SCALE) {
 // is 13 passes of otherwise-unchanged draw code at texture-bake time (never per frame).
 export const DILATE_STEPS = 12;
 
-// #422: run `drawFn` once normally and then once per ring stamp, so the resulting raster is the
-// drawing's silhouette GROWN OUTWARD BY A CONSTANT `pad` DESIGN UNITS on every side. This is a true
-// morphological dilation, which is what "a consistent distance outside the mech" actually means —
-// unlike scaling the sprite up by a percentage, which displaces each edge in proportion to its own
-// distance from the centre (so a mech that is wider than it is deep gets a shell that is wider than
-// it is deep). Shape-agnostic: it needs nothing from the draw code but the ability to be re-run.
-export function drawDilated(sg, pad, drawFn, steps = DILATE_STEPS) {
-  drawFn();
+// ── #422/#639: the SHELL BAKE PASS — the one and only dilation implementation ────────────────
+// A "shell" raster is a unit's own art grown outward by a constant distance on every side. It is
+// what the shield/plasma-coat outline draws (scenes/arena/shieldOutline.js) instead of a scaled-up
+// copy of the real part: growing a drawing by a fixed distance in EVERY direction can only be done
+// by stamping the same drawing around a small circle and unioning the results — a true
+// morphological dilation — because ANY scale (uniform or per-axis) displaces each edge in
+// proportion to its own distance from the centre, so a unit wider than it is deep gets a shell
+// wider than it is deep.
+//
+// #639 made it a PASS rather than a per-texture call, so an art builder can be re-run VERBATIM to
+// produce its shells: inside `bakeShellTextures`, every `gen()` call bakes one texture, under
+// `<key><suffix>`, dilated. Callers therefore cannot misname a shell raster, forget one, or bake a
+// shell for only some of a unit's sprites — which is exactly the drift that left enemies wearing a
+// different-looking shield from the player's for as long as they did (#302's one-edit rule).
+//
+// The offset rides on module state rather than on the `sg` wrapper because the draw code creates
+// its own wrapper INSIDE the `gen` callback (`(g) => drawHull(scaledGraphics(g), …)`), so there is
+// no wrapper for the pass to reach; `scaledGraphics` picks the current stamp up at construction,
+// which is once per stamp. Bake-time only, fully synchronous, and always restored in a `finally`.
+let SHELL_PASS = null;     // { pad, suffix } while a shell pass is running
+let SHELL_OFFSET = null;   // the current ring stamp, in DESIGN units — read by `scaledGraphics`
+let IN_SHELL_BAKE = false; // true across the one `gen` call that bakes a shell raster
+
+// Run `fn` (an art builder, or any run of `gen` calls) as a shell pass: `pad` DESIGN units of
+// outward dilation, keys suffixed with `suffix`. A pad of 0 or less bakes nothing at all rather
+// than running `fn` unchanged — `fn` is an art builder being re-run, so letting it through would
+// silently re-bake the unit's REAL textures a second time under their own keys.
+export function bakeShellTextures(pad, suffix, fn) {
   if (!(pad > 0)) return;
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * Math.PI * 2;
-    sg.ox = Math.cos(a) * pad;
-    sg.oy = Math.sin(a) * pad;
-    drawFn();
-  }
-  sg.ox = 0;
-  sg.oy = 0;
+  const prev = SHELL_PASS;
+  SHELL_PASS = { pad, suffix };
+  try { fn(); } finally { SHELL_PASS = prev; SHELL_OFFSET = null; }
+}
+
+// One shell raster: the same draw fn run once normally and then once per ring stamp, all into the
+// same canvas, so the result is the drawing's silhouette grown outward by `pad` on every side.
+function genShell(scene, key, w, h, drawFn) {
+  const pass = SHELL_PASS;
+  SHELL_PASS = null;   // the `gen` below is an ordinary bake — of the dilated draw
+  IN_SHELL_BAKE = true;
+  try {
+    gen(scene, `${key}${pass.suffix}`, w, h, (g) => {
+      drawFn(g);
+      for (let i = 0; i < DILATE_STEPS; i++) {
+        const a = (i / DILATE_STEPS) * Math.PI * 2;
+        SHELL_OFFSET = { ox: Math.cos(a) * pass.pad, oy: Math.sin(a) * pass.pad };
+        drawFn(g);
+      }
+      SHELL_OFFSET = null;
+    });
+  } finally { SHELL_PASS = pass; SHELL_OFFSET = null; IN_SHELL_BAKE = false; }
 }

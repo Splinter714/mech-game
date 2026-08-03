@@ -19,7 +19,7 @@
 //   neon   — each weapon glows its CATEGORY colour (energy cyan, ballistic amber,
 //            missile pink, support green), so loadout reads at a glance.
 
-import { gen, scaledGraphics, drawDilated, ART_SCALE } from './_frames.js';
+import { gen, scaledGraphics, bakeShellTextures, ART_SCALE } from './_frames.js';
 import { MOUNT_LOCATIONS } from '../data/anatomy.js';
 import { isWeapon } from '../data/items.js';
 import { getWeapon } from '../data/weapons.js';
@@ -106,8 +106,8 @@ export const PART_PIVOT = { leftArm: 0.42, rightArm: 0.42, leftShoulder: 0.30, r
 // is defined so the baker and the mech-view wiring can't drift apart.
 export const MUZZLE_GLOW_SUFFIX = '_muzzleGlow';
 
-// #422/#456: the player's shield SHELL is baked as its own raster — the body-only art DILATED
-// outward by this many DESIGN units — and then drawn at the mech's EXACT display scale (see
+// #422/#456: a shield SHELL is baked as its own raster — the unit's own art DILATED outward by
+// this many DESIGN units — and then drawn at the unit's EXACT display scale (see
 // arena/shieldOutline.js). That is what makes the shell sit a consistent distance outside the
 // silhouette: a dilation moves every edge by the same distance, whereas the old percentage scale
 // moved each edge in proportion to its own distance from the mech centre, so the wide arm-to-arm
@@ -118,9 +118,10 @@ export const MUZZLE_GLOW_SUFFIX = '_muzzleGlow';
 // (#456: strength drives opacity, never size).
 export const SHIELD_SHELL_PAD = 1.8;
 
-// #422: texture-key suffix for a part's baked shield shell (body-only art, dilated by
-// SHIELD_SHELL_PAD). The hull gets one PER WALK FRAME so the shell's feet stride with the real
-// legs. Shared with arena/shieldOutline.js so the baker and the consumer can't drift.
+// #422: texture-key suffix for a sprite's baked shield shell (its own art, dilated by
+// SHIELD_SHELL_PAD). A mech hull gets one PER WALK FRAME so the shell's feet stride with the real
+// legs. Shared with arena/shieldOutline.js so the baker and the consumer can't drift, and with
+// art/vehicles/index.js, which bakes the same shells for every non-mech kind (#639).
 export const SHIELD_SHELL_SUFFIX = '_shield';
 
 // Where a `${key}_<part>` sprite must sit and how it pivots, for a mech aimed along `angle`
@@ -556,9 +557,8 @@ export function buildMechTextures(scene, key, mech, opts) {
     gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
       (g) => drawArm(scaledGraphics(g), mech, loc, T, isPlayer));
   }
-  // The PLAYER's shield shell — a parallel raster per part that the outline duplicates draw from
-  // (arena/shieldOutline.js `bakedShell`). Player theme only; enemies have no shell raster and keep
-  // the classic scaled duplicate of their real part.
+  // The shield SHELL — a parallel raster per part that the outline duplicates draw from
+  // (arena/shieldOutline.js). Every mech gets one; see the #639 note at the bottom of this block.
   //
   // 2026-07-31 (live chat): "we previously removed shield glow/outline thing from weapon muzzles,
   // but I think we should add it back, not exclude them anymore" — so the shell is baked from the
@@ -580,31 +580,50 @@ export function buildMechTextures(scene, key, mech, opts) {
   //
   // The hull carries no weapons, so none of this touches it.
   //
-  // #422: each shell raster is the body-only art DILATED by SHIELD_SHELL_PAD (drawDilated) instead
-  // of the plain body art. The outline sprite then draws it at the mech's EXACT display scale, so
+  // #422: each shell raster is the part's art DILATED by SHIELD_SHELL_PAD (the shell pass in
+  // _frames.js). The outline sprite then draws it at the mech's EXACT display scale, so
   // the shell's margin is a constant number of pixels on every side of the silhouette rather than a
   // percentage of each edge's distance from the mech centre. The HULL now needs shells too (one per
   // walk frame): at equal scale the un-dilated hull would be perfectly covered by the real legs and
   // no rim would show at all. They carry no damage state (legs are animation-only), so they follow
   // the same build-once `skipHull` gate as the real hull frames.
-  const shell = (name, drawFn) => gen(scene, name, DESIGN * ART_SCALE, DESIGN * ART_SCALE, (g) => {
-    const sg = scaledGraphics(g);
-    drawDilated(sg, SHIELD_SHELL_PAD, () => drawFn(sg));
-  });
-  if (isPlayer) {
+  //
+  // #639: baked for EVERY theme, not just the player's. Enemy mechs are shielded units too (25/50/75
+  // by weight class — data/enemies.js) and every enemy can be plasma-coated, so an enemy with no
+  // shell raster was silently falling back to the pre-#422 scaled-duplicate outline: the player wore
+  // a crisp constant-margin rim and an enemy wore a percentage-scaled additive one, which is exactly
+  // the split #302's one-edit rule exists to prevent (playtest: "enemy mechs look like the OLDschool
+  // player shield visual"). The cost is per texture SET: an enemy mech bakes 9 more rasters at spawn
+  // (4 walk frames + turret + 4 pivot parts) and 5 more per damage reskin, which is the same bill the
+  // player has paid since #422.
+  //
+  // The whole run goes through ONE `bakeShellTextures` pass (art/_frames.js), so each `gen` below
+  // writes the DILATED version of its draw under `<key>${SHIELD_SHELL_SUFFIX}` — the suffix and the
+  // dilation are applied by the pass, never spelled out per raster.
+  bakeShellTextures(SHIELD_SHELL_PAD, SHIELD_SHELL_SUFFIX, () => {
     if (!opts?.skipHull || !scene.textures.exists(`${key}_hull_0${SHIELD_SHELL_SUFFIX}`)) {
       for (let f = 0; f < hullFrames; f++) {
-        shell(`${key}_hull_${f}${SHIELD_SHELL_SUFFIX}`, (sg) => drawHull(sg, mech, f, T, hullFrames));
+        gen(scene, `${key}_hull_${f}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+          (g) => drawHull(scaledGraphics(g), mech, f, T, hullFrames));
       }
     }
-    shell(`${key}_turret${SHIELD_SHELL_SUFFIX}`, (sg) => drawTurret(sg, mech, T, opts?.statusSpot));
-    // `muzzleOff: true` on both — the guns' hardware is IN the shell, their glow is not (see above).
+    gen(scene, `${key}_turret`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+      (g) => drawTurret(scaledGraphics(g), mech, T, opts?.statusSpot));
+    // `muzzleOff: true` on both, for EVERY theme — the guns' hardware is IN the shell, their glow is
+    // not (see above). It matters more for an enemy than for the player: an enemy's real parts bake
+    // the muzzle glow straight in (no separate overlay), and `setTintFill` floods that soft halo to
+    // solid shield-blue, which is precisely the forward-ballooning bubble #397 was filed for. Baking
+    // the shell muzzle-off keeps the shell a clean dilation of the gun HARDWARE on both sides.
     for (const loc of SHOULDER_LOCATIONS) {
-      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawShoulder(sg, mech, loc, T, true));
+      gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawShoulder(scaledGraphics(g), mech, loc, T, true));
     }
     for (const loc of ARM_LOCATIONS) {
-      shell(`${key}_${loc}${SHIELD_SHELL_SUFFIX}`, (sg) => drawArm(sg, mech, loc, T, true));
+      gen(scene, `${key}_${loc}`, DESIGN * ART_SCALE, DESIGN * ART_SCALE,
+        (g) => drawArm(scaledGraphics(g), mech, loc, T, true));
     }
+  });
+  if (isPlayer) {
     // #433 (re-architecture): the GLOW-ONLY overlay for every weapon-carrying part (the four skill
     // slots). Same canvas size + origin as the part, containing ONLY the muzzle glow in the CATEGORY
     // neon (drawPartGlow, via the scaledGraphics glow-gate). The mech view (locomotion.js) mounts one

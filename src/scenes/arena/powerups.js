@@ -33,7 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
-  SHIELD_PLAYER_BLEND, PLASMA_COAT_COLOR,
+  PLASMA_COAT_COLOR,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -77,23 +77,14 @@ export const PowerupsMixin = {
     if (player.shieldVisual) return player.shieldVisual;
     const view = player.view ?? this.playerView;
     if (!view) return null;   // no view yet (pre-spawn / a test double) — retried next frame
+    // #639: structure only — which sprites are this unit's body and how big they're drawn. The
+    // LOOK (baked shell raster, constant-margin dilation, blend mode) is no longer a call-site
+    // option: it lives entirely in shieldOutline.js, which is what makes an enemy's shield and this
+    // one the same thing rather than two configurations that drifted apart.
     player.shieldVisual = makeShieldOutline(this, view, {
       keys: SHIELD_MECH_PART_KEYS,
       scale: ARENA_MECH_SCALE,
       color: POWERUPS.shield.color,
-      // #397: the player shell blends NORMAL, so the muzzle glow can't balloon it and it reads even
-      // all around (see makeShieldOutline's `blend` note). Enemies keep ADD.
-      blend: SHIELD_PLAYER_BLEND,
-      // Draw the duplicates from the player's baked `_shield` shell rasters (mechArt) rather than
-      // from the real part textures. 2026-07-31: those rasters now include the MOUNTED GUNS (muzzle
-      // glow excluded), so the mech's weapons are shelled along with its plating — this flag was
-      // called `bodyOnly` while they weren't; see makeShieldOutline's note for that history.
-      bakedShell: true,
-      // #422: those `_shield` rasters are the body art DILATED by a constant distance at bake time
-      // (mechArt.SHIELD_SHELL_PAD), so the shell is drawn at the mech's EXACT scale — no percentage
-      // multiplier anywhere. That's what makes the margin identical on the wide arm-to-arm axis and
-      // the shallow nose-to-tail axis, which no amount of scale algebra could achieve.
-      dilated: true,
     });
     return player.shieldVisual;
   },
@@ -114,9 +105,6 @@ export const PowerupsMixin = {
       keys: SHIELD_MECH_PART_KEYS,
       scale: ARENA_MECH_SCALE,
       color: PLASMA_COAT_COLOR,
-      blend: SHIELD_PLAYER_BLEND,
-      bakedShell: true,
-      dilated: true,
     });
     return player.dotVisual;
   },

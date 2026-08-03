@@ -170,7 +170,7 @@ export function roundC(sg, cx, cy, w, h, fill, r, alpha = 1) {
   const k = ART_SCALE, rr = Math.min(r, w / 2, h / 2);
   // #422: this one primitive draws straight onto the raw R× graphics, so it has to apply the
   // scaledGraphics translate itself (every other primitive gets it for free). Zero unless a
-  // `drawDilated` pass is running.
+  // shell/dilation pass is running (_frames.js `bakeShellTextures`).
   const ox = sg.ox || 0, oy = sg.oy || 0;
   sg.raw.fillRoundedRect((CENTER + cx + ox - w / 2) * k, (CENTER + cy + oy - h / 2) * k, w * k, h * k, rr * k);
 }

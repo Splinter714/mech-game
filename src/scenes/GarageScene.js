@@ -3,7 +3,7 @@ import { buildMechTextures, reskinMech, HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { makeMechParts, poseMechParts } from '../art/mechView.js';
 import {
-  SHIELD_MECH_PART_KEYS, SHIELD_COLOR, SHIELD_PLAYER_BLEND,
+  SHIELD_MECH_PART_KEYS, SHIELD_COLOR,
   makeShieldOutline, updateShowroomShieldOutline,
 } from './arena/shieldOutline.js';
 import {
@@ -490,9 +490,9 @@ export default class GarageScene extends Phaser.Scene {
     col.previewScale = scale; col.previewCx = previewCx; col.previewCy = previewCy;
     col.preview = makeMechParts(this, col.textureKey, { x: previewCx, y: previewCy, scale, isPlayer: true });
     // 2026-07-31 live-chat ask ("add shield visual glow or whatever to the mech preview in garage").
-    // The SAME shield shell the arena draws — same construction call, same colour, same NORMAL
-    // blend, same baked `_shield` rasters (scenes/arena/shieldOutline.js is the one place that knows
-    // how a shield is drawn, per #302), just driven by the showroom driver instead of a live pool:
+    // The SAME shield shell the arena draws — same construction call, same colour, same baked
+    // `_shield` rasters (scenes/arena/shieldOutline.js is the one place that knows how a shield is
+    // drawn, per #302), just driven by the showroom driver instead of a live pool:
     // every player mech gets the 100-point baseline unconditionally at deploy, so the lab shows what
     // it will look like wearing it. Only the MAIN lab preview gets one — the chassis-card previews
     // (_chassisCards) deliberately don't: their whole job is comparing three silhouettes, and a blue
@@ -503,8 +503,7 @@ export default class GarageScene extends Phaser.Scene {
     // rather than one combined add.
     col.layer.add(col.previewPanel);
     col.previewShield = makeShieldOutline(this, col.preview, {
-      keys: SHIELD_MECH_PART_KEYS, scale, color: SHIELD_COLOR, blend: SHIELD_PLAYER_BLEND,
-      bakedShell: true, dilated: true,
+      keys: SHIELD_MECH_PART_KEYS, scale, color: SHIELD_COLOR,
       attach: (o) => col.layer.add(o),
     });
     col.layer.add(col.preview.children);
