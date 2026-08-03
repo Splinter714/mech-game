@@ -23,6 +23,13 @@ import { isPlayerStealthed } from './stealth.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
 
+// The charge telegraph's centre convergence line width (see `_drawChargeFor`). CONSTANT and thin
+// on purpose — 2026-08-01 playtest: the old `1 + frac * 5` ramp put a ~6px slab over the cone at
+// full charge, reading as a separate heavy element rather than the cone finishing its collapse
+// into one line. Matches the wedge's own hairline vocabulary; the convergence moment is carried
+// by opacity (`chargeCoreAlpha`) and brightness instead of thickness.
+const CHARGE_CORE_WIDTH = 1.5;
+
 export const FiringMixin = {
   // #338: the SHOT half of the one shared predicate (data/visibility.js `targetCoverExempt`) —
   // the same call target eligibility makes, so "you should only be able to lock what you could
@@ -277,14 +284,22 @@ export const FiringMixin = {
       // with the fired-burst visual below so both read as the same visual language.
       drawChargeWedge(g, m.x, m.y, angle, chargeConeAngleDeg(frac), reach, color, 0.1 + frac * 0.15);
 
-      // Centre convergence line — the "strong middle line". Jackson: "that should really just
-      // be there if they hold charge all the way to middle convergence" — so it stays fully
-      // hidden through the wide-cone early/mid charge and only fades in near full charge
-      // (`chargeCoreAlpha`), then thickens/brightens the rest of the way exactly as before.
+      // Centre convergence line — where the cone's thin lines collapse to at full charge.
+      //
+      // 2026-08-01 playtest (Jackson: "visual for charge lance is really cool while it's
+      // charging... can we just continue the charging animation with those cool thin lines, but
+      // let them converge into one line? keep it thin, don't add that extra thick line that
+      // sucks?"). This used to ramp to `1 + frac * 5` — a ~6px slab at full charge that read as a
+      // separate heavy element pasted over the cone rather than as the cone finishing its
+      // collapse. It is now a CONSTANT THIN line, matching the wedge's own hairline vocabulary,
+      // so full charge reads as "the fan converged" instead of "a thick beam appeared."
+      //
+      // This supersedes the earlier "strong middle line" ask (#493 follow-up) — same element, and
+      // it still only fades in near full charge via `chargeCoreAlpha`, it's just no longer thick.
+      // Brightness still ramps with `frac`, so the convergence moment is carried by opacity alone.
       const coreAlpha = chargeCoreAlpha(frac);
       if (coreAlpha > 0) {
-        const width = 1 + frac * 5;
-        g.lineStyle(width, color, coreAlpha * (0.35 + frac * 0.55));
+        g.lineStyle(CHARGE_CORE_WIDTH, color, coreAlpha * (0.35 + frac * 0.55));
         g.beginPath();
         g.moveTo(m.x, m.y);
         g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
