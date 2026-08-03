@@ -1026,16 +1026,33 @@ export function chargeDistanceFade(t) {
   return 1 - u;
 }
 
-// The centre convergence line (the "strong middle line") should NOT read during the wide-
-// cone early/mid charge — only once charge is at/near full ("middle convergence"). Returns
-// 0 below `threshold` (fully hidden) easing linearly up to 1 at frac = 1, so it fades IN
-// over the last stretch of the hold rather than snapping into view. `frac` is the same
-// elapsed/maxTime fraction `chargeConeAngleDeg` takes (0 at the start of a hold, 1 at full
-// charge).
-export const CHARGE_CORE_VISIBLE_START = 0.85;
+// The centre convergence line should read as the cone FINISHING ITS COLLAPSE — it only belongs
+// on screen once the wedge has actually shut around it.
+//
+// 2026-08-01 playtest (Jackson: "it seems like the central line comes together before the wedge
+// fully collapses"). It did, and the cause was structural: this used to ease off `frac` from its
+// own independently-tuned threshold (0.85), while the cone eased off `frac` on a completely
+// separate curve (`chargeConeAngleDeg`'s `1 - f²`). Two curves over the same input, tuned apart,
+// with nothing tying them together — so at f = 0.85, the exact moment the line began to appear,
+// the cone was still ~25° wide (a quarter of its full 90° spread). The line converged visibly
+// ahead of the wedge.
+//
+// Now derived FROM THE CONE'S OWN ANGLE rather than from `frac` a second time, so the two cannot
+// drift apart again by construction — retuning `chargeConeAngleDeg` retunes this for free. The
+// line fades in across the last `CORE_CONE_OPEN_MAX` of the cone's angular travel and reaches
+// full opacity exactly when the cone reaches zero.
+//
+// Sanity check on the new curve: at f = 0.85 the cone is 27.8% open, well outside the 12% window,
+// so the line is fully hidden where it used to be starting; it first appears around f ≈ 0.94
+// (cone ~11.6% open) and is only past half opacity around f ≈ 0.97, by which point the wedge is
+// a narrow sliver. That is the "collapses into one line" read.
+export const CORE_CONE_OPEN_MAX = 0.12;
 
-export function chargeCoreAlpha(frac, threshold = CHARGE_CORE_VISIBLE_START) {
-  const f = Math.max(0, Math.min(1, frac));
-  if (f <= threshold || threshold >= 1) return f > threshold ? 1 : 0;
-  return (f - threshold) / (1 - threshold);
+export function chargeCoreAlpha(frac, maxOpen = CORE_CONE_OPEN_MAX) {
+  // How open the cone still is, 1 (full spread) → 0 (shut), read off the cone's own function so
+  // this can never disagree with what's actually being drawn.
+  const openFrac = chargeConeAngleDeg(frac) / CHARGE_CONE_MAX_DEG;
+  if (maxOpen <= 0) return openFrac <= 0 ? 1 : 0;
+  if (openFrac >= maxOpen) return 0;
+  return 1 - openFrac / maxOpen;
 }
