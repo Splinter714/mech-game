@@ -889,12 +889,13 @@ export const ProjectilesMixin = {
   // per-pylon link cap, the max link range, the accepted-pairs list and its per-volley recompute
   // detection) and the pylon-to-pylon connecting lines it drew are all deleted. What survives from
   // that lineage is exactly what was still correct — the per-hazard arm/life/expiry machinery
-  // (`_updateHazards` above), the flying-enemy exemption, and the pylon node visual
-  // (`_drawHazard`).
+  // (`_updateHazards` above) and the pylon node visual (`_drawHazard`).
   //
   // Every live, ARMED pylon runs its own pulse clock (`hz.pulseIn`, lazily started the first frame
-  // it's armed) and on each tick zaps every live, non-flying enemy within its OWN `radius` — a
-  // plain point-radius test now, no line-segment math.
+  // it's armed) and on each tick zaps every live enemy within its OWN `radius` — a plain
+  // point-radius test now, no line-segment math. FLYERS INCLUDED, unlike every other hazard kind
+  // (#626 playtest: "can tesla hit air units? because it SHOULD be able to") — see the candidate
+  // filter below for why an arcing tower is the one case the flying exemption doesn't fit.
   //
   // `pulseDamage` is a per-tick BUDGET SPLIT EVENLY among whoever is standing in the ring, NOT a
   // per-target amount (Jackson, #626: "keep total damage per tick consistent and just spread it
@@ -922,11 +923,14 @@ export const ProjectilesMixin = {
       if (hz.pulseIn > 0) continue;
       hz.pulseIn += interval;
 
-      // Flying enemies are exempt from the zap, mirroring the mine branch's `!e.flying` filter in
-      // `_updateHazards` — a ground-planted tesla tower shouldn't reach something flying over it.
+      // #626 playtest follow-up (Jackson: "can tesla hit air units? because it SHOULD be able to").
+      // Flyers are NOT exempt here, deliberately unlike the mine branch's `!e.flying` filter in
+      // `_updateHazards`. That exemption is about a ground-planted BLAST, which has no business
+      // catching something flying over it — but an electric arc reaching UP off a tower is exactly
+      // the thing that should. This is the one hazard kind where the flying rule doesn't apply.
       const candidates = hz.owner === 'enemy'
         ? livePlayersOf(this)
-        : this.enemies.filter((e) => !e.mech.isDestroyed() && !e.flying);
+        : this.enemies.filter((e) => !e.mech.isDestroyed());
       const inRange = candidates.filter((c) => Math.hypot(c.x - hz.x, c.y - hz.y) < hz.radius);
       if (inRange.length === 0) continue;
 
