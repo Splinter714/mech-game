@@ -118,7 +118,14 @@ export const HALO_EDGE_W = 1.0;
 // with the existing hand-tuned entries' style (that formula was checked against Plasma Coater's
 // hand-picked purple and reproduces it within ~6/255).
 export const NEON = {
-  energy:    { halo: 0x1390c8, core: 0x38d9ff, hot: 0xe6fbff, edge: 0x7fe6ff },
+  // 2026-08-01 playtest (Jackson: "make laser mount color match the intensity of the blue that's
+  // actually on the laser weapon shot effects"). `energy` was the ONE category whose mount glow
+  // didn't match its own category colour: every other entry here has `core` exactly equal to
+  // CATEGORIES[id].color, but energy's core was a legacy 0x38d9ff — hue 191, saturation 0.78 —
+  // against a shot drawn in 0x0088ff at hue 208, saturation 1.00. Paler and 17° toward cyan, so
+  // the mount read washed out beside its own beam. Now regenerated with `neonRamp(0x0088ff)`,
+  // the same seeding every other category already uses, so mount and shot are the same blue.
+  energy:    { halo: 0x185e9a, core: 0x0088ff, hot: 0xe5f3ff, edge: 0x8fcbff },
   ballistic: { halo: 0xc8801a, core: 0xffb24a, hot: 0xffe6b0, edge: 0xffcf85 },
   missile:   { halo: 0xc81f72, core: 0xff4fa3, hot: 0xffd0e6, edge: 0xff8cc2 },
   support:   { halo: 0x1f9c54, core: 0x6dff9e, hot: 0xd6ffe6, edge: 0xa6ffc6 },
