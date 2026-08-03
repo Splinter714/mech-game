@@ -83,6 +83,18 @@
 //             wastes the charge. Damage scales linearly between `minDamageMult` (at `minTime`,
 //             default 1) and `maxDamageMult` (at `maxTime`, default 1). See scenes/arena/
 //             firing.js `_handleChargeFire`/`_releaseCharge`.
+//             `ammoCost` (#627, optional, default 0): magazine rounds spent UP FRONT the instant
+//             a hold begins, on top of the usual one round the released shot itself costs. Only
+//             Charge Beam sets it — Charge Lance leaves it unset and is unchanged.
+//   beam      { damage, fireRate, sfxId? } — #627: the THIRD charge state. A `chargeable` weapon
+//             that also declares this doesn't just sit at full charge — once `chargeable.maxTime`
+//             is reached and the trigger is STILL down, the slot spins up a sustained hitscan beam
+//             that ticks `damage` at `fireRate`/sec (one magazine round per tick) for as long as
+//             the hold lasts; the eventual release still fires the charged shot on top. Composing
+//             `chargeable` + `sustained` as data does NOT work (they are mutually exclusive code
+//             branches — see firing.js `_handleFiring`), which is why this is its own field with
+//             its own state machine (`_tickChargeBeam`). `sfxId` names the weapon whose held/loop
+//             voice the beam phase borrows (audio/sfxParams.js `HELD_WEAPONS`).
 //   kind      explicit projectile art: 'flame' | 'fire' | 'bullet' | 'rail' | …
 //
 // shared fields: damage (per shot/pellet), range {min, opt, max}, cycleTime
@@ -267,6 +279,54 @@ export const WEAPONS = {
     delivery: {
       hit: 'hitscan', pattern: 'single', kind: 'rail', pierce: true,
       chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5, maxSpreadDeg: 22 },
+    },
+  }),
+  chargeBeam: w({   // #627: Charge Lance's charge-up and Beam Laser's sustained beam in ONE gun.
+    // Jackson, 2026-08-01: "combining beam laser and charge laser into a single weapon type, but
+    // make it as a new one for now, don't get rid of those" — so this is a THIRD entry and neither
+    // parent's numbers are touched. Three phases off one trigger:
+    //   1. HOLD          — charges exactly like Charge Lance (same 0.4/1.6s curve, same cone
+    //                      telegraph narrowing to the middle, same drift-into-spread accuracy rule).
+    //   2. STILL HELD AT FULL — a sustained piercing beam spins up and ticks for as long as the
+    //                      trigger is down (`delivery.beam`, below).
+    //   3. RELEASE       — fires the lance at whatever charge was reached. ALWAYS, at any charge
+    //                      level (Jackson: "holding keeps beam going, but releasing then fires the
+    //                      lance shot") — so a release BELOW full charge is exactly Charge Lance's
+    //                      behaviour today, beam phase never entered.
+    //
+    // ONE SHARED AMMO POOL, and the interesting consequence is deliberate (do not smooth it away):
+    // the mag is beam-sized (120), a hold spends `chargeable.ammoCost` (24) up front, and the beam
+    // then drains 1 round per tick at 20/s. Charge + beam to the bottom = 24 + 96 = the whole
+    // magazine in ~4.8s of beam — and a mag drained to 0 auto-reloads, which means the gun is dry
+    // when the trigger finally comes up and NO LANCE FIRES. Beam longer, or stop short and keep the
+    // finisher: that trade is the weapon.
+    //
+    // Balance vs. its two parents (it must be an alternative, not a strict upgrade):
+    //   • vs. Charge Lance — lance base damage 24 vs. 30 (12 tapped / 60 at full, vs. 15 / 75), and
+    //     a charge costs 25 rounds of a 120 mag vs. 1 of 4, so pure tap-and-release gets ~4 shots
+    //     per mag either way but each one hits ~20% softer. You pay for the beam option up front.
+    //   • vs. Beam Laser — beam phase is 1.2 x 20/s = 24 dps vs. Beam Laser's 32, and it costs a
+    //     1.6s spin-up before a single tick lands. What you get back is `pierce` (the beam rakes
+    //     EVERY body in the line, where Beam Laser stops at the first) and the lance finisher.
+    // Every one of those is a starting number, tuned in play.
+    //
+    // `kind: 'rail'` + `pierce: true` are Charge Lance's lance identity, kept for BOTH phases —
+    // it's one emitter, so the beam rakes the line exactly as the lance does.
+    // Note for the stat sheet: weaponStats.js prices this off the lance alone (its per-pull model
+    // has no concept of a beam phase), so its listed ~22 sustained dps undercounts a beam-heavy
+    // hold. That also means enemy-loadout budgeting (data/enemyLoadout.js, medium pool via
+    // opt 460) sees the lance-only figure — correct as it happens, since an enemy never holds a
+    // trigger and fires this as a plain 24-damage hitscan lance on `cycleTime`.
+    id: 'chargeBeam', name: 'Charge Beam', category: 'energy',
+    damage: 24, range: { min: 0, opt: 460, max: 640 },
+    ammoMax: 120, cycleTime: 1600,
+    delivery: {
+      hit: 'hitscan', pattern: 'single', kind: 'rail', pierce: true,
+      chargeable: { minTime: 0.4, maxTime: 1.6, minDamageMult: 0.5, maxDamageMult: 2.5, maxSpreadDeg: 22, ammoCost: 24 },
+      // The beam phase borrows Beam Laser's held-loop voice rather than growing a second sound
+      // entry for one weapon id — `chargeBeam`'s own `fire` cue (audio/sfxParams.js) is the LANCE
+      // release, which needs to be a one-shot zap, not a hum.
+      beam: { damage: 1.2, fireRate: 20, sfxId: 'beamLaser' },
     },
   }),
   plasmaCannon: w({ // arcing energy bolt with splash; lobs over cover — now a saturating VOLLEY (#434)

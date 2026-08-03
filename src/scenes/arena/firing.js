@@ -60,7 +60,10 @@ export const FiringMixin = {
   _handleFiring(intent, delta, player = primaryPlayerOf(this)) {
     player.heldAudio ??= {};
     player.fireCooldowns ??= {};
-    player.chargeState ??= {};   // #493: per-slot { charging, elapsed } for chargeable weapons
+    // #493: per-slot charge state for chargeable weapons. #627 gave it a genuine THIRD state —
+    // { charging, elapsed, aimDrift, lastAim, beaming, beamCd } — so Charge Beam can go
+    // charging → beaming (full charge, trigger still down) → released. See `_handleChargeFire`.
+    player.chargeState ??= {};
     // Live-chat ask: a HUD tile should show when its weapon is actively firing. General on
     // purpose (unlike `heldAudio`, which is narrowed to held-SFX weapons only) — true whenever
     // the trigger is down and the weapon can actually fire, single-shot or continuous alike.
@@ -123,14 +126,35 @@ export const FiringMixin = {
   // While charging, this also tracks how much the AIM ANGLE drifted (see `_fireAngle`) — a
   // steady hold releases a tight, accurate shot; a hold where the reticle wandered releases a
   // wider, less accurate one (`_releaseCharge` turns the accumulated drift into `chargeSpread`).
+  // ── #627, the third state ── a `chargeable` weapon that ALSO declares `delivery.beam`
+  // (Charge Beam) doesn't just sit at the cap once full: `charging → beaming → released`. Reaching
+  // `chargeable.maxTime` with the trigger still down spins up a sustained hitscan beam that ticks
+  // on its own `beam.fireRate` cadence (`_tickChargeBeam`), and the release path below then fires
+  // the lance exactly as it always has. Charge Lance declares no `beam`, so every branch guarded on
+  // it is dead code for that weapon and its behaviour is byte-for-byte unchanged.
   _handleChargeFire(w, intent, delta, player, fireReady) {
     const dt = delta / 1000;
     const held = !!intent.fire[w.location];
-    const state = (player.chargeState[w.location] ??= { charging: false, elapsed: 0, aimDrift: 0, lastAim: null });
+    const state = (player.chargeState[w.location] ??= {
+      charging: false, elapsed: 0, aimDrift: 0, lastAim: null, beaming: false, beamCd: 0,
+    });
+    const charge = w.weapon.delivery.chargeable;
+    const beam = w.weapon.delivery.beam ?? null;
     if (held && fireReady) {
-      if (!state.charging) { state.charging = true; state.elapsed = 0; state.aimDrift = 0; state.lastAim = null; }
+      if (!state.charging) {
+        resetChargeState(state);
+        state.charging = true;
+        // #627 UP-FRONT CHARGE COST: a hold spends `chargeable.ammoCost` rounds the instant it
+        // begins, out of the same single pool the beam then drains. Charge Lance sets no
+        // `ammoCost`, so this is a no-op for it (its shot still costs the usual 1 in fireWeapon).
+        // Skipped under INFINITE FIRE, same as every other ammo spend.
+        const upFront = charge.ammoCost ?? 0;
+        if (upFront > 0 && !this._buffMods?.().freeAmmo) {
+          player.mech.consumeAmmo(w.location, w.index, upFront);
+        }
+      }
       player.firingNow[w.location] = true;   // charging reads as "firing" on the HUD tile too
-      state.elapsed = Math.min(w.weapon.delivery.chargeable.maxTime, state.elapsed + dt);
+      state.elapsed = Math.min(charge.maxTime, state.elapsed + dt);
       // Optional chaining: a few unit tests (chargeFire.test.js) drive this state machine against
       // a minimal fake scene with no muzzle/aim system at all, on purpose — they're scoped to the
       // charge timing, not real aim. A real ArenaScene always has both, so drift tracking is live
@@ -141,11 +165,21 @@ export const FiringMixin = {
         if (state.lastAim != null) state.aimDrift += Math.abs(wrapAngle(aim - state.lastAim));
         state.lastAim = aim;
       }
+      // Full charge reached and the trigger is STILL down: the beam phase.
+      if (beam && state.elapsed >= charge.maxTime) this._tickChargeBeam(w, player, state, beam, delta);
       return;
     }
     // Not held (a real release) or no longer fireReady (e.g. ammo ran out mid-charge) — resolve
     // whatever charge had accumulated, if any.
+    this._stopChargeBeam(w, player, state);
     player.firingNow[w.location] = false;
+    // #627 DRAINED DRY — the deliberate edge case, and the whole point of the shared pool: if the
+    // beam ate the magazine before the trigger came up there is nothing left to pay for the
+    // finisher, so NO lance fires. `fireReady` is already false here (a mag hitting 0 auto-starts
+    // the 2s reload, Mech.consumeAmmo), so the player gets the normal empty/reloading feedback plus
+    // the beam visibly cutting out. Scoped to beam weapons on purpose — a Charge Lance that runs
+    // dry mid-charge still looses its shot exactly as before.
+    if (beam && !fireReady && state.charging) { resetChargeState(state); return; }
     // Live-chat ask (2026-07-31): "remove the minimum charge [requirement] for firing." A release
     // below `chargeable.minTime` used to throw the charge away silently — the trigger pull did
     // nothing at all, which is the same dead-button problem the homing lock gate had. Now EVERY
@@ -177,10 +211,38 @@ export const FiringMixin = {
     const elapsedFrac = maxTime > 0 ? Math.max(0, Math.min(1, state.elapsed / maxTime)) : 1;
     const chargeConeDeg = chargeConeAngleDeg(elapsedFrac);
     this.fireWeapon(w, player, { chargeMult: mult, chargeSpread, chargeConeDeg });
-    state.charging = false;
-    state.elapsed = 0;
-    state.aimDrift = 0;
-    state.lastAim = null;
+    resetChargeState(state);
+  },
+
+  // ── #627 beam phase ── one damage tick per `beam.fireRate`, plus a per-render-frame re-pin of
+  // the drawn beam so it follows the turret between ticks (the same #86 problem the Beam Laser
+  // has, solved the same way — `_trackHeldBeam`). Each tick is an ordinary `fireWeapon` pull, so
+  // it spends one magazine round, books one shot for accuracy stats, breaks Cloak and honours
+  // cover/soft-cover exactly like any other shot. Two deviations, both passed as options:
+  // `damageOverride` (the beam's own small per-tick damage, not the lance's) and `cue: false` /
+  // `beamTick: true` (one continuous beam object and one continuous LOOP, instead of 20 one-shot
+  // zaps a second stuttering over each other).
+  _tickChargeBeam(w, player, state, beam, delta) {
+    if (!state.beaming) {
+      state.beaming = true;
+      state.beamCd = 0;
+      if (beam.sfxId) Audio.startHeld(chargeBeamAudioKey(player, w.location), beam.sfxId);
+    }
+    state.beamCd -= delta;
+    if (state.beamCd <= 0) {
+      state.beamCd = beam.fireRate > 0 ? 1000 / beam.fireRate : 100;
+      this.fireWeapon(w, player, { damageOverride: beam.damage, cue: false, beamTick: true });
+    }
+    this._trackHeldBeam(w, player);
+  },
+
+  // End the beam phase (trigger released, ran dry, went offline, or the player died). Safe to call
+  // when no beam is running — the common case, and every call for a non-beam charge weapon.
+  _stopChargeBeam(w, player, state) {
+    if (!state?.beaming) return;
+    state.beaming = false;
+    state.beamCd = 0;
+    if (w.weapon.delivery.beam?.sfxId) Audio.stopHeld(chargeBeamAudioKey(player, w.location));
   },
 
   // #493 playtest follow-up (2026-07-25) — Jackson: "the charge visual doesn't start super wide
@@ -195,6 +257,11 @@ export const FiringMixin = {
   _drawChargeFor(player) {
     for (const [location, state] of Object.entries(player.chargeState || {})) {
       if (!state.charging) continue;
+      // #627: once Charge Beam's beam is actually live, the telegraph has done its job — the real
+      // beam IS the visual from then on. Drawing both would stack an opaque full-charge core line
+      // over the beam's first 360px and read as two overlapping beams, and it would lose the
+      // "the cone collapsed into a beam" moment that sells the phase change.
+      if (state.beaming) continue;
       const w = player.mech.weapons().find((ww) => ww.location === location);
       if (!w || !w.weapon.delivery.chargeable) continue;
       const { maxTime } = w.weapon.delivery.chargeable;
@@ -228,7 +295,27 @@ export const FiringMixin = {
 
   _updateChargeVisuals() {
     this.chargeFx.clear();
-    for (const player of this.players) this._drawChargeFor(player);
+    for (const player of this.players) {
+      // #627: a player who dies mid-hold never runs `_handleFiring` again (ArenaScene.update skips
+      // dead players), so nothing would ever clear their charge state — the telegraph would keep
+      // drawing at the corpse's last muzzle and a Charge Beam loop would hum until the arena shut
+      // down. This runs scene-level every frame, dead players included, so it's the one place that
+      // can close both out.
+      if (player.dead) this._clearChargeState(player);
+      else this._drawChargeFor(player);
+    }
+  },
+
+  // Drop every live charge/beam on this player's slots (see `_updateChargeVisuals`).
+  _clearChargeState(player) {
+    for (const [location, state] of Object.entries(player.chargeState || {})) {
+      if (state.beaming) {
+        state.beaming = false;
+        state.beamCd = 0;
+        Audio.stopHeld(chargeBeamAudioKey(player, location));
+      }
+      if (state.charging) resetChargeState(state);
+    }
   },
 
   // ── Manual reload (#402) ── R3/F tops off ALL of this player's weapons at once (the auto-
@@ -349,9 +436,16 @@ export const FiringMixin = {
   // RELEASE (`_releaseCharge`) — threaded down to `_fireHitscan`'s beam so the burst visual
   // reflects how charged the shot actually was, not just its damage. 0 for every non-charging
   // trigger pull, and for a full-charge release (the cone has narrowed to a clean beam by then).
-  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0, chargeConeDeg = 0 } = {}) {
+  // #627 (Charge Beam's beam phase, `_tickChargeBeam`), three options that only that caller passes:
+  // `damageOverride` (absolute per-shot damage, replacing `chargeMult`'s relative scaling — the
+  // beam's small per-tick damage has nothing to do with the lance's), `cue: false` (this tick's
+  // sound comes from a held LOOP, so don't also schedule a one-shot zap 20x a second), and
+  // `beamTick: true` (treat the shot as CONTINUOUS — one persistent beam object re-pinned per tick
+  // — even though the weapon's own delivery is a single-shot lance, not a `sustained`/`stream` one).
+  fireWeapon(w, player = primaryPlayerOf(this), { chargeMult = 1, chargeSpread = 0, chargeConeDeg = 0, damageOverride = null, cue = true, beamTick = false } = {}) {
     if (!this.scene.isActive()) return;
-    if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
+    if (damageOverride != null) w = { ...w, weapon: { ...w.weapon, damage: damageOverride } };
+    else if (chargeMult !== 1) w = { ...w, weapon: { ...w.weapon, damage: w.weapon.damage * chargeMult } };
     // #77, rework #252, #341: a tracking (homing) weapon with no target USED to not fire at all —
     // the trigger pull was a silent no-op. Live-chat ask (2026-07-31) reversed that: "both locking
     // missile types should still be able to dumb-fire." So Swarm Rack and Streak Pod now fire
@@ -440,7 +534,9 @@ export const FiringMixin = {
     // `_fireHitscan`). When Barrage expires mid-hold the plan drops from n lanes back to 1, so
     // retire any beam whose lane no longer exists rather than leaving it hanging in place
     // (it would otherwise sit frozen at its last position until its ttl ran out).
-    if (plan.mode === 'hitscan' && this._isHeldBeam(w.weapon)) {
+    // #627: a Charge Beam beam tick keeps the same per-lane persistent beams, so it needs the same
+    // stale-lane retirement — `_isHeldBeam` is false for it (its delivery is a single-shot lance).
+    if (plan.mode === 'hitscan' && (beamTick || this._isHeldBeam(w.weapon))) {
       this._retireStaleBeamLanes(playerBeamKey(player), w.location, plan.shots.length);
     }
     // The fire + trajectory AUDIO cues (t=0 cue, per-burst-pulse retriggers, and the
@@ -448,7 +544,7 @@ export const FiringMixin = {
     // Lab preview calls too, so their timing can't drift; the arena always plays (audible:
     // true). Held/looping weapons (flamethrower/beam laser) get their sound from their loop
     // instead — scheduleFireCues no-ops for them, as it does for the delay:0-only case.
-    scheduleFireCues(this, w.weapon, plan, true);
+    if (cue) scheduleFireCues(this, w.weapon, plan, true);
     for (const [lane, s] of plan.shots.entries()) {
       const go = () => {
         if (!this.scene.isActive()) return;
@@ -474,7 +570,7 @@ export const FiringMixin = {
         // PER PARALLEL LANE — under Barrage the beam laser plans 2 lanes, and without this
         // both lanes shared a beam key so the second silently overwrote the first's endpoints
         // (two shots fired, one line drawn).
-        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player, pullId, burstConeDeg: chargeConeDeg });
+        else if (plan.mode === 'hitscan') this._fireHitscan(w, ox, oy, baseAngle, 'player', playerBeamKey(player), { lane, lateral: s.lateral, shooter: player, pullId, burstConeDeg: chargeConeDeg, continuous: beamTick });
         else {
           // Pass the weapon's un-offset aim angle (aimAngle) alongside this shot's actual
           // launch angle (baseAngle) — see _spawnProjectile's arcing maxDist comment for why
@@ -680,7 +776,12 @@ export const FiringMixin = {
         live.x0 = mx; live.y0 = my; live.x1 = mx; live.y1 = my;
         continue;
       }
-      const trace = traceHitscan(mx, my, angle, reach, this._liveTargetsForTrace('player', player));
+      // #627: mirror `_fireHitscan`'s own pierce branch — a PIERCING held beam (Charge Beam) rests
+      // at its raw reach rather than stopping at the nearest body, so the drawn line doesn't snap
+      // short onto the first enemy between damage ticks while the damage rakes straight through it.
+      const trace = w.weapon.delivery.pierce
+        ? { endDist: Math.min(reach, 600) }
+        : traceHitscan(mx, my, angle, reach, this._liveTargetsForTrace('player', player));
       let endDist = trace.endDist;
       // #338: a HELD beam is re-pinned every render frame independently of the fire cadence, so it
       // needs the same cover-exemption branch the fire tick takes — otherwise the damage lands on
@@ -728,7 +829,11 @@ export const FiringMixin = {
   // width — stamped onto the beam so the draw loop (projectiles.js `_updateBeams`) can burst it
   // as a wide, faded wedge instead of a clean beam. 0 for every non-charging weapon/shot, so
   // their beams render exactly as before.
-  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null, spawnerKind = null, burstConeDeg = 0 } = {}) {
+  // `continuous` (#627, optional): force the ONE-persistent-beam-object treatment for a shot whose
+  // weapon isn't `sustained`/`stream` in its own data — Charge Beam's beam phase, which is a
+  // single-shot lance entry ticked as a held beam by `_tickChargeBeam`. Every other caller leaves
+  // it false and the flag is derived from the weapon's delivery exactly as before.
+  _fireHitscan(w, muzzleX, muzzleY, angle, owner = 'player', shooterKey = 'player', { lane = 0, lateral = 0, ignoreSpanKey = null, shooter = null, pullId = null, statKind = null, statShotId = null, spawnerKind = null, burstConeDeg = 0, continuous: forceContinuous = false } = {}) {
     const dirX = Math.cos(angle), dirY = Math.sin(angle);
     const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
     const reach = w.weapon.delivery.hit === 'contact' ? (w.weapon.range.max || 32) : 900;
@@ -826,7 +931,7 @@ export const FiringMixin = {
     // tracks the mech as it turns/moves; single-shot beams (pulse/rail) push a fresh one.
     const beamTtl = w.weapon.delivery.burst?.wubOn ?? 80;
     const heavy = w.weapon.delivery.kind === 'rail';
-    const continuous = w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
+    const continuous = forceContinuous || w.weapon.delivery.sustained || w.weapon.delivery.pattern === 'stream';
     const beamKey = `${shooterKey}:${w.location}:${lane}`;
     const live = continuous ? this.beams.find((b) => b.loc === beamKey) : null;
     if (live) {
@@ -1101,6 +1206,25 @@ export const FiringMixin = {
 // Player 1 keeps the bare `player` key it has always had, so nothing about single-player beam
 // behaviour (or the #86/#307 coverage of it) shifts; only later players get a suffix.
 function playerBeamKey(player) { return player?.id ? `player${player.id}` : 'player'; }
+
+// #627: the held-audio key for ONE player's Charge Beam beam phase. Deliberately suffixed so it
+// can never collide with `_handleFiring`'s own `${player.id}:${location}` held-loop key — a
+// chargeable weapon takes the `_handleChargeFire` path and never touches that map, but the two
+// keyspaces share one `Audio._heldSounds` registry, so keeping them disjoint is free insurance.
+function chargeBeamAudioKey(player, location) { return `${player?.id ?? 0}:${location}:chargeBeam`; }
+
+// #627: reset one slot's charge state to "nothing held". Shared by the release path, the
+// rising-edge (re)start, the drained-dry drop and the dead-player cleanup so all four agree on
+// what a cleared slot looks like — `beaming`/`beamCd` are new fields those callers must not miss.
+// The beam LOOP is stopped separately (`_stopChargeBeam`), since only the scene can reach Audio.
+function resetChargeState(state) {
+  state.charging = false;
+  state.elapsed = 0;
+  state.aimDrift = 0;
+  state.lastAim = null;
+  state.beaming = false;
+  state.beamCd = 0;
+}
 
 // #347: the player a hitscan trace actually struck. `traceHitscan` hands back the candidate it
 // hit, whose `ref` is the player object itself (see `_liveTargetsForTrace`). Falls back to the

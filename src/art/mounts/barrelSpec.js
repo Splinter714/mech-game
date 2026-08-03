@@ -42,6 +42,11 @@ export const BARREL_SPECS = {
   // mismatch bug #233 exists to prevent.
   beamLaser:     { len: 15,  frac: 1 },
   railLance:     { len: 15,  frac: 1 },
+  // #627 Charge Beam — its own bespoke projecting mount (weapons.js `chargeBeam`), which sizes all
+  // of its geometry off `barrelLen('chargeBeam', ...)`, i.e. this entry. Its foremost lit feature is
+  // the lens glowDot at `frontY - L`, so `frac: 1` like every other projecting energy barrel. `len`
+  // is deliberately a touch under Rail Lance's 15 so the two long energy rods aren't identical.
+  chargeBeam:    { len: 14,  frac: 1 },
   plasmaCannon:  { len: 8,   frac: 1 },
   // 2026-07-31: the first mount to go flush (see weapons.js's plasmaCoater header for the full
   // round-by-round history), so it was also the first to need a NEGATIVE frac -- the front
