@@ -267,6 +267,14 @@ export default class ArenaScene extends Phaser.Scene {
     this.fx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);        // instant beams / muzzle flash / slash (timed clear)
     this.beamFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);   // persistent beams + dying sparks (redrawn each frame)
     this.projFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX);    // travelling projectiles (redrawn each frame)
+    // 2026-08-02 (Jackson: "z order of missile projectiles should be ABOVE the mech"). A second
+    // projectile layer at the long-reserved PROJECTILES tier, for the kinds in
+    // `HIGH_PROJECTILE_KINDS` (art/projectiles/index.js). Missiles loft OVER things, so passing
+    // behind a mech reads as a bug; every other kind stays at WEAPON_FX, below the units, which is
+    // what stops a shot painting over the mount that fired it (#587). Their GROUND SHADOW is
+    // deliberately left on the low layer — a shadow drawn above the mech it's passing over would
+    // be worse than the original problem.
+    this.projFxHigh = this.add.graphics().setDepth(DEPTH.PROJECTILES);
     this.chargeFx = this.add.graphics().setDepth(DEPTH.WEAPON_FX); // #493: charge-up telegraph (redrawn each frame)
     this.projectiles = [];
     this.beams = [];

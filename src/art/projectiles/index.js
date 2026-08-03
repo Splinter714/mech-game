@@ -24,6 +24,14 @@ export const PROJECTILE_ART = { plasma, missile, flame, fire, bullet, slug, shad
 // tuned away from 1 so far; the other six are unlisted and default to 1, unchanged.
 const KIND_SCALE = { missile: 0.8 };
 
+// 2026-08-02 (Jackson: "z order of missile projectiles should be ABOVE the mech"). Kinds whose
+// BODY draws on the arena's high projectile layer (DEPTH.PROJECTILES, above every ground unit)
+// instead of the default WEAPON_FX layer just below them. Missiles loft OVER things, so watching
+// one slide behind a mech reads as a bug; every other kind stays low, which is what keeps a shot
+// from painting over the mount that fired it (#587). Lives here, next to KIND_SCALE, so all the
+// per-kind presentation data is one place — the arena just asks.
+export const HIGH_PROJECTILE_KINDS = new Set(['missile']);
+
 // A travelling round's body, drawn at (x, y) heading along `angle`. `phase` drives the
 // flame flicker (the arena passes the round's distance; icons pass 0). Computes the heading
 // vector once and dispatches to the registered kind (default `slug`).

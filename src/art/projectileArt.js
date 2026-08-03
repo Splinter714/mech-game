@@ -21,6 +21,7 @@ import { drawAbilityIcon } from './abilityIcons.js';
 // art/index.js) keep importing it from here. Add a round kind = a new file there.
 export { projectileKind };
 export { drawProjectileBody };
+export { HIGH_PROJECTILE_KINDS } from './projectiles/index.js';
 
 // The splatter/inner spark flecks below (shared by every hitscan beam — pulse/beam/rail
 // laser all draw through this one drawBeam) — the glow/core/warble above are unaffected
