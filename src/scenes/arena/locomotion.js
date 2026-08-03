@@ -7,7 +7,7 @@ import { mechLayout, ART_SCALE, PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { isWeapon } from '../../data/items.js';
 import { getWeapon } from '../../data/weapons.js';
 import { Audio } from '../../audio/index.js';
-import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, aimAngleOffset, applyMovementToggle, approach, mechMuzzleTipOffset, partMuzzle, resolveMovement, rotateToward, unitDepth } from './shared.js';
+import { ARENA_MECH_SCALE, DEPTH, PLAYER_WALL_COLLIDE_RADIUS, applyMovementToggle, approach, mechMuzzleTipOffset, partMuzzle, resolveMovement, rotateToward, unitDepth } from './shared.js';
 import { PART_PIVOT, PIVOT_LOCATIONS } from '../../art/mechArt.js';
 import { makeMechParts, poseMechParts } from '../../art/mechView.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
@@ -86,28 +86,6 @@ const TILT_SMOOTH_K = 12;
 // regardless of INSTANT_VELOCITY — the old ramped-accel path was just less likely to reach
 // tunneling-capable speeds, not immune to the underlying gap.
 const COLLISION_SUBSTEP_PX = HEX_SIZE / 6;
-
-// #620: a small gamepad-only aim-assist pull toward whatever `pickConvergeTarget` already
-// picked this frame (`player.convergeTarget` — the same nearest-in-cone target that drives the
-// reticle, indirect-fire homing, and muzzle convergence). Blended into the turret-slew's `aim`
-// input BEFORE the existing slew is applied, so it composes with `mv.turretSlew` naturally
-// ("pulls where you're already turning") rather than snapping. Mouse/keyboard is untouched — see
-// the `intent.mode === 'pad'` gate below. Starting number, tuned live like every other feel dial
-// in this file (0-1 fraction of the angular gap closed per frame toward the target bearing).
-//
-// 2026-08-02 (Jackson: "how can we increase the intensity of aim assist so I can see it more
-// egregiously?") — 0.15 -> 0.6. Worth writing down WHY 0.15 was nearly invisible, because the
-// ceiling isn't obvious from this constant alone: the pull only exists while `pickConvergeTarget`
-// has a target, and that requires the target inside `TARGET_CONE` (shared.js) — a 20° HALF-ANGLE.
-// So the angular gap this fraction acts on is 20° at the absolute most, and 0.15 of it capped the
-// whole effect at a 3° nudge. Multiply by the cone to read this dial honestly:
-//   0.15 -> up to 3°   (the old value: real, but under the noise floor of a moving fight)
-//   0.60 -> up to 12°  (current: unmistakable, still clearly an assist and not a lock)
-//   1.00 -> up to 20°  (full soft-lock: aim snaps onto any target inside the cone)
-// Note it does NOT compound across frames — `aim` is rebuilt from raw stick input every frame, so
-// this is a steady fraction of the live gap, not an accumulating pull. `rotateToward` below still
-// rate-limits the actual turret motion to the chassis's own `turretSlew` at any value here.
-const AIM_ASSIST_STRENGTH = 0.6;
 
 export const LocomotionMixin = {
   // A mech = hull (legs) + shoulders + arms + turret-body stacked in a container so they can
@@ -373,26 +351,30 @@ export const LocomotionMixin = {
       p.aimX = p.x + Math.cos(intent.aim.angle) * 800;
       p.aimY = p.y + Math.sin(intent.aim.angle) * 800;
     }
-    let aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
-    // #620: gamepad-only aim-assist pull toward the already-picked convergence target, applied
-    // to `aim` BEFORE the slew below so it composes with the chassis' own turretSlew rate rather
-    // than snapping. `aimAngleOffset` (shared.js) gives the wrap-safe (±π) signed angular gap from
-    // `aim` to the target's bearing — reused here rather than a raw numeric lerp on the two
-    // angles, which breaks near the ±π seam. Deliberately no distance/angle falloff: one flat
-    // constant, the same "starting number, tune live" convention as every other feel dial.
-    // #629: one more condition on the same block — the player-facing ON/OFF preference (pause-menu
-    // row + the arena's D-pad UP bind). Read LIVE off the registry every frame, never cached at
-    // scene start, so flipping it mid-fight is felt on the very next frame without a restart —
-    // that's the whole point of the toggle. `!== false` because it defaults ON (#620's behaviour).
-    if (intent.mode === 'pad' && p.convergeTarget && this.registry.get('aimAssist') !== false) {
-      const offset = aimAngleOffset(p.x, p.y, aim, p.convergeTarget.x, p.convergeTarget.y);
-      aim = Phaser.Math.Angle.Wrap(aim + offset * AIM_ASSIST_STRENGTH);
-    }
+    const aim = Math.atan2(p.aimY - p.y, p.aimX - p.x);
+    // 2026-08-02 (Jackson: "aim assist feels like it is turning the whole turret instead of
+    // pivoting arms/shoulders only"). It was — #620 blended the assist into `aim` right here,
+    // one line above the slew, so it moved the TURRET and the limbs only followed because they
+    // hang off it. The whole block moved down a layer into `_fireAngle` (targeting.js), which is
+    // where the arms and shoulders already get their independent pivot: the turret now tracks
+    // raw stick input exactly, and the assist shows up purely as limb toe-in toward the target.
+    // Nothing about the toggle or the pad-only gate changed, just where the offset is applied.
+    //
+    // Side effect worth knowing, and an improvement: `pickConvergeTarget` is scored against
+    // `turretAngle`, so the old placement fed the assist back into its own target selection a
+    // frame later (assist nudges turret -> cone moves -> target may change -> assist changes).
+    // The cone is now centred on raw aim, so target picking is independent of the assist.
+    //
     // #189: turret slew no longer has a buff multiplier — Overclock's old slewMult was
     // removed along with moveMult when it was redesigned to force-activate Sprint instead.
     p.turretAngle = p.legacyMovement
       ? aim
       : rotateToward(p.turretAngle, aim, mv.turretSlew, dt);
+    // The assist is gamepad-only, and `_fireAngle` runs outside the input path, so the mode has
+    // to be readable off the player. Stored per player (not the shared `inputMode` registry key
+    // below, which is the LOCAL player's HUD hint only) — in co-op player 2 is gamepad-only by
+    // construction while player 1 may be on mouse, and they need different answers.
+    p.inputMode = intent.mode;
     // #348: the HUD's input-mode hint belongs to the LOCAL player's device.
     if (p === primaryPlayerOf(this)) this.registry.set('inputMode', intent.mode);
   },
