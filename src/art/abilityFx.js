@@ -42,6 +42,47 @@ export function interceptRings() {
 // that makes an intercept read as *the mech doing something* rather than a spark in open air.
 export const INTERCEPT_BOLT_COLOR = 0xbdf3ff;
 
+// #621/#628: EMP Trap's own electric blue — the colour `plantEmpTraps` (scenes/arena/abilities.js)
+// casts in and the colour every planted trap node pulses in (`_drawHazard`, projectiles.js).
+export const EMP_TRAP_COLOR = 0x33ccff;
+
+// #628: the CAST beat of EMP Trap, as a ring spec the catalog card can replay.
+//
+// Unlike the two specs above, the arena does NOT read this one — `plantEmpTraps` plays its cast
+// flash through `_impactFx(x, y, EMP_TRAP_COLOR, 'plasma', 10, 'empTrap')`, i.e. the generic
+// per-weapon impact renderer, and that path is deliberately left exactly as it is (Jackson's
+// reading on this ability was that the ARENA looks better, so nothing about the arena moved). What
+// this is, is that burst written out in the same {r0,r1,...} vocabulary so the card can show the
+// real thing rather than an impression of it: the numbers below are precisely what `_impactFx`
+// emits for a 'plasma'-kind hit with `splash` 10 — its unconditional white core flash, then the
+// splatter blob and its ring at `Math.max(10, splash)`. If that branch is ever retuned, this is
+// the copy that has to follow it.
+export function empCastRings(color = EMP_TRAP_COLOR) {
+  const r = 10;   // `_impactFx`'s Math.max(10, splash) for plantEmpTraps' own splash of 10
+  return [
+    { r0: 3, r1: 9, color: 0xffffff, alpha: 0.9, dur: 120, stroke: false },
+    { r0: r * 0.28, r1: r * 1.05, color, alpha: 0.6, dur: 240, stroke: false },
+    { r0: r * 0.2, r1: r * 0.85, color, alpha: 0.9, dur: 220, stroke: true },
+  ];
+}
+
+// #628: one planted mine/trap's live "armed warning light" — a pulsing ring around a bright core.
+// Factored out of `_drawHazard`'s mine branch (scenes/arena/projectiles.js) so the garage card's
+// EMP Trap preview draws the ACTUAL node visual instead of a lookalike, on the same terms as every
+// other spec in this file. The arena passes `scale` 1 and gets byte-identical output to what it
+// drew before; the card passes a smaller scale for the parts that are absolute rather than
+// radius-derived (stroke width, the pulse wobble, the core dot), because at card scale those would
+// otherwise swamp the node they decorate. `radius` is the caller's already-scaled hazard radius,
+// and `alpha` is an overall multiplier (the card fades its whole loop in and out; the arena's node
+// simply lives at full opacity until the hazard expires). The stroke width is floored at 1px the
+// same way `drawFxRings` floors its own, so a scaled-down node still has a visible outline.
+export function drawMineNode(g, x, y, radius, color, nowMs, scale = 1, alpha = 1) {
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 160);
+  g.lineStyle(Math.max(1, 2 * scale), color, (0.3 + pulse * 0.5) * alpha)
+    .strokeCircle(x, y, radius * 0.28 + pulse * 2 * scale);
+  g.fillStyle(color, 0.85 * alpha).fillCircle(x, y, Math.max(1.2, 3.5 * scale));
+}
+
 // How long a ring set takes to finish, in ms — the card preview uses this to hold a phase open
 // long enough for the blast to actually play out (Shield Burst's own `duration` is 0.15s, well
 // under its 320ms afterglow).

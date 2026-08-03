@@ -141,6 +141,10 @@ export default class ArenaScene extends Phaser.Scene {
     this._impactRR = 0;
     this._impactSoundAt = {};
     this._lastBurst = null;
+    // #628: the queued intercept zap bolts (combat.js `_interceptFx`) — plain data, not game
+    // objects, so a leftover can't throw the way a stale pooled circle can; cleared with the pools
+    // above purely so a fresh sortie can't open with a bolt drawn from the previous one's timeline.
+    this._interceptBolts = [];
     // #100/#190: the death-explosion debris pool (combat.js `_acquireDebrisChunk`) is the same
     // kind of lazily-created, capped/recycled pool as `_impactPool` above, but was missed when
     // that reset block was written — it stayed lazily-initialized via `??=` only, so ArenaScene
@@ -442,6 +446,12 @@ export default class ArenaScene extends Phaser.Scene {
     // ── Projectiles + burning ground ──
     this._updateProjectiles(dt);
     this._drawStatusEffects(delta);       // #489/2026-07-31: purple plasma-coating outline, after this frame's ticks
+    // #628: world-space FX for abilities that are currently ON (Anti-Missile's defended envelope,
+    // and its intercept zap bolts). Must be HERE, not in the ability tick up in the drive loop —
+    // that runs before `_updateProjectiles`, which clears `projFx` as its first act, so anything
+    // drawn there is wiped the same frame (which is exactly what had been silently happening to the
+    // zap bolt since #527). See combat.js `_drawAbilityFx`.
+    this._drawAbilityFx();
     // #525: `_updateFirePatches` clears+redraws `groundFx` (the low ground-decal layer) once per
     // frame; `_updateHazards` now draws planted mines/pull fields into that SAME layer (below every
     // unit — see DEPTH.GROUND_FX), so it must run AFTER the clear or its drawing would be wiped the

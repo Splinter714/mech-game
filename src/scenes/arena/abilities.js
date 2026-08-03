@@ -11,6 +11,8 @@ import { damageInRadius } from '../../data/aoe.js';
 import { nearestInterceptTarget } from '../../data/interceptor.js';
 import { otherLivePlayers } from './players.js';
 import { desaturateTexture, PIVOT_LOCATIONS } from '../../art/mechArt.js';
+// #628: the trap's electric blue, shared with the node visual (`_drawHazard`) and the garage card.
+import { EMP_TRAP_COLOR } from '../../art/abilityFx.js';
 import { Audio } from '../../audio/index.js';
 
 // The six mech part-sprite names on a mech view (locomotion.js `_makeMechView`) — mirrors
@@ -163,13 +165,13 @@ function plantEmpTraps(scene, player, def) {
     const y = player.y + Math.sin(angle) * dist;
     scene.hazards.push({
       x, y, owner: 'player', shooter: player, caster: player, kind: 'mine',
-      radius: hazardRadius, color: 0x33ccff, weaponId: 'empTrap',
+      radius: hazardRadius, color: EMP_TRAP_COLOR, weaponId: 'empTrap',
       armIn: armDelay, life, damage: 0,
       visualRadius: hazardRadius, force: null,
       disable: { duration: disableDuration },
     });
   }
-  scene._impactFx?.(player.x, player.y, 0x33ccff, 'plasma', 10, 'empTrap');
+  scene._impactFx?.(player.x, player.y, EMP_TRAP_COLOR, 'plasma', 10, 'empTrap');
 }
 
 // Advance every ability slot this player has something mounted in: trigger on a fresh press
@@ -346,6 +348,19 @@ export function hasActiveEffect(player, name) {
     if (def?.effect === name && player.abilityStates[slot]?.active) return true;
   }
   return false;
+}
+
+// #628: the `range` of a player's currently-active ability matching `name`, or 0 if none is active
+// — the same shape as `activeSpeedMult` below, for the spatial field instead of the speed one.
+// Anti-Missile's own defended envelope is the only caller today (combat.js `_drawAbilityFx` draws
+// it in world space, exactly as the garage card draws it on a card).
+export function activeEffectRange(player, name) {
+  for (const slot of ABILITY_SLOTS) {
+    const abilityId = player.mech?.abilityMounts?.[slot];
+    const def = abilityId && getAbility(abilityId);
+    if (def?.effect === name && player.abilityStates?.[slot]?.active) return def.range ?? 0;
+  }
+  return 0;
 }
 
 // The active speed multiplier from a player's mounted abilities matching `name`, or 1 if none is
