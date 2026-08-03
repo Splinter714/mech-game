@@ -268,7 +268,13 @@ export const FiringMixin = {
       const frac = maxTime > 0 ? Math.max(0, Math.min(1, state.elapsed / maxTime)) : 1;
       const m = this._muzzle(location, player);
       const angle = this._fireAngle(w, m, player);
-      const reach = 40 + (w.weapon.range.max || 400) * 0.5 * frac;
+      // 2026-08-01 playtest (Jackson: "the release range and visual charge range for charge beam
+      // should be the same"). This used to be `40 + range.max * 0.5 * frac` — HALF the weapon's
+      // real reach, so a fully-charged Charge Beam telegraphed 360px and then fired 640px. The
+      // telegraph now runs to the same `range.max` the hitscan trace actually uses (see
+      // `_fireHitscan`'s own `reach`), so what you aim is what you get. Applies to every chargeable
+      // weapon, Charge Lance included — same shared telegraph, same bug, same fix.
+      const reach = 40 + ((w.weapon.range.max || 400) - 40) * frac;
       const color = CATEGORIES[w.weapon.category]?.color ?? 0x9fe8ff;
       const g = this.chargeFx;
 

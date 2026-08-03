@@ -27,6 +27,12 @@ export { drawProjectileBody };
 // either way. Flip to false to disable if they ever read as too noisy again.
 const SPARKS_ENABLED = true;
 
+// Where a beam (and, since 2026-08-01, the charge wedge's sides) starts cosine-narrowing toward
+// its far end — 0.85 = the last 15% of its length. ONE constant shared by the wedge sides and the
+// beam's glow+core so the two soften identically; they are meant to read as the same material,
+// and three copies of 0.85 is exactly how they would drift apart.
+const TAPER_START = 0.85;
+
 // #493 follow-up: the charge-lance telegraph's cone/wedge — a rounded far edge (the circular
 // arc from `chargeArcPoints`, not the original straight chord between the two corner points)
 // filled in a handful of concentric bands whose alpha fades with distance from the apex
@@ -131,19 +137,33 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
     g.lineBetween(x + cR * r0 + qRx * w0, y + sR * r0 + qRy * w0,
                   x + cR * r1 + qRx * w1, y + sR * r1 + qRy * w1);
   };
+  // 2026-08-01 playtest (Jackson: "see how the release lines for charge beam (or beam laser)
+  // manage to soften the end of the line in a smooth way? do that for charge beam while it's
+  // charging also"). What he's admiring is `drawBeam`'s END TAPER — it holds full width, then
+  // cosine-narrows to nothing across the last 15%, so the beam comes to a soft point instead of
+  // stopping. The wedge had no equivalent: it faded ALPHA linearly over its whole length at a
+  // constant 1.5px width, which dims out rather than tapering off. Same `TAPER_START` and same
+  // cosine as the beam core (drawBeam below), deliberately not a second curve of its own.
+  //
+  // Both softenings now apply: alpha still falls with distance (his #493 ask — "less opaque
+  // further away... fades to transparent at the far edge") AND the stroke narrows to a point at
+  // the tip. The apex end is untouched, so the line still starts crisp at the muzzle.
   for (let i = 0; i < sideSegs; i++) {
     const t0 = i / sideSegs, t1 = (i + 1) / sideSegs;
+    const tc = (t0 + t1) / 2;
     const r0 = reach * t0, r1 = reach * t1;
     const dfade = chargeDistanceFade((i + 0.5) / sideSegs);
     const segAlpha = Math.min(1, alpha * dfade * 1.3);
-    if (segAlpha <= 0.004) continue;
+    const taper = tc < TAPER_START ? 1 : Math.cos(((tc - TAPER_START) / (1 - TAPER_START)) * Math.PI / 2);
+    const w = sideW * taper;
+    if (segAlpha <= 0.004 || w <= 0.02) continue;
     let w0 = 0, w1 = 0;
     if (warble) {
-      const warp = Math.sin(warble.phase * 0.04 + ((t0 + t1) / 2) * Math.PI * 3) * 1.3 * (warble.s ?? 1);
+      const warp = Math.sin(warble.phase * 0.04 + tc * Math.PI * 3) * 1.3 * (warble.s ?? 1);
       w0 = t0 === 0 ? 0 : warp;   // pinned at the apex and the tip, exactly like the beam core
       w1 = t1 === 1 ? 0 : warp;
     }
-    g.lineStyle(sideW, color, segAlpha); strokeSides(r0, r1, w0, w1);
+    g.lineStyle(w, color, segAlpha); strokeSides(r0, r1, w0, w1);
   }
 
   // The rounded far edge itself — the curved silhouette boundary, drawn as one continuous
@@ -212,7 +232,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
   for (let i = 0; i < SEGS; i++) {
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
-    const taperStart = 0.85;
+    const taperStart = TAPER_START;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
     const warp0 = t0 === 0 ? 0 : warpRaw;
@@ -228,7 +248,7 @@ export function drawBeam(g, x0, y0, x1, y1, color, s = 1, heavy = false, phase =
     const t0 = i / SEGS, t1 = (i + 1) / SEGS;
     const tc = (t0 + t1) / 2;
     // Taper: full at muzzle, tapers only toward the far end.
-    const taperStart = 0.85;
+    const taperStart = TAPER_START;
     const taper = tc < taperStart ? 1.0 : Math.cos(((tc - taperStart) / (1 - taperStart)) * Math.PI / 2);
     // Warp also multiplied by taper so the beam connects cleanly to muzzle and endpoint.
     const warpRaw = Math.sin(phase * 0.04 + tc * Math.PI * 3) * 1.3 * s;
