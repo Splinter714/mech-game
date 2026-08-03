@@ -139,6 +139,99 @@ function _unstickLateConnectingPads(scene) {
   scene.input.gamepad?.on?.('connected', (pad) => { pad._created = 0; });
 }
 
+// ── #604 (failed playtest): Phaser's cached pad state can NEVER say "this pad went away" ─────
+// The owner's report, verbatim: "I turned off the second controller and the AI never took over."
+// The co-op takeover latch (scenes/arena/coop.js `_updateCoopLeave`) waits for `pad()` to start returning
+// null — and it never does. This is not a browser quirk, it is Phaser 3's GamepadPlugin, and it
+// is unconditional (read `node_modules/phaser/src/input/gamepad/`):
+//
+//   • `refreshPads()` only ADDS and UPDATES. It walks `navigator.getGamepads()`, skips the null
+//     slots with a bare `continue`, and has no removal path at all — nothing is ever spliced out
+//     of `this.gamepads` and no wrapper is ever marked disconnected. So `plugin.total` (which is
+//     just `this.gamepads.length`) never drops, and `getPad(index)` keeps finding the wrapper.
+//   • `Gamepad.connected` is a getter returning `this.pad.connected`, where `this.pad` is the
+//     NATIVE gamepad object captured at construction. `Gamepad.update(livePad)` copies button and
+//     axis values across but never reassigns `this.pad` — so that snapshot's `connected` is frozen
+//     at `true` for the lifetime of the wrapper.
+//   • The one place that ever writes `connected = false` is `disconnectAll()`, reached only when
+//     `navigator.getGamepads()` returns something falsy ENTIRELY — not when one pad drops out.
+//
+// So the old `gp.total > padIndex && getPad(padIndex).connected` test is true forever once a pad
+// has been seen, in every browser. The fix is to stop asking Phaser and track liveness ourselves,
+// from two independent signals — deliberately belt-and-braces, because they fail in different
+// places (the DOM event can be missed; live enumeration can lie while the page is unfocused):
+//
+//   1. The browser's own `gamepaddisconnected` / `gamepadconnected` DOM events. Authoritative,
+//      zero per-frame cost, and they DO fire for a wireless pad powering off — which is the exact
+//      thing that was done. Listened for on `window` directly rather than through the plugin's
+//      re-emitted 'disconnected': the plugin drops the event entirely when its scene isn't active
+//      (`startListeners`' handler bails on `!isActive()`), which would silently lose the
+//      disconnect if the pause menu happened to be up at that moment.
+//   2. A throttled look at the live `navigator.getGamepads()` array, as the fallback for a browser
+//      that doesn't fire the event on power-off (Safari has historically not).
+//
+// Both are keyed by the physical gamepad INDEX, which is also this game's player identity
+// (coop.js `_padClaimed`). Known limitation, unchanged by this fix: if a pad comes back at a
+// DIFFERENT index than it left, it reads as a different controller and its player stays on AI.
+const _padGone = new Set();
+let _padWatchInstalled = false;
+
+function _watchPadLiveness() {
+  if (_padWatchInstalled) return;
+  if (typeof window === 'undefined' || !window.addEventListener) return;   // Node/tooling import
+  _padWatchInstalled = true;
+  // A pad powering off / unplugging. The event carries the native gamepad, so we learn WHICH.
+  window.addEventListener('gamepaddisconnected', (e) => {
+    if (e?.gamepad) _padGone.add(e.gamepad.index);
+  });
+  // Coming back is the symmetric signal, and it's what makes `_updateCoopReconnect` work: the
+  // browser withholds this until it sees real input on the pad, so it fires the moment the owner
+  // actually picks the controller back up — exactly the "yanks control back instantly" beat.
+  window.addEventListener('gamepadconnected', (e) => {
+    if (e?.gamepad) _padGone.delete(e.gamepad.index);
+  });
+}
+
+// Fallback signal (2), throttled: re-reading `navigator.getGamepads()` allocates a fresh snapshot
+// array on every call and `padOf` runs several times per frame across players, so cache it.
+const LIVE_PAD_POLL_MS = 120;
+let _livePadsAt = -Infinity;
+let _livePads = null;
+
+// Deliberately TRI-state. "Unknown" is a real answer and must not collapse into either of the
+// others: while the document is unfocused the live array tells us nothing, and reading its silence
+// as "gone" would hand every player to the AI on an alt-tab.
+function _livePadState(index) {
+  if (typeof navigator === 'undefined' || !navigator.getGamepads) return 'unknown';
+  // Chrome stops reporting live pads while the document is unfocused, and Phaser's loop keeps
+  // running through an alt-tab. Unfocused contributes no opinion; DOM signal (1) still does.
+  if (typeof document !== 'undefined' && document.hasFocus && !document.hasFocus()) return 'unknown';
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (now - _livePadsAt >= LIVE_PAD_POLL_MS) {
+    _livePadsAt = now;
+    _livePads = navigator.getGamepads();
+  }
+  const p = _livePads?.[index];
+  return p && p.connected !== false ? 'live' : 'gone';
+}
+
+// THE one "give me this player's pad, or null if it is gone" lookup, shared by PadEdges and
+// Controls so a disconnected controller can't produce fire intent OR a phantom START press.
+function padOf(scene, padIndex) {
+  const live = _livePadState(padIndex);
+  // The fallback has to be symmetric or it is worse than nothing: `_padGone` is sticky, so if a
+  // browser fired `gamepaddisconnected` but then failed to fire the matching `gamepadconnected`,
+  // that player would be stranded on the AI forever with no way back. A pad the browser is
+  // actively enumerating again is back, whatever events did or didn't arrive. Safe against the
+  // enumeration quirk that #122/#524 fight: a powered-on-but-untouched pad is absent from
+  // `getGamepads()`, so 'live' only ever means genuinely, freshly readable.
+  if (live === 'live') _padGone.delete(padIndex);
+  else if (live === 'gone' || _padGone.has(padIndex)) return null;
+  const gp = scene.input.gamepad;
+  const p = gp && gp.total > padIndex ? gp.getPad(padIndex) : null;
+  return p && p.connected ? p : null;
+}
+
 // Rising-edge detector for gamepad buttons — call a `pressed(i)` per frame and it returns
 // true only on the frame the button goes down. Used for one-shot actions (toggles, scene
 // transitions) where the held-flag fire intent isn't appropriate. One instance per scene
@@ -155,6 +248,7 @@ export class PadEdges {
     // read as all-zero until its next genuinely new native state-change timestamp.
     for (const pad of scene.input.gamepad?.getAll?.() ?? []) pad._created = 0;
     _unstickLateConnectingPads(scene);   // #524: also catch a pad that connects mid-scene
+    _watchPadLiveness();                 // #604: idempotent; installs the window listeners once
     // Grace window: even with the resync above, a BRAND NEW scene's own per-scene gamepad
     // wrapper can still read stale/cold for its first frame or two before catching up to the
     // real held-button state — worst right when a scene launches as an overlay on top of one
@@ -174,11 +268,7 @@ export class PadEdges {
     // frame counter has no such per-scene reset.
     this._graceUntilFrame = (scene.sys?.game?.loop?.frame ?? 0) + 3;
   }
-  pad() {
-    const gp = this.scene.input.gamepad;
-    const p = gp && gp.total > this.padIndex ? gp.getPad(this.padIndex) : null;
-    return p && p.connected ? p : null;
-  }
+  pad() { return padOf(this.scene, this.padIndex); }   // #604: liveness-aware, see padOf
   pressed(i) {
     const p = this.pad();
     const down = !!(p && p.buttons[i] && p.buttons[i].pressed);
@@ -238,6 +328,7 @@ export class Controls {
     // pad is EVER seen this session, so its wrapper is frequently created well after this
     // constructor already ran).
     _unstickLateConnectingPads(scene);
+    _watchPadLiveness();   // #604: idempotent; installs the window listeners once
 
     // Active input scheme. We latch onto whichever device was used last: once a pad is
     // touched we stay in 'pad' mode (ignoring the mouse, holding the last aim when the
@@ -324,11 +415,9 @@ export class Controls {
   }
 
   // #348: THIS player's pad, by index — player 1 reads pad 0, player 2 pad 1.
-  pad() {
-    const gp = this.scene.input.gamepad;
-    const p = gp && gp.total > this.padIndex ? gp.getPad(this.padIndex) : null;
-    return p && p.connected ? p : null;
-  }
+  // #604: null once that physical controller has gone away — see `padOf` for why Phaser's own
+  // cached state can never tell us that, and what we watch instead.
+  pad() { return padOf(this.scene, this.padIndex); }
 
   // Read the current frame's intent. `move` is a world-space vector (magnitude <= 1);
   // `fire` is keyed by location; `mode` is the active input scheme ('kbm' | 'pad').
