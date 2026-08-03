@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
-import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
-import { planEmissions, makeProjectile, stepProjectile } from '../data/delivery.js';
+import { drawProjectileBody, drawBeam, drawSlash, drawGroundFire, drawChargeWedge, mountIconKey, MOUNT_FRONT_Y, DESIGN } from '../art/index.js';
+import {
+  planEmissions, makeProjectile, stepProjectile, beamSpawnFor,
+  chargeConeAngleDeg, chargeWedgeAlpha,
+} from '../data/delivery.js';
 import { CATEGORIES } from '../data/categories.js';
 import { ABILITY_TYPES } from '../data/abilities.js';
 import { getItem, isWeapon } from '../data/items.js';
@@ -197,6 +200,19 @@ const COMPACT_EMIT_BACK = 4;
 // scenes render as cards — see data/weapons.js) lets _rangeLen() scale each weapon's shot
 // proportionally: the farthest-reaching weapon fills the card, everything else draws shorter.
 const CATALOG_MAX_RANGE = catalogMaxRange();
+
+// The card previews' shared DUTY CYCLE — how long a "held trigger" weapon runs before letting go
+// and how long it rests before pulling again. Beam Laser's sustained beam and every stream weapon
+// (Repeater, Flamethrower, Plasma Lance) have always looped on these two numbers; they were spelled
+// out twice as bare literals inside `_tickWeapon` (`streamPhase % 2400 < 1600`), and #633 needed a
+// THIRD user (the charge cycle below), which is exactly when a repeated literal becomes a bug
+// waiting to happen. Named once here instead.
+//
+// A card has no player holding its trigger, so this IS the card's imaginary trigger finger: it is a
+// readability dial, not a weapon stat — nothing in the arena reads it.
+const CARD_HOLD_MS = 1600;   // trigger down
+const CARD_REST_MS = 800;    // trigger up, before the next pull
+const CARD_CYCLE_MS = CARD_HOLD_MS + CARD_REST_MS;
 
 export class WeaponCardList {
   // #65: `isLocked(id)`/`costOf(id)` are optional — when given, a locked card renders dimmed
@@ -592,7 +608,9 @@ export class WeaponCardList {
     const card = {
       id, kind, item, weapon, color, art, container: c, panel, panelG, stage, emitter, name, cat, stats, fxG,
       lockScrim, lockLabel, preview, bindText,
-      cd: this.cards.length * 120, streamPhase: 0, holdBeam: false,
+      // #633: `chargeFrac` is the charge telegraph's 0→1 ramp while a chargeable weapon's card is
+      // in its charging phase, and null every other frame (see _tickCharge/_draw).
+      cd: this.cards.length * 120, streamPhase: 0, holdBeam: false, chargeFrac: null,
       pending: [], projectiles: [], beams: [], dyingBeams: [], bursts: [], slashes: [], patches: [],
     };
 
@@ -942,18 +960,21 @@ export class WeaponCardList {
     const w = card.weapon, d = w.delivery;
     const held = hasHeldSfx(w.id);
     card.holdBeam = false;
+    card.chargeFrac = null;
     if (d.sustained) {
       card.streamPhase += delta;
-      card.holdBeam = card.streamPhase % 2400 < 1600;
+      card.holdBeam = card.streamPhase % CARD_CYCLE_MS < CARD_HOLD_MS;
       if (held) this._setHeld(card, card.holdBeam);
     } else if (d.pattern === 'stream') {
       card.streamPhase += delta;
-      const active = card.streamPhase % 2400 < 1600;
+      const active = card.streamPhase % CARD_CYCLE_MS < CARD_HOLD_MS;
       if (held) this._setHeld(card, active);
       if (active) {
         card.cd -= delta;
         if (card.cd <= 0) { this._fire(card); card.cd = Math.max(1000 / (d.fireRate || 10), 16); }
       } else card.cd = 0;
+    } else if (d.chargeable) {
+      this._tickCharge(card, delta);
     } else {
       card.cd -= delta;
       if (card.cd <= 0) {
@@ -961,6 +982,52 @@ export class WeaponCardList {
         const burstDur = d.burst ? (d.count ?? 1) * (d.burst.wubOn ?? d.burst.interval) + ((d.count ?? 1) - 1) * (d.burst.wubOff ?? 0) : 0;
         card.cd = Math.max((w.cycleTime || 800) - burstDur, 250);
       }
+    }
+  }
+
+  // #633: the CHARGE cycle — Charge Lance and Charge Beam. Both used to fall through to the plain
+  // `cycleTime` branch above, which pops a single instant beam on a timer: the card showed neither
+  // the charge building, nor the cone collapsing into a line, nor (Charge Beam) the held beam phase
+  // that is the entire weapon. Jackson, 2026-08-01: "how does repeater work in the garage card? it
+  // seems like it basically fires for a period of time; why can't we just do that for these kinds
+  // of weapons?" So this is the same duty-cycle idea the stream branch already proves, walking the
+  // phases the arena's real charge state machine has (`scenes/arena/firing.js` `_handleChargeFire`):
+  //
+  //   CHARGE   `chargeable.maxTime` — the telegraph wedge, drawn per frame from `frac` (see _draw)
+  //   HOLD     CARD_HOLD_MS — Charge Beam only (`delivery.beam`): the sustained beam phase. A
+  //            weapon with no beam (Charge Lance) goes straight from full charge to release.
+  //   RELEASE  one pull — exactly the `_fire` the old branch did, cone fully collapsed
+  //   REST     CARD_REST_MS, then loop
+  //
+  // Charge Lance therefore loops on precisely the same 2400ms the stream weapons do (1600 charging
+  // + 800 resting); Charge Beam adds its 1600ms of beam in the middle, for a 4.0s loop.
+  //
+  // The clock is `streamPhase` — monotonic, never reset — and the RELEASE edge is detected by cycle
+  // INDEX rather than by comparing this frame's wrapped phase against last frame's. A card scrolled
+  // off-screen freezes mid-cycle (#612) and resumes on an arbitrarily large delta; a cycle index
+  // can neither miss nor double-fire across a jump like that.
+  _tickCharge(card, delta) {
+    const d = card.weapon.delivery;
+    const chargeMs = Math.max(1, (d.chargeable.maxTime ?? 1) * 1000);
+    const holdMs = d.beam ? CARD_HOLD_MS : 0;
+    const releaseAt = chargeMs + holdMs;
+    const period = releaseAt + CARD_REST_MS;
+    card.streamPhase += delta;
+    const cycle = Math.floor(card.streamPhase / period);
+    const t = card.streamPhase - cycle * period;
+    // Charging: hand the telegraph its ramp. Left null the rest of the cycle — during the beam
+    // phase deliberately, mirroring #627 in the arena (once the real beam is live the telegraph has
+    // done its job, and drawing both stacks a full-charge line over the beam's first stretch).
+    if (t < chargeMs) card.chargeFrac = t / chargeMs;
+    card.holdBeam = holdMs > 0 && t >= chargeMs && t < releaseAt;
+    // The beam phase borrows Beam Laser's held voice in the arena via `delivery.beam.sfxId`, not
+    // anything registered under this weapon's own id — `hasHeldSfx('chargeBeam')` is false on
+    // purpose (sfxParams.js: being in HELD_WEAPONS would swallow its release cue). Same source here,
+    // so the card hums exactly what the fight hums; `_setHeld` still gates it on audible+selected.
+    if (d.beam?.sfxId) this._setHeld(card, card.holdBeam, d.beam.sfxId);
+    if (t >= releaseAt && card._chargeCycle !== cycle) {
+      card._chargeCycle = cycle;
+      this._fire(card);
     }
   }
 
@@ -980,11 +1047,13 @@ export class WeaponCardList {
   // Held/looping fire sound (#53), mirroring firing.js's edge-detected start/stop — a card
   // never gets a real button press, so "held" here just means "in its active duty-cycle
   // window AND selected"; deselecting a card while it's mid-loop stops it on the next tick.
-  _setHeld(card, active) {
+  // #633: `sfxId` defaults to the card's own weapon (every existing caller) but can name another
+  // weapon's voice — Charge Beam's beam phase borrows Beam Laser's loop, exactly as the arena does.
+  _setHeld(card, active, sfxId = card.weapon.id) {
     const want = active && this._isAudible(card);
     if (want === !!card._heldOn) return;
     card._heldOn = want;
-    if (want) Audio.startHeld(card.id, card.weapon.id);
+    if (want) Audio.startHeld(card.id, sfxId);
     else Audio.stopHeld(card.id);
   }
 
@@ -1018,13 +1087,15 @@ export class WeaponCardList {
     }
     if (mode === 'hitscan') {
       const len = this._rangeLen(card);
-      const burstTtl = card.weapon.delivery.burst?.wubOn ?? 130;
-      // 2026-08-01: `heavy` was derived here from `delivery.kind === 'rail'`, the same way the
-      // arena used to derive it. The arena now pins it false (every laser draws at Beam Laser's
-      // dimensions — see `firing.js`'s own note), so leaving this deriving independently would put
-      // a FAT beam on the catalog card and a THIN one in the actual fight for the very same
-      // weapon. The card exists to show what the arena does; matched.
-      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy: false });
+      // #633: `ttl` and `heavy` are the weapon-derived half of a beam spawn and now come from the
+      // one shared helper the arena's `_fireHitscan` calls (`beamSpawnFor`, data/delivery.js);
+      // only the GEOMETRY below is the card's own. Both fields had already drifted from the arena
+      // by being written out twice — `heavy` needed two hand-edits to stay pinned false, and the
+      // TTL fallback here was 130 against the arena's 80, so any weapon without a `burst.wubOn`
+      // showed a beam lingering 60% longer on its card than in the fight. See the helper for why
+      // that resolved toward the arena's number.
+      const { ttl: burstTtl, heavy } = beamSpawnFor(card.weapon);
+      card.beams.push({ x0: ax, y0: ay, x1: ax + len, y1: ay, color, ttl: burstTtl, age: 0, heavy });
       // #224 (temporary): impact sound disabled, see WEAPON_IMPACT_SOUNDS_ENABLED.
       if (WEAPON_IMPACT_SOUNDS_ENABLED && this._isAudible(card)) Audio.impact(card.weapon.id);
       return;
@@ -1091,6 +1162,22 @@ export class WeaponCardList {
     const w = card.weapon;
     // (the emitter/mount is a rotated Image behind fxG, not drawn here — see _buildCard.)
     for (const fp of card.patches) drawGroundFire(g, fp.x, fp.y, fp.r, fp.born, 1);
+    // #633: the charge TELEGRAPH, under everything the shot itself draws. Same wedge primitive the
+    // arena telegraph uses (`drawChargeWedge`) fed from the same three pure sources its
+    // `_drawChargeFor` uses — `chargeConeAngleDeg`/`chargeWedgeAlpha` (angle-based, so they carry
+    // over to card space untouched) and the arena's own reach formula `40 + (range.max - 40) * frac`.
+    // The reach is the one thing that has to be converted: the card draws the weapon's FULL
+    // range.max as `_rangeLen(card)` pixels (see CATALOG_MAX_RANGE), so the world-space reach is
+    // scaled by that same ratio and the telegraph ends up the same FRACTION of the drawn range as
+    // it is in the arena. Computing it from the arena's formula rather than inventing a card curve
+    // is what stops the two from drifting; a retune there lands here for free.
+    // #630 applies verbatim: no separate centre core line — the cone's own sides converge into one.
+    if (card.chargeFrac != null) {
+      const f = card.chargeFrac;
+      const rMax = w.range.max || 400;
+      const reach = this._rangeLen(card) * ((40 + (rMax - 40) * f) / rMax);
+      drawChargeWedge(g, card.muzzleX, card.muzzleY, 0, chargeConeAngleDeg(f), reach, card.color, chargeWedgeAlpha(f));
+    }
     if (card.holdBeam) {
       const len = this._rangeLen(card);
       drawBeam(g, card.muzzleX, card.muzzleY, card.muzzleX + len, card.muzzleY, card.color, 1, false, card.streamPhase);
