@@ -394,7 +394,11 @@ export const WEAPON_MOUNT_ART = {
   // ballistic
   autocannon, machineGun, shotgun, napalm,
   // missile
-  swarmRack, streakPod, clusterRocket,
+  // 2026-08-02: newMissiles adopts swarmRack's 6-tube rack (Jackson: "use the same weapon mount
+  // art as swarm rack, with the 6 tubes") — same shared-fn idiom as beamLaser/railLance above. It
+  // had no bespoke art of its own before this; it was drawing the generic `missile` CATEGORY
+  // silhouette, which is still the fallback every future missile weapon inherits.
+  swarmRack, newMissiles: swarmRack, streakPod, clusterRocket,
   // lightning
   chainBolt, linkPylons,
 };

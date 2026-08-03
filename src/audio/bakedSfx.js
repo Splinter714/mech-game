@@ -32,6 +32,12 @@ import bitBombExplosion from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
 // two happening to name the same file today is a coincidence to be preserved, not a shared
 // constant to be factored out.
 import swarmRackBitBomb from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
+// 2026-08-02, Jackson: "can we use the sound swarm rack has for new missiles also?" — a THIRD
+// deliberate duplicate, on exactly #376's terms above (his rule, stated for this same asset): its
+// own binding, its own recipe entry, no link between the three. Vite content-hashes by resolved
+// path, so the three bindings share one bundled file — the duplication is a source-level seam
+// that lets any of the three be re-pointed later, not three copies of the audio.
+import newMissilesBitBomb from '../assets/sfx/clusterRocket-fire-bitBomb.m4a';
 // #268: plasmaLance's FIRE cue — swapped from "Bass wave.wav" to "DSGNImpt_EXPLOSION-Mecha
 // Multiple Bangs_HY_PC-001.wav" from the same Helton Yan pack (stereo 44.1kHz, 2.826s full
 // length). Converted with macOS `afconvert` to 48kHz stereo AAC/.m4a (~38KB). Played back with a
@@ -216,6 +222,14 @@ export const BAKED_SFX = {
   // purpose; either entry may drift from the other later without coordination.
   'swarmRack::fire': {
     asset: swarmRackBitBomb,
+    startMs: 0,
+    trimMs: null,
+    processing: null,
+  },
+  // 2026-08-02: a third independent copy of the same recipe (see the import note above). Same
+  // field-for-field-identical-today, free-to-drift-later relationship the other two have.
+  'newMissiles::fire': {
+    asset: newMissilesBitBomb,
     startMs: 0,
     trimMs: null,
     processing: null,

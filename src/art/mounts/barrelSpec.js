@@ -67,6 +67,10 @@ export const BARREL_SPECS = {
   // bespoke missile — all three went flush on the shared weaponCollar() the same day Plasma
   // Coater did, but kept the projecting-mount fracs their old free-floating tube shapes earned.
   swarmRack:     { len: 7.5, frac: -0.16 },    // foremost 2x3 cell: y0 + collarH*0.2 = frontY + 0.16L
+  // 2026-08-02: newMissiles draws swarmRack's rack (WEAPON_MOUNT_ART), so it needs swarmRack's
+  // spec too — without an entry here `weaponMuzzleTip` falls through to the `missile` CATEGORY
+  // spec and spawns rounds off a tube that isn't on the model any more.
+  newMissiles:   { len: 7.5, frac: -0.16 },
   streakPod:     { len: 9,   frac: -0.208 },   // seeker eye: collarY - collarH*0.24 = frontY + 0.208L
   clusterRocket: { len: 8,   frac: -0.128 },   // foremost warhead glint: collarY - collarH*0.34 = frontY + 0.128L
 };

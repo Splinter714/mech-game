@@ -260,6 +260,14 @@ export const DEFAULT_SFX = withQDefaults({
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 600, freqEnd: 900, q: 0.8, dur: 0.20, gain: 0.05, attack: 0.02 }],
     impact: blastLayers(0.55),
   },
+  // 2026-08-02: New Missiles takes Swarm Rack's cue. Written out rather than aliased, matching
+  // every other entry in this block — each calls `missileWhooshLayers()` for its own fresh copy,
+  // and the AUDIO tab tunes/persists per weapon id, so a shared reference would be a trap.
+  newMissiles: {
+    fire: missileWhooshLayers(),
+    trajectory: [{ kind: 'noise', type: 'bandpass', freq: 600, freqEnd: 900, q: 0.8, dur: 0.20, gain: 0.05, attack: 0.02 }],
+    impact: blastLayers(0.55),
+  },
   streakPod: {
     fire: missileWhooshLayers(),
     trajectory: [{ kind: 'noise', type: 'bandpass', freq: 600, freqEnd: 900, q: 0.8, dur: 0.20, gain: 0.05, attack: 0.02 }],

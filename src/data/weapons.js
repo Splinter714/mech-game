@@ -836,25 +836,25 @@ export const WEAPONS = {
   // `spreadAngle`, the angular fan. And 2026-08-02: "make the burst for new missiles much
   // tighter, one after the other much closer in time, almost overlapping one another."
   //
-  // WHAT IT LOOKS LIKE NOW. All six leave the tubes inside ~100ms — one per frame at 60fps,
-  // which is as tight as a staggered burst can get before rounds start sharing a frame and the
-  // ripple collapses into a single simultaneous pop. They leave on essentially the same heading
-  // (`spreadAngle: 0`; the only angular offset left is the ±0.3° alternating weave stagger every
-  // 'weave' burst weapon gets, which is cosmetic), then splay out sideways as each one steers to
-  // its own aim point 6/18/30px off-centre either way — a 60px-wide WALL of missiles rather than
-  // a fan or a ripple. Convergence is deliberately left ON (no `salvoNoConverge`): the offsets
-  // decay to zero late in flight so all six still HIT, which is what a homing missile should do.
-  // Add `salvoNoConverge: true` if you'd rather they stay apart and saturate an area instead.
+  // WHAT IT LOOKS LIKE NOW (2026-08-02: "can we make new missiles fire 6 at once"). The burst is
+  // GONE — `pattern: 'spread'` with no `burst`, so all six leave the tubes on the same frame, the
+  // way Swarm Rack does. They leave on identical headings (`spreadAngle: 0` — no fan), then splay
+  // sideways as each steers to its own aim point 6/18/30px off-centre either way: a 60px-wide WALL
+  // of missiles, launched as one salvo rather than a ripple. Convergence is deliberately left ON
+  // (no `salvoNoConverge`): the offsets decay to zero late in flight so all six still HIT, which is
+  // what a homing missile should do. Add `salvoNoConverge: true` to have them saturate an area.
+  //
+  // This retires two dials the entry used to need, both of which only existed to shape a RIPPLE:
+  //   • `burst: { interval: 20 }` — the "almost overlapping" tightening, now moot at 0ms apart.
+  //   • `burstShuffle: true` (#635) — randomised WHICH slot launched on which beat, because a
+  //     staggered volley always swept rigidly left→right. Simultaneous launch has no order to
+  //     randomise, so the flag would be inert. The mechanism stays in delivery.js for any future
+  //     burst weapon; it is simply not this weapon's problem any more.
   //
   // (#631 is what made `spreadAngle: 0` possible. The lateral offset used to be derived FROM the
   // launch fan, so a salvo with no fan had no lateral separation either, and this entry carried a
   // token 2° fan purely to give each round a position to index against. That coupling is gone —
   // `salvoSpread` now reads each round's index in the volley — so the fan is off for real.)
-  //
-  // No bespoke mount art on purpose: with no `WEAPON_MOUNT_ART` entry it falls back to the
-  // generic `missile` category mount, which HAS its own `BARREL_SPECS` entry — so the drawn art
-  // and the muzzle-tip shots spawn from stay in agreement (no #233/#584 drift), which a bespoke
-  // mount without a matching spec would have broken.
   newMissiles: w({
     id: 'newMissiles', name: 'New Missiles', category: 'missile',
     damage: 8,                                        // between 6.933 and 9.3
@@ -863,11 +863,9 @@ export const WEAPONS = {
     delivery: {
       hit: 'projectile', guidance: 'homing', path: 'arcing', homingBlendStart: 0,
       velocity: 700,                                  // squarely between 400 and 1000
-      count: 6,                                       // both parents fire 6
-      burst: { interval: 20 },                        // "almost overlapping" — ~1 round per frame
+      count: 6, pattern: 'spread',                    // all 6 at once, Swarm Rack's launch shape
       spreadAngle: 0,                                 // NO fan at all (#631 decoupled the two)
       salvoSpread: 30,                                // the separation, all of it: lateral px
-      burstShuffle: true,                             // don't sweep left→right; re-roll the launch order each pull
       wobble: 'weave',                                // streakPod's tighter weave, not the jostle
       arcProfile: 'steepDrop', arcBump: 1.05,         // swarmRack's hard terminal plunge (his ask)
     },
