@@ -279,7 +279,13 @@ export const WEAPONS = {
     // it's a single continuous lance, not a shared pool, and "everyone in the line eats the
     // full hit" is the more legible payoff for the charge commitment than a per-target split.
     id: 'chargeLance', name: 'Charge Lance', category: 'energy',
-    damage: 30, range: { min: 0, opt: 460, max: 680 },
+    // 2026-08-01 playtest (Jackson: "the whole thing should be shorter range anyway" / "make
+    // their ranges the same, and both 30% shorter"). Charge Lance was 460/680 and Charge Beam
+    // 460/640; both are now the SAME 322/448 — 30% off the shared 460/640 baseline. For a
+    // hitscan weapon `max` is the real reach (what `_fireHitscan` traces to, and since today
+    // what the charge telegraph draws); `opt` only advises enemy standoff and catalog-card
+    // preview scaling, so it carries no hard limit here.
+    damage: 30, range: { min: 0, opt: 322, max: 448 },
     ammoMax: 4, cycleTime: 1600,   // #402: ~6.4s burst (4 pulls × 1.6s) if tapped at minTime every time
     delivery: {
       hit: 'hitscan', pattern: 'single', kind: 'rail', pierce: true,
@@ -323,7 +329,13 @@ export const WEAPONS = {
     // opt 460) sees the lance-only figure — correct as it happens, since an enemy never holds a
     // trigger and fires this as a plain 24-damage hitscan lance on `cycleTime`.
     id: 'chargeBeam', name: 'Charge Beam', category: 'energy',
-    damage: 24, range: { min: 0, opt: 460, max: 640 },
+    // 2026-08-01 playtest (Jackson: "the whole thing should be shorter range anyway" / "make
+    // their ranges the same, and both 30% shorter"). Charge Lance was 460/680 and Charge Beam
+    // 460/640; both are now the SAME 322/448 — 30% off the shared 460/640 baseline. For a
+    // hitscan weapon `max` is the real reach (what `_fireHitscan` traces to, and since today
+    // what the charge telegraph draws); `opt` only advises enemy standoff and catalog-card
+    // preview scaling, so it carries no hard limit here.
+    damage: 24, range: { min: 0, opt: 322, max: 448 },
     ammoMax: 120, cycleTime: 1600,
     delivery: {
       hit: 'hitscan', pattern: 'single', kind: 'rail', pierce: true,

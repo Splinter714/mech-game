@@ -80,7 +80,18 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
   // real Phaser Graphics; only the dev-only capture recorder implements `.layer` (see
   // `makeCaptureGraphics` in art/_frames.js).
   g.layer?.('wedge');
-  const BANDS = 6, SEGMENTS = 12;
+  // 2026-08-01 playtest (Jackson: "I'm still seeing major 'steps' in opacity that feel chunky").
+  // Each band is filled at ONE flat alpha, so the distance fade arrives as BANDS discrete jumps
+  // rather than a gradient. At the old 6 that's a 0.10 alpha step between neighbours — plainly
+  // visible banding. 24 puts the largest step at 0.026, under the threshold where an edge reads.
+  // The bands tile exactly (each one's outer radius is the next one's inner), so more of them
+  // only ever subdivides the same shape; there are no new seams to introduce.
+  const BANDS = 24, SEGMENTS = 12;
+  // The sides get the same treatment. This used to be `warble ? 48 : BANDS`, so the RELEASE was
+  // smooth at 48 while the TELEGRAPH — the thing on screen for a second and a half, where banding
+  // is most visible — stepped through only 6. Both paths now subdivide finely; the 48 is still
+  // needed on the warbling path to carry a 1.5-cycle sine, and the telegraph simply shares it.
+  const SIDE_SEGS = 48;
 
   // Filled bands: each an annular wedge slice (rounded inner + outer edges), progressively
   // fainter further from the apex.
@@ -125,7 +136,6 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
   // similar player actions, two different weights. That discontinuity is the price of the thin
   // look and is worth knowing if a full-charge shot ever reads as unexpectedly heavy next to a
   // near-full one.
-  const sideSegs = warble ? 48 : BANDS;
   const sideW = 1.5;
   // Both sides' directions are loop-invariant; `qL`/`qR` are their own perpendiculars.
   const aL = angle - halfAngle, aR = angle + halfAngle;
@@ -148,11 +158,11 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
   // Both softenings now apply: alpha still falls with distance (his #493 ask — "less opaque
   // further away... fades to transparent at the far edge") AND the stroke narrows to a point at
   // the tip. The apex end is untouched, so the line still starts crisp at the muzzle.
-  for (let i = 0; i < sideSegs; i++) {
-    const t0 = i / sideSegs, t1 = (i + 1) / sideSegs;
+  for (let i = 0; i < SIDE_SEGS; i++) {
+    const t0 = i / SIDE_SEGS, t1 = (i + 1) / SIDE_SEGS;
     const tc = (t0 + t1) / 2;
     const r0 = reach * t0, r1 = reach * t1;
-    const dfade = chargeDistanceFade((i + 0.5) / sideSegs);
+    const dfade = chargeDistanceFade((i + 0.5) / SIDE_SEGS);
     const segAlpha = Math.min(1, alpha * dfade * 1.3);
     const taper = tc < TAPER_START ? 1 : Math.cos(((tc - TAPER_START) / (1 - TAPER_START)) * Math.PI / 2);
     const w = sideW * taper;
