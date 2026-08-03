@@ -23,22 +23,55 @@
 // Methods use `this` (the ArenaScene); composed onto the prototype via Object.assign.
 import { stepReticlePosition } from '../../data/targetlock.js';
 import { enemyTargetable } from '../../data/visibility.js';
-import { CONVERGE_DIST, aimAngleOffset, convergedFireAngle, pickConvergeTarget } from './shared.js';
+import { CONVERGE_DIST, TARGET_CONE, aimAngleOffset, convergedFireAngle, pickConvergeTarget } from './shared.js';
 import { TARGETING_RANGE } from '../../data/targetingRange.js';
 import { primaryPlayerOf } from './players.js';
 
-// #620: how much of the angular gap to the converge target the limbs close, 0-1 (applied in
-// `_fireAngle` below). The magnitude is capped by geometry, not by this constant alone — a
-// converge target only exists while it's inside `TARGET_CONE` (shared.js, a 20° HALF-angle), so
-// the gap being scaled is at most 20° and the real ceiling is AIM_ASSIST_STRENGTH × 20°:
+// #620/#642: the aim-assist CEILING, expressed as a fraction of the targeting cone (applied in
+// `_fireAngle` below). A converge target only exists while it's inside `TARGET_CONE` (shared.js, a
+// 20° HALF-angle), so the largest gap that can ever be scaled is 20° and the maximum correction is
+// exactly AIM_ASSIST_STRENGTH × 20°:
 //   0.15 -> up to 3°   (#620's original: real, but under the noise floor of a moving fight)
 //   0.30 -> up to 6°   (current, 2026-08-02: "dial aim assist back down to like 6 degrees")
 //   0.60 -> up to 12°  (the intermediate step, used to see the effect at all before settling)
 //   1.00 -> up to 20°  (full soft-lock: the limbs point at anything inside the cone)
-// Deliberately no distance falloff: one flat constant, tuned live, same convention as every
-// other feel dial. Note it does NOT compound across frames — it's a fraction of the LIVE gap
-// recomputed every frame, not an accumulating pull.
+// Deliberately no DISTANCE falloff: same convention as every other feel dial. Note it does NOT
+// compound across frames — it's a fraction of the LIVE gap recomputed every frame, not an
+// accumulating pull.
+//
+// #642 changed what this constant governs. It used to be the flat blend fraction itself — 30% of
+// the gap closed whether you were 2° off or 20° off — so "how close you already are" had no effect
+// on how hard the assist pulled, and it would yank you toward something 18° away you were never
+// aiming at. It is now the PEAK of a curve (below) rather than the whole of it, and the ceiling it
+// defines is unchanged: 0.3 × 20° = 6.0° maximum correction, same as before.
 const AIM_ASSIST_STRENGTH = 0.3;
+
+// #642: the sharpness of the near-centre-strong / edge-weak falloff — console "sticky aim". The
+// blend fraction is `(1 - n^AIM_ASSIST_FALLOFF)` over the normalised gap `n = |gap| / TARGET_CONE`
+// (0 dead-on, 1 at the cone edge), rescaled so the resulting correction peaks at exactly the
+// AIM_ASSIST_STRENGTH ceiling. Strong where you have basically acquired the target and already
+// just need to settle; zero at the cone edge, where the pull was never help in the first place.
+//
+// FELT MEANING of raising/lowering it, at the current 0.3 ceiling:
+//   1.5 -> 92% of the gap closed near centre; very magnetic settle, collapses hard past ~15°
+//   2   -> 78% near centre (current default); firm settle that still leaves you ~a fifth of the
+//          gap to steer yourself, and halves the old pull on an 18°-off target (5.4° -> 2.7°)
+//   3   -> 64% near centre; the strong band spreads wider across the mid-cone and the collapse
+//          happens later, i.e. closer to the old flat feel
+// Lower = snappier and more forgiving up close, deader at the edge. Higher = flatter, more like
+// the old constant fraction. Don't go below ~1.2: the rescale would push the near-centre fraction
+// past 1.0 and the limbs would point PAST the target (the `Math.min(1, …)` in `_fireAngle` guards
+// this, but a curve that needs the guard is a curve that's mis-tuned).
+const AIM_ASSIST_FALLOFF = 2;
+
+// Normalisation for the above, computed once at load so the tuning dial can never move the 6°
+// ceiling as a side effect. `n · (1 - n^p)` peaks at n = (1/(p+1))^(1/p); dividing by that peak
+// makes the curve's own maximum correction land on AIM_ASSIST_STRENGTH × TARGET_CONE for ANY
+// exponent. With p = 2 the peak sits at n ≈ 0.577 (an 11.5° gap) and the near-centre fraction
+// works out to ≈ 0.779.
+const ASSIST_PEAK_N = Math.pow(1 / (AIM_ASSIST_FALLOFF + 1), 1 / AIM_ASSIST_FALLOFF);
+const ASSIST_CENTER_FRACTION =
+  AIM_ASSIST_STRENGTH / (ASSIST_PEAK_N * (1 - Math.pow(ASSIST_PEAK_N, AIM_ASSIST_FALLOFF)));
 
 // #322: the two hand-set targeting ranges are gone. `ASSIST_RANGE` (2200) gated enemies and
 // `CONVERGE_DIST` (450) gated terrain — different numbers for the same question, and 2200 was
@@ -268,9 +301,24 @@ export const TargetingMixin = {
     // weapons and this exclusion becomes the thing making them feel bad.
     const noLeadYet = d.hit === 'projectile' && d.guidance !== 'homing' && d.path !== 'arcing';
     const t = player.convergeTarget;
-    const assist = (t && !noLeadYet && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false)
-      ? aimAngleOffset(player.x, player.y, player.turretAngle, t.x, t.y) * AIM_ASSIST_STRENGTH
-      : 0;
+    let assist = 0;
+    if (t && !noLeadYet && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false) {
+      // #642: the blend fraction is a function of how close the turret already is, not a flat 30%.
+      // `aimAngleOffset` (shared.js) is the signed gap and is wrap-safe across the ±π seam — a raw
+      // numeric subtraction of two angles is not, so don't inline arithmetic here.
+      const gap = aimAngleOffset(player.x, player.y, player.turretAngle, t.x, t.y);
+      // 0 = dead on the target, 1 = out at the cone edge. Clamped because the target was picked in
+      // `_updateLock` against the turret angle of THAT moment; by the time a weapon asks for its
+      // fire angle the turret has slewed and the target has moved, so the gap can sit a hair
+      // outside TARGET_CONE. Unclamped, `1 - n^p` would go NEGATIVE there and the assist would push
+      // the limbs AWAY from the target.
+      const n = Math.min(1, Math.abs(gap) / TARGET_CONE);
+      // Strongest near centre, zero at the edge. `Math.min(1, …)` is a guard, not a shape: the
+      // fraction must never exceed 1 or the limbs would swing PAST the target (see the note on
+      // AIM_ASSIST_FALLOFF). At the default exponent the curve peaks at 0.779, so it never fires.
+      const fraction = Math.min(1, ASSIST_CENTER_FRACTION * (1 - Math.pow(n, AIM_ASSIST_FALLOFF)));
+      assist = gap * fraction;
+    }
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') {
       // Indirect/melee never converged (their targeting happens downrange), but they still have a
       // limb to pivot — so they take the raw assist offset and the round leaves along the arm.
