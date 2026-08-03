@@ -315,11 +315,15 @@ export const EnemiesMixin = {
   },
 
   // #302: give ONE enemy the shared shield outline — but only if its data actually configures a
-  // shield. That gate is the whole performance story: every unshielded enemy (the great majority
-  // — drones, tanks, turrets, infantry, every enemy mech) builds no outline sprites and holds no
-  // `shieldVisual`, so `_updateEnemyShieldVisual` returns on a single null check and the per-frame
-  // re-pose cost #237 worried about is never multiplied across the roster. A shielded unit whose
-  // pool is momentarily down pays only the same early-exit the player's outline already did.
+  // shield. That gate is the whole performance story: an unshielded enemy (tanks, wall turrets,
+  // infantry, the carrier since #436) builds no outline sprites and holds no `shieldVisual`, so
+  // `_updateEnemyShieldVisual` returns on a single null check and the per-frame re-pose cost #237
+  // worried about is never multiplied across the roster. A shielded unit whose pool is momentarily
+  // down pays only the same early-exit the player's outline already did.
+  // (This comment used to list "every enemy mech" among the unshielded. That was simply wrong —
+  // every enemy mech carries a shield pool sized by weight class, 25/50/75, see data/enemies.js —
+  // and it is part of why #639's report that enemy MECHS wear a stale-looking shield read as
+  // surprising: mechs are in fact the most common shielded unit on the field.)
   _initEnemyShieldVisual(e, keys, scale) {
     if (!shieldPresent(e.mech?.shield)) return;
     e.shieldVisual = makeShieldOutline(this, e.view, { keys, scale });
@@ -345,6 +349,10 @@ export const EnemiesMixin = {
   // Per-frame upkeep for one enemy's outline: no-op unless this unit has one at all. The
   // show/hide-on-0↔>0 edge, the fraction fade and the empty-pool early exit are all the shared
   // `updateShieldOutline` — identical behaviour to the player's, by construction.
+  // #639: the per-frame DRIVER was always genuinely shared, which is why this claim survived so
+  // long — what had diverged was CONSTRUCTION, where four look options let the player's call site
+  // opt into the #397/#422 rework and left the enemy's on the old scaled-duplicate rim. Those
+  // options are gone (shieldOutline.js), so "by construction" is now true of construction too.
   _updateEnemyShieldVisual(e, delta) {
     if (!e.shieldVisual) return;
     updateShieldOutline(e.shieldVisual, e.view, e.mech?.shield, delta);
