@@ -36,9 +36,31 @@ const SPARKS_ENABLED = true;
 // releases looking like whatever cone was on screen the instant it went off — same geometry,
 // same fade, same visual language, just one drawn every frame during the hold and the other
 // drawn once at the moment of release.
+//
+// #630 — THE CONE IS THE LINE. There used to be a separate centre "core" line drawn over this by
+// the telegraph, because a 0° wedge appeared to be geometrically nothing. It isn't: the two cone
+// SIDES below are stroked 1.5px hairlines, so as the angle shuts they converge onto each other
+// and become a single line down the centre by construction. What actually made the wedge vanish
+// was this function's own early-out — it used to bail on `halfAngle <= 0.002` before drawing
+// anything at all. That guard is gone, so the wedge now renders all the way down to a genuine
+// 0°, where it IS the line, and the separate core is deleted. Two elements derived independently
+// were the root cause of both previous telegraph playtest bugs; there is now only one element.
+//
+// The two sides land exactly on top of each other at full collapse and are therefore blended
+// twice. That is deliberate and correct rather than double-drawing to be avoided: the strokes are
+// 1.5px wide, so they begin genuinely overlapping once their separation drops below that, and the
+// blend deepens continuously as they close. Branching to "draw once when nearly collapsed" would
+// introduce a visible pop at the threshold; the coincident case is just the limit of real overlap.
 export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1) {
   const halfAngle = (coneDeg * Math.PI) / 180 / 2;
-  if (halfAngle <= 0.002 || reach <= 0 || alpha <= 0.002) return;
+  if (reach <= 0 || alpha <= 0.002) return;
+  // The only part that genuinely cannot survive a 0° cone: the filled bands and the rounded far
+  // edge both degenerate to coincident points there, and Phaser's `strokePath` divides by segment
+  // length (a zero-length segment yields NaN vertices). Skipped below a TWENTIETH of a pixel of
+  // half-width — far under anything renderable, so this only ever removes invisible geometry,
+  // never a visible band or cap. The sides always draw; at full collapse they are the whole shape.
+  const halfWidthPx = reach * Math.sin(halfAngle);
+  const bodyVisible = halfWidthPx >= 0.05;
   // #546 (art dissect tool): one tag for the whole telegraph — it's a single cohesive shape
   // (the filled bands + the cone-side/rounded-edge strokes are all the same cone, just built
   // in stages), unlike a projectile's body which actually has distinct parts. No-op against a
@@ -49,7 +71,7 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
 
   // Filled bands: each an annular wedge slice (rounded inner + outer edges), progressively
   // fainter further from the apex.
-  for (let i = 0; i < BANDS; i++) {
+  if (bodyVisible) for (let i = 0; i < BANDS; i++) {
     const r0 = reach * (i / BANDS), r1 = reach * ((i + 1) / BANDS);
     const bandAlpha = alpha * chargeDistanceFade((i + 0.5) / BANDS) * 0.6;
     if (bandAlpha <= 0.004) continue;
@@ -79,13 +101,16 @@ export function drawChargeWedge(g, x, y, angle, coneDeg, reach, color, alpha = 1
 
   // The rounded far edge itself — the curved silhouette boundary, drawn as one continuous
   // stroke so the "arc instead of a flat chord" reads clearly even where the fill has nearly
-  // faded away.
-  const edge = chargeArcPoints(x, y, angle, halfAngle, reach, SEGMENTS);
-  g.lineStyle(1.5, color, alpha * 0.5);
-  g.beginPath();
-  g.moveTo(edge[0].x, edge[0].y);
-  for (let k = 1; k < edge.length; k++) g.lineTo(edge[k].x, edge[k].y);
-  g.strokePath();
+  // faded away. Skipped once the arc is narrower than a twentieth of a pixel (see above): there
+  // is no cap to draw on a line, and its points would be coincident.
+  if (bodyVisible) {
+    const edge = chargeArcPoints(x, y, angle, halfAngle, reach, SEGMENTS);
+    g.lineStyle(1.5, color, alpha * 0.5);
+    g.beginPath();
+    g.moveTo(edge[0].x, edge[0].y);
+    for (let k = 1; k < edge.length; k++) g.lineTo(edge[k].x, edge[k].y);
+    g.strokePath();
+  }
 }
 
 // A hitscan beam: tapered glow, chunky warbling core, and splatter sparks off the sides.

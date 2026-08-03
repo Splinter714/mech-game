@@ -6,7 +6,7 @@ import { CATEGORIES } from '../../data/categories.js';
 import {
   isPlayerRef, livePlayersOf, otherLivePlayers, primaryPlayerOf,
 } from './players.js';
-import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeCoreAlpha, nearestChainTarget } from '../../data/delivery.js';
+import { planEmissions, makeProjectile, arrivalSpeedMultiplier, homingTurnRate, arcMaxDist, scatterMaxDist, wrapAngle, chargeConeAngleDeg, chargeWedgeAlpha, nearestChainTarget } from '../../data/delivery.js';
 import { computeImpulse } from '../../data/force.js';
 import { isMobileEnemy } from '../../data/bases.js';
 import { traceHitscan, traceHitscanPiercing } from '../../data/beamTrace.js';
@@ -22,13 +22,6 @@ import { updateAbilities } from './abilities.js';
 import { isPlayerStealthed } from './stealth.js';
 import { targetHexKeyOf } from './shared.js';
 import { targetCoverExempt, targetSoftCoverExempt } from '../../data/visibility.js';
-
-// The charge telegraph's centre convergence line width (see `_drawChargeFor`). CONSTANT and thin
-// on purpose — 2026-08-01 playtest: the old `1 + frac * 5` ramp put a ~6px slab over the cone at
-// full charge, reading as a separate heavy element rather than the cone finishing its collapse
-// into one line. Matches the wedge's own hairline vocabulary; the convergence moment is carried
-// by opacity (`chargeCoreAlpha`) and brightness instead of thickness.
-const CHARGE_CORE_WIDTH = 1.5;
 
 export const FiringMixin = {
   // #338: the SHOT half of the one shared predicate (data/visibility.js `targetCoverExempt`) —
@@ -256,17 +249,17 @@ export const FiringMixin = {
   // like it should; I feel like it should start at maybe 90 degrees and then slowly become a
   // straight beam." The telegraph now draws a filled WEDGE (cone), apex at the muzzle, whose
   // full angle comes from `chargeConeAngleDeg` (delivery.js) — 90° at the start of a hold,
-  // easing down to 0° by full charge. At 0° the two edges and the wedge fill collapse onto the
-  // same line as the centre beam core below, so the shape reads as a continuous cone-to-beam
-  // narrowing rather than a snap between two different drawings. Purely visual; drawn fresh
+  // easing down to 0° by full charge. At 0° the wedge's fill vanishes and its two stroked edges
+  // land on each other, so the cone becomes a single centre line — one continuous cone-to-beam
+  // narrowing, not a snap between two different drawings. Purely visual; drawn fresh
   // every frame into the scene's dedicated `chargeFx` layer (cleared once per frame by
   // `_updateChargeVisuals` below, called once for the whole scene rather than per-player/slot).
   _drawChargeFor(player) {
     for (const [location, state] of Object.entries(player.chargeState || {})) {
       if (!state.charging) continue;
       // #627: once Charge Beam's beam is actually live, the telegraph has done its job — the real
-      // beam IS the visual from then on. Drawing both would stack an opaque full-charge core line
-      // over the beam's first 360px and read as two overlapping beams, and it would lose the
+      // beam IS the visual from then on. Drawing both would stack the telegraph's opaque
+      // full-charge line over the beam's first 360px and read as two overlapping beams, and lose the
       // "the cone collapsed into a beam" moment that sells the phase change.
       if (state.beaming) continue;
       const w = player.mech.weapons().find((ww) => ww.location === location);
@@ -282,29 +275,20 @@ export const FiringMixin = {
       // #493 follow-up: rounded far edge + distance-based opacity fade (opaque near the
       // mech, transparent at the tip) — see `drawChargeWedge` (art/projectileArt.js), shared
       // with the fired-burst visual below so both read as the same visual language.
-      drawChargeWedge(g, m.x, m.y, angle, chargeConeAngleDeg(frac), reach, color, 0.1 + frac * 0.15);
-
-      // Centre convergence line — where the cone's thin lines collapse to at full charge.
       //
-      // 2026-08-01 playtest (Jackson: "visual for charge lance is really cool while it's
-      // charging... can we just continue the charging animation with those cool thin lines, but
-      // let them converge into one line? keep it thin, don't add that extra thick line that
-      // sucks?"). This used to ramp to `1 + frac * 5` — a ~6px slab at full charge that read as a
-      // separate heavy element pasted over the cone rather than as the cone finishing its
-      // collapse. It is now a CONSTANT THIN line, matching the wedge's own hairline vocabulary,
-      // so full charge reads as "the fan converged" instead of "a thick beam appeared."
+      // #630: this is now the WHOLE telegraph. The separate centre convergence line that used to
+      // be drawn over it is gone — the wedge's own two stroked sides converge into that line on
+      // their own as the cone shuts, so there is one element instead of two derived independently
+      // (which is what produced both of this telegraph's previous playtest bugs). `minHalfPx`-style
+      // geometry surgery turned out to be unnecessary; only `drawChargeWedge`'s small-angle
+      // early-out had to go.
       //
-      // This supersedes the earlier "strong middle line" ask (#493 follow-up) — same element, and
-      // it still only fades in near full charge via `chargeCoreAlpha`, it's just no longer thick.
-      // Brightness still ramps with `frac`, so the convergence moment is carried by opacity alone.
-      const coreAlpha = chargeCoreAlpha(frac);
-      if (coreAlpha > 0) {
-        g.lineStyle(CHARGE_CORE_WIDTH, color, coreAlpha * (0.35 + frac * 0.55));
-        g.beginPath();
-        g.moveTo(m.x, m.y);
-        g.lineTo(m.x + Math.cos(angle) * reach, m.y + Math.sin(angle) * reach);
-        g.strokePath();
-      }
+      // Alpha comes from `chargeWedgeAlpha` (delivery.js) rather than the flat `0.1 + frac * 0.15`
+      // this used to pass: with the core line deleted, the wedge has to carry the convergence
+      // moment itself, so its opacity ramps up as the cone narrows — diffuse haze while wide,
+      // bright focused line once collapsed. It is derived from the cone's own angle, the same
+      // quantity driving the shape, so the two cannot drift apart.
+      drawChargeWedge(g, m.x, m.y, angle, chargeConeAngleDeg(frac), reach, color, chargeWedgeAlpha(frac));
     }
   },
 
