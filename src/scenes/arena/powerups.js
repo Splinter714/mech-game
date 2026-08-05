@@ -33,7 +33,7 @@ import { magnetPull, POWERUP_MAGNET } from '../../data/magnet.js';
 // in shieldOutline.js. This file keeps only "the player's shield, wired to the player's view."
 import {
   SHIELD_MECH_PART_KEYS, makeShieldOutline, updateShieldOutline, flashShieldOutline,
-  PLASMA_COAT_COLOR,
+  makeDotCoat,
 } from './shieldOutline.js';
 import { livePlayersOf, playersOf, primaryPlayerOf, targetPlayerFor } from './players.js';
 
@@ -93,18 +93,18 @@ export const PowerupsMixin = {
   // shieldOutline.js's `updateDotOutline` header note, and enemies.js's `_ensureEnemyDotVisual`
   // for the enemy-side mirror) — since #560 made DoT symmetric, an enemy's plasma weapon can burn
   // a player too, and the player deserves the same purple coating readout an enemy gets. Same
-  // lazy-build-on-first-use shape as the enemy side (no per-kind config to gate on for a player);
-  // reuses the exact same baked/dilated shell construction as the player's own shield outline
-  // above, just recoloured, so the coating hugs the mech the same way.
+  // lazy-build-on-first-use shape as the enemy side (no per-kind config to gate on for a player).
+  // `makeDotCoat` builds its sprites through `makeShieldOutline` — the exact same baked/dilated
+  // shell construction as the player's own shield outline above — then recolours and masks them
+  // into blotches (#489/#536), so the coating hugs the mech the same way the shield does.
   _ensureDotVisualFor(player) {
     if (!player) return null;
     if (player.dotVisual) return player.dotVisual;
     const view = player.view ?? this.playerView;
     if (!view) return null;
-    player.dotVisual = makeShieldOutline(this, view, {
+    player.dotVisual = makeDotCoat(this, view, {
       keys: SHIELD_MECH_PART_KEYS,
       scale: ARENA_MECH_SCALE,
-      color: PLASMA_COAT_COLOR,
     });
     return player.dotVisual;
   },

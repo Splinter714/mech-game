@@ -12,7 +12,7 @@ import { hexesWithinPixelRadius, hexToPixel, axialKey } from '../../data/hexgrid
 import { DEPTH } from './shared.js';
 import { isSoftCover } from '../../data/terrain.js';
 import { LOS_REFRESH_MS } from './world.js';
-import { updateDotOutline, updateDotTint } from './shieldOutline.js';
+import { updateDotOutline } from './shieldOutline.js';
 
 const HIT_RADIUS = 32;            // a shot within this of a mech's centre strikes its body
 
@@ -1093,17 +1093,20 @@ export const ProjectilesMixin = {
     const isBurning = (mech) => (mech?.statusEffects || []).some((s) => s.kind === 'plasmaBurn');
     for (const e of this.enemies) {
       if (e.mech.isDestroyed()) continue;
-      const sv = this._ensureEnemyDotVisual(e);
       const burning = isBurning(e.mech);
+      // Build the coat only for a unit that is ACTUALLY burning — this is the lazy build both
+      // `_ensureEnemyDotVisual` and `_ensureDotVisualFor` document, which this loop was quietly
+      // defeating by calling them unconditionally for every unit on the field. It matters more
+      // since #489/#536: a coat is now `COAT_BLOTCHES` shell sprites per part, not one. A unit that
+      // HAS burned keeps its set, so the turn-off edge (hide every sprite) still runs through
+      // `updateDotOutline` on the frame the burn ends.
+      const sv = burning ? this._ensureEnemyDotVisual(e) : e.dotVisual;
       updateDotOutline(sv, e.view, burning, delta);
-      updateDotTint(sv, e.view, burning);
     }
     for (const player of livePlayersOf(this)) {
-      const sv = this._ensureDotVisualFor(player);
-      const view = player.view ?? this.playerView;
       const burning = isBurning(player.mech);
-      updateDotOutline(sv, view, burning, delta);
-      updateDotTint(sv, view, burning);
+      const sv = burning ? this._ensureDotVisualFor(player) : player.dotVisual;
+      updateDotOutline(sv, player.view ?? this.playerView, burning, delta);
     }
   },
 

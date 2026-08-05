@@ -221,9 +221,13 @@ export function makeShieldOutline(scene, view, {
 // than duplicating it. The only thing that differs between the two effects is what computes
 // `alpha` each frame; the loop that walks every outline sprite onto its real part's live
 // texture/position/rotation is identical either way.
+// `sv.partOf` (plasma coat only — undefined for every shield) maps an outline key back to the real
+// part key it shadows, because the coat builds SEVERAL blotch sprites per part and so can't key them
+// by the part name alone. A shield's outline keys ARE its part keys, so it takes the `?? key` branch
+// and behaves byte-for-byte as before.
 function reposeOutlineSprites(sv, view, alpha) {
   for (const key of Object.keys(sv.outlines)) {
-    const real = view[key];
+    const real = view[sv.partOf?.[key] ?? key];
     const o = sv.outlines[key];
     // Follow the real part's texture, but resolve through to its baked `_shield` shell raster —
     // the hull swaps frames through the walk cycle and each frame has its own shell. A sprite with
@@ -311,6 +315,21 @@ export function updateShowroomShieldOutline(sv, view, delta) {
 // on the target, rather than fading with remaining duration (duration ticks down in fixed-size
 // steps via refresh-not-stack, so an ebbing alpha would be misleading — "10% duration left" is
 // not a real per-frame quantity worth animating toward).
+//
+// #489/#536 playtest follow-up — Jackson: "purple feels a bit excessive, maybe remove the whole-
+// enemy-tint and just do the purple shield-like coating; also make sure the shield-like coating is
+// applied similarly to the new shield style used on the player mech; also can we make the purple
+// coating blotches instead of fully coating?" Three consequences, all here:
+//   1. The whole-art tint wash (a `setTint` on the unit's REAL part sprites, pulsing in sync with
+//      the outline) is GONE — mechanism and all, not merely turned down. Nothing outside a unit's
+//      own damage/stun code touches part tints any more. (It had a real bug in it besides being
+//      too much purple: it called `clearTint()` on every non-burning enemy EVERY frame, which
+//      silently wiped the EMP stun's `DISABLE_TINT` — enemies.js `_disableEnemy` — one frame after
+//      it was set.)
+//   2. The coat still goes through `makeShieldOutline` and NOTHING else, so it is the player's
+//      shield construction exactly — same baked `_shield` dilation raster, same constant outward
+//      margin, same NORMAL blend, same texture-centre registration — recoloured and then masked.
+//   3. `makeDotCoat` below masks that shared shell into irregular patches.
 export const PLASMA_COAT_COLOR = 0xa04dff;   // distinct violet — clearly not shield-blue (0x2fa8ff)
 
 // Playtest follow-up (2026-07-31): "I like the purple flashing, but maybe make the overall
@@ -327,6 +346,96 @@ export function dotOutlineAlpha(t) {
   return DOT_ALPHA_MIN + (DOT_ALPHA_MAX - DOT_ALPHA_MIN) * pulse;
 }
 
+// ── BLOTCHES: how the coat stops being an even shell (#489/#536) ─────────────────────────────
+// Jackson: "can we make the purple coating blotches instead of fully coating?" — it should read as
+// patchy plasma splatter clinging to the silhouette, not a solid second skin.
+//
+// The technique, and why it's a CROP: what you actually SEE of a shell sprite is only its rim (the
+// real art covers everything else — see the file header), so "blotchy" means breaking that rim into
+// segments with gaps between them. Each part therefore gets `COAT_BLOTCHES` shell sprites instead of
+// one, each `setCrop`ped to a different window of the part's own texture; the coat only shows where
+// a window lands. Two properties that fall out of doing it this way and are the reason it's done
+// this way:
+//   • The pattern lives in the part's TEXTURE space, so it is welded to the art. It hugs the real
+//     silhouette exactly as the full shell did (it IS the full shell, seen through windows), and it
+//     rides along as the part translates/rotates/swaps walk frames instead of sliding over the body.
+//     Phaser re-applies a crop across `setTexture` (TextureCrop.setFrame), so the hull's walk-cycle
+//     frame swaps keep their windows.
+//   • It is stable frame to frame: every window is computed ONCE, at build time, from a per-unit
+//     seeded RNG. Nothing about the pattern is re-rolled per frame, so it can't boil or crawl. The
+//     only thing that animates is the shared `dotOutlineAlpha` pulse, exactly as before.
+//
+// Windows are BAND-shaped — long across one axis, short across the other, alternating axis per
+// blotch — rather than free-floating squares. A small square dropped anywhere in the texture usually
+// lands entirely behind the real art and shows nothing at all; a band is guaranteed to cross the rim
+// it's supposed to be cutting up. Between random band position, random band width and the
+// silhouette's own shape, the visible result is uneven arcs of purple rather than a regular dash.
+export const COAT_BLOTCHES = 3;        // shell sprites (= patch windows) per body part
+const COAT_BAND_MIN = 0.20;            // band thickness, as a fraction of the texture's short axis:
+const COAT_BAND_MAX = 0.45;            //   lower = smaller, sparser patches; higher = closer to full coverage
+const COAT_SPAN_MIN = 0.60;            // how far a band reaches along its long axis (fraction of the
+const COAT_SPAN_MAX = 1.00;            //   texture) — under 1 lets a patch stop short of a corner
+const COAT_ALPHA_JITTER = 0.35;        // per-patch opacity variation (0 = every patch equally bright),
+                                       //   so the splatter reads as uneven density, not a cut-out stencil
+
+// Tiny deterministic PRNG (mulberry32). A unit's whole pattern is drawn from one seed, so the same
+// seed always rebuilds the same coat — and successive units get visibly different ones.
+function seededRandom(seed) {
+  let a = (seed | 0) + 0x6d2b79f5;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Per-unit seeds come from here rather than `Math.random()` so a run is reproducible; each unit that
+// ever burns takes the next one and keeps it for its lifetime.
+let nextCoatSeed = 1;
+
+// Build ONE unit's plasma coat and return an outline state `updateDotOutline` can drive.
+//
+// #639's one-implementation rule is why this delegates instead of constructing sprites itself: every
+// shell sprite here comes out of `makeShieldOutline` — one full pass per blotch layer — so the coat
+// inherits the player shield's construction verbatim (baked `_shield` dilation raster at the unit's
+// exact display scale, `setTintFill`, NORMAL blend, texture-centre origin) and can't drift from it.
+// The ONLY coat-specific step is the crop applied afterwards. Nothing here can reach the shield: the
+// masking happens strictly on sprites this function owns, and `makeShieldOutline` is left untouched.
+//
+// The returned state has the same shape as a shield's, plus `partOf` (outline key → real part key,
+// since there are now several sprites per part) and `blotchAlpha` (outline key → opacity multiplier).
+export function makeDotCoat(scene, view, { keys, scale, attach, seed = nextCoatSeed++ }) {
+  const rnd = seededRandom(seed);
+  const outlines = {};
+  const partOf = {};
+  const blotchAlpha = {};
+  let resolveTex = null;
+  for (let layer = 0; layer < COAT_BLOTCHES; layer++) {
+    const set = makeShieldOutline(scene, view, { keys, scale, color: PLASMA_COAT_COLOR, attach });
+    resolveTex ||= set.resolveTex;
+    let partIndex = 0;
+    for (const part of Object.keys(set.outlines)) {
+      const o = set.outlines[part];
+      const w = o.width || 1, h = o.height || 1;
+      // Alternate the band's axis per blotch AND per part, so a unit never ends up with all three
+      // of a part's windows running the same way (which would leave one pair of edges bare).
+      const horizontal = ((layer + partIndex) % 2) === 0;
+      const band = COAT_BAND_MIN + rnd() * (COAT_BAND_MAX - COAT_BAND_MIN);
+      const span = COAT_SPAN_MIN + rnd() * (COAT_SPAN_MAX - COAT_SPAN_MIN);
+      const cw = horizontal ? w * span : w * band;
+      const ch = horizontal ? h * band : h * span;
+      o.setCrop((w - cw) * rnd(), (h - ch) * rnd(), cw, ch);
+      const key = `${part}#${layer}`;
+      outlines[key] = o;
+      partOf[key] = part;
+      blotchAlpha[key] = 1 - rnd() * COAT_ALPHA_JITTER;
+      partIndex++;
+    }
+  }
+  return { outlines, partOf, blotchAlpha, active: false, t: 0, flash: 0, resolveTex };
+}
+
 // Per-frame upkeep for ONE unit's plasma-coating outline — same show/hide-on-edge + early-exit-
 // when-inactive shape as `updateShieldOutline`, just driven by a plain `active` boolean (is
 // `plasmaBurn` currently in this unit's `statusEffects`?) instead of a shield pool.
@@ -341,45 +450,15 @@ export function updateDotOutline(sv, view, active, delta) {
   if (!active) return;
   sv.t += delta;
   reposeOutlineSprites(sv, view, dotOutlineAlpha(sv.t));
-}
-
-// Playtest follow-up (2026-07-31): "a very mild flashing hue over the whole art in addition to
-// the outline" — a light tint wash on the mech's own REAL part sprites (not the outline shells),
-// so the whole mech reads as tinged purple while burning, not just its silhouette edge. Deliberately
-// MILD: both stops are close to white (a straight RGB lerp is fine here — the range is narrow
-// enough that HSL's muddy-midpoint problem, see healthReadout.js STRUCTURE_RAMP, never comes up),
-// pulsing in sync with the outline's own alpha cadence so the two read as one effect breathing
-// together, not two competing animations.
-const DOT_TINT_LO = 0xe9d8ff;   // near-white, the faintest hint of lavender
-const DOT_TINT_HI = 0xc48bff;   // still mild — nowhere near PLASMA_COAT_COLOR's full saturation
-
-function lerpTint(lo, hi, t) {
-  const lr = (lo >> 16) & 255, lg = (lo >> 8) & 255, lb = lo & 255;
-  const hr = (hi >> 16) & 255, hg = (hi >> 8) & 255, hb = hi & 255;
-  const r = Math.round(lr + (hr - lr) * t), g = Math.round(lg + (hg - lg) * t), b = Math.round(lb + (hb - lb) * t);
-  return (r << 16) | (g << 8) | b;
-}
-
-// Uses the SAME pulse phase as `dotOutlineAlpha` (t is shared on `sv`) so the tint and the
-// outline crest together.
-export function dotTintColor(t) {
-  const pulse = 0.5 + 0.5 * Math.sin(t * DOT_PULSE_HZ * Math.PI * 2);
-  return lerpTint(DOT_TINT_LO, DOT_TINT_HI, pulse);
-}
-
-// Per-frame upkeep for the whole-art tint. Reuses `sv.outlines`' own keys (the parts that
-// actually exist on this view — same set `updateDotOutline` already drives) so it never needs a
-// separate part-key list threaded in. `sv.t` is shared with `updateDotOutline` — call this AFTER
-// that each frame so `t` has already advanced.
-export function updateDotTint(sv, view, active) {
-  if (!sv) return;
-  const keys = Object.keys(sv.outlines);
-  if (!active) {
-    for (const key of keys) view[key]?.clearTint();
-    return;
+  // Per-patch opacity, applied after the shared repose (which writes one alpha onto every sprite).
+  // Fixed per patch for the unit's lifetime — it varies the splatter's density in SPACE, never in
+  // time, so the coat still pulses as one effect rather than shimmering patch by patch.
+  if (sv.blotchAlpha) {
+    for (const key of keys) {
+      const o = sv.outlines[key];
+      o.setAlpha(o.alpha * sv.blotchAlpha[key]);
+    }
   }
-  const color = dotTintColor(sv.t);
-  for (const key of keys) view[key]?.setTint(color);
 }
 
 // How long the absorbed-hit opacity pop takes to settle back to the strength-driven alpha.
