@@ -13,6 +13,13 @@
 // (base/world.js `_buildWallRing`) — so every one of those questions collapses to a terrain
 // lookup, and every damage sink collapses to nothing. Those are the seams below.
 //
+// #647 extends the same arrangement to ABILITIES — the other half of the loadout, which until now
+// did nothing here. The system itself is `updateAbilities` (arena/abilities.js, a plain function
+// module) reached through FiringMixin's `_handleAbilities`, so there was nothing new to compose for
+// it; what needed supplying was the same kind of thing this file already supplies for weapons. See
+// BaseScene.js's Object.assign comment for the per-effect audit of what each ability reaches for,
+// and `_disableEnemy` below for the one seam it added here.
+//
 // DELIBERATELY NOT COMPOSED (see the report on #597): the arena's damage half. Nothing in the
 // base can be hurt — no enemies exist, single-player means no friendly fire, and the base has no
 // respawn clock, so letting a player cook themselves with their own napalm would strand them in
@@ -66,6 +73,16 @@ export const BaseFiringSeams = {
   _damageBuildingAt() {},
   _damageEnemyAt() {},
   _damagePlayerAt() {},
+
+  // #647's addition to the same list. EMP Trap plants real `kind: 'mine'` hazards into
+  // `scene.hazards` and `_updateHazards` (composed, and already ticking here since #597) resolves
+  // them through the arena's own arm/trigger pipeline — whose trap branch calls this to stun
+  // whoever set one off. In the base its candidate list is `this.enemies`, which is permanently
+  // empty, so a trap can only ever arm, sit, and expire on its own `life` timer: this is
+  // unreachable today. It is declared anyway, alongside the damage sinks it belongs with, because
+  // the alternative is depending on ONE optional-chaining call site staying optional — the exact
+  // fragility the seams above exist to remove.
+  _disableEnemy() {},
 };
 
 // The scene-level state the arena sets up in ArenaScene.create() and the firing mixins then read
@@ -102,6 +119,12 @@ export function updateBaseFiring(scene, intent, delta, dt) {
   scene._handleReload(intent, scene.player);
   scene._handleFiring(intent, delta, scene.player);
   scene._updateProjectiles(dt);
+  // #647: the world-space draw for abilities that are currently ON (Anti-Missile's defended
+  // envelope + its queued intercept bolts). Immediately after `_updateProjectiles` and nowhere
+  // else, because that method's first act is `projFx.clear()` — drawing this any earlier in the
+  // frame wipes it, which is the precise bug #628 fixed in the arena. Same slot ArenaScene.update
+  // gives it.
+  scene._drawAbilityFx();
   scene._updateFirePatches();
   scene._updateHazards(dt);
   scene._updateBeams(delta);
