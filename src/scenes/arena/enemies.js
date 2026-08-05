@@ -61,7 +61,7 @@ import { tickUnstick, unstickBend, bendHeading } from '../../data/groundUnstick.
 // too (50) but is now armor-only, so it no longer wears this outline.
 import {
   SHIELD_MECH_PART_KEYS, shieldPartKeys, makeShieldOutline, updateShieldOutline,
-  PLASMA_COAT_COLOR,
+  makeDotCoat,
 } from './shieldOutline.js';
 import { shieldPresent } from '../../data/shield.js';
 
@@ -342,7 +342,7 @@ export const EnemiesMixin = {
     if (e.dotVisual) return e.dotVisual;
     const keys = e.kind === 'mech' ? SHIELD_MECH_PART_KEYS : shieldPartKeys(e.kindDef);
     const scale = e.kind === 'mech' ? ARENA_MECH_SCALE : vehicleScale(e.kindDef);
-    e.dotVisual = makeShieldOutline(this, e.view, { keys, scale, color: PLASMA_COAT_COLOR });
+    e.dotVisual = makeDotCoat(this, e.view, { keys, scale });
     return e.dotVisual;
   },
 
