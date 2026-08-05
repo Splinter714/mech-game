@@ -24,7 +24,7 @@ import { hasActiveEffect } from './abilities.js';
 // animated ability preview can stamp the REAL smoke instead of approximating it — see that
 // module's header for the full "why a baked gradient texture, not fillCircle / not particles"
 // history that used to live here.
-import { ensureSmokeTextures, smokePuffLayout, smokePuffScale } from '../../art/smokePuff.js';
+import { ensureSmokeTextures, smokePuffLayout, smokePuffScale, SMOKE_BREATHE } from '../../art/smokePuff.js';
 
 // #507 follow-up (owner playtest: "not sure if it blocks LOS though"). Pure predicate — is
 // world point (x, y) inside ANY live player's Smoke Screen cloud? Shared by two very different
@@ -102,10 +102,14 @@ export const StealthMixin = {
         yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
 
-      // Staggered breathing size/alpha, independent per sub-blob — the "billowing" read.
+      // Staggered breathing size/alpha, independent per sub-blob — the "billowing" read. The
+      // bounds are `SMOKE_BREATHE` (art/smokePuff.js) so the catalog card's sine-driven version of
+      // the same motion can't drift from this one; `alphaFloorFrac` is also a real density dial —
+      // see that constant's comment before lowering it.
       this.tweens?.add({
         targets: view,
-        scale: { from: scale * 0.8, to: scale * 1.3 }, alpha: { from: baseAlpha, to: baseAlpha * 0.4 },
+        scale: { from: scale * SMOKE_BREATHE.scaleMin, to: scale * SMOKE_BREATHE.scaleMax },
+        alpha: { from: baseAlpha, to: baseAlpha * SMOKE_BREATHE.alphaFloorFrac },
         duration: 1000 + Math.random() * 1100, delay: Math.random() * 800,
         yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
