@@ -10,7 +10,7 @@ import { playerMechArt } from '../../art/playerMechLook.js';
 import { Audio } from '../../audio/index.js';
 import {
   ARENA_MECH_SCALE, DAMAGEABLE, DEATH_SCALE_MAX, DEPTH, deathScaleFor, explosionCategoryFor,
-  resolveHitLocation, pickLiveWeighted, softCoverUnitTier,
+  resolveHitLocation, localHitPoint, pickLiveWeighted, softCoverUnitTier,
 } from './shared.js';
 import { isSoftCover, softCoverHexBlockChance, softCoverStopsShot, SOFT_COVER_HEX_BLOCK_CHANCE } from '../../data/terrain.js';
 import { mulberry32 } from '../../data/worldgen.js';
@@ -567,7 +567,23 @@ export const CombatMixin = {
     this._statEnemyActivated?.(e);
     const isMech = e.kind === 'mech' || e.kind === undefined;
     const dispUnit = ARENA_MECH_SCALE * ART_SCALE;
-    const lx = x - e.x, ly = y - e.y;
+    // #649: rotate the world hit point into the UNIT'S OWN frame before comparing it against
+    // part positions, which `mechLayout`/`kindDef.parts` give in mech-local design coords
+    // (origin = centre, −y = forward). Before this the raw world offset went straight into
+    // `resolveHitLocation`, so a target's facing was ignored completely and the location was
+    // decided purely by world-left vs world-right of its centre — turning the enemy never changed
+    // the answer, and the same shoulder absorbed every hit from a given approach side.
+    //
+    // The TURRET angle, not the body angle, and not by assumption: enemies.js poses all four
+    // pivoting parts (both shoulders, both arms) off `e.turret` via `_syncTilts`, and only
+    // `view.hull` — the legs, which are not a damageable location — off `e.angle`. Every entry in
+    // DAMAGEABLE is an upper-body part, so the turret frame is the frame those parts are actually
+    // drawn in. Non-mech kinds carry their part boxes in the same design frame, and their gun
+    // parts likewise track `e.turret` (`_fireVehicleWeapon` spawns their muzzle off it) — see the
+    // note below on why the choice is inconsequential for them either way. `?? e.angle ?? 0` is a
+    // belt-and-braces fallback for any unit shape that never grew a turret heading.
+    const aimAngle = e.turret ?? e.angle ?? 0;
+    const { lx, ly } = localHitPoint(x - e.x, y - e.y, aimAngle);
     const lay = isMech ? mechLayout(e.mech) : e.mech.parts;
     const locs = isMech ? DAMAGEABLE : e.mech.locations();
     // #231: nearest part to the hit point, redirected to the nearest still-LIVE part if the

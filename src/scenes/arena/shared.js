@@ -367,10 +367,43 @@ export function rotateToward(cur, target, radPerSec, dt) {
 // hit), so no filtering is needed here any more.
 export const DAMAGEABLE = LOCATIONS;
 
+// #649: a world-space offset from a unit's CENTRE, expressed in that unit's OWN frame — the
+// exact inverse of the local→world rotation `partMuzzle` (below) and `partSpriteTransform`
+// (art/mechArt.js) both perform, and therefore the missing half of the round trip.
+//
+// The bug this fixes: `_damageEnemyAt` handed `nearestLocation` a raw world offset
+// (`x - e.x`, `y - e.y`) and compared it straight against `lay[loc].x/.y`, which are in the
+// unit's LOCAL design frame (origin = centre, −y = forward, +x = the unit's own right). Nothing
+// rotated between the two, so a target's FACING was ignored entirely: hit location was decided
+// purely by world-left vs world-right of the unit's centre, and turning the unit never changed
+// the answer (measured: over a full 360° sweep only the two shoulders were ever selected, and
+// `leftShoulder` took every tie, which is exactly the reported "left side dies first").
+//
+// Same convention as the forward direction, so the two can't disagree: forward is −y in design
+// coords, and a part's world offset is `f·(cos a, sin a) + r·(−sin a, cos a)` with `f = −y·disp`
+// and `r = x·disp`. Inverting that gives the two projections below. The RETURNED pair is already
+// in the same units `nearestLocation` compares against (design units × `dispUnit`), so the caller
+// hands it straight through — `lx` is comparable to `lay[loc].x * dispUnit`, `ly` to `.y * dispUnit`.
+//
+// WHICH ANGLE the caller passes is the caller's business, and it matters: on a mech the hull/legs
+// follow `e.angle` while the shoulders and arms follow `e.turret` (enemies.js poses all four
+// pivoting parts off `e.turret` via `_syncTilts`, and only `view.hull` off `e.angle`). Every
+// currently damageable location is an upper-body part, so the arena passes the turret angle.
+export function localHitPoint(dx, dy, angle) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  return {
+    lx: -dx * sin + dy * cos,   // the unit's own RIGHT  (design +x)
+    ly: -(dx * cos + dy * sin),  // design +y — i.e. minus the FORWARD projection
+  };
+}
+
 // #231: nearest of `locs` (each a key into `lay`, a {x,y} design-space layout) to local hit
 // point (lx, ly), in world px via `dispUnit`. PURE — factored out of combat.js `_damageEnemyAt`
 // so both the initial pick and the already-destroyed redirect below can share it, and so the
 // geometry is unit-testable without a Phaser scene.
+// #649: (lx, ly) must ALREADY be in the unit's own frame — see `localHitPoint` above, which is
+// how the one caller gets there from a world hit point. Passing a raw world offset here silently
+// ignores the unit's facing.
 export function nearestLocation(lay, locs, lx, ly, dispUnit) {
   let best = null, bestD = Infinity;
   for (const loc of locs) {
