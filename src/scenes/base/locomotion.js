@@ -26,6 +26,7 @@ import Phaser from 'phaser';
 import { PLAYER_HULL_FRAMES } from '../../art/index.js';
 import { Audio } from '../../audio/index.js';
 import { ARENA_MECH_SCALE, PLAYER_WALL_COLLIDE_RADIUS, applyMovementToggle, approach, resolveMovement } from '../arena/shared.js';
+import { activeSpeedMult, hasActiveEffect } from '../arena/abilities.js';
 import { STICK_DEADZONE } from '../../input/Controls.js';
 import { HEX_SIZE } from '../../data/hexgrid.js';
 
@@ -40,7 +41,16 @@ export const BaseLocomotionMixin = {
     const mv = resolveMovement(p);
     const legF = p.mech.legFactor();
     const terrainScale = this._speedFactorAt(p.x, p.y);
-    const maxSp = mv.maxSpeed * legF * terrainScale;
+    // #647: the two MOVEMENT abilities. `activeSpeedMult` (arena/abilities.js) is the same query
+    // the arena's `_drive` asks — "does this player have an active mounted ability with this
+    // effect, and if so what's its speed multiplier" — and answers 1 for a build that mounts
+    // neither, so this is inert unless one is actually equipped and mid-burst. Multiplying them
+    // together (rather than picking one) matches the arena exactly: the speed sources there are
+    // independent by design and simply stack if two happen to overlap. Sprint is deliberately NOT
+    // here — it's Overclock-powerup-driven (arena/firing.js `_handleSprint`) and there are no
+    // powerups in the base, so there is nothing that could ever set it.
+    const abilityMult = activeSpeedMult(p, 'dash') * activeSpeedMult(p, 'jumpBlast');
+    const maxSp = mv.maxSpeed * legF * terrainScale * abilityMult;
     p.vx = intent.move.x * maxSp;
     p.vy = intent.move.y * maxSp;
 
@@ -107,7 +117,14 @@ export const BaseLocomotionMixin = {
         p.hullFrame = Math.min(PLAYER_HULL_FRAMES - 1, Math.floor((p.stepMs / cycleMs) * PLAYER_HULL_FRAMES));
       }
     }
-    p.view.hull.setTexture(`${p.textureKey}_hull_${p.hullFrame}`);
+    // #647: cloak-aware, exactly as arena/locomotion.js `_stepGait` is. The hull is the one part
+    // whose texture something OTHER than `setCloakVisual` re-picks every gait tick (the walk-cycle
+    // frame), so it is also the one part that has to opt into the grey variant itself — otherwise
+    // the very next footstep stomps a cloaked mech's legs back to full colour. The `_grey` frames
+    // are pre-baked in BaseScene.create() for a build that mounts Cloak, so this key always exists
+    // by the time it can be reached.
+    const hullKey = `${p.textureKey}_hull_${p.hullFrame}`;
+    p.view.hull.setTexture(hasActiveEffect(p, 'cloak') ? `${hullKey}_grey` : hullKey);
     p.view.hull.rotation = p.angle + Math.PI / 2;
     p.view.turret.rotation = p.turretAngle + Math.PI / 2;
     // #597: the arms/shoulders cant toward their weapons' convergence, exactly as in the arena

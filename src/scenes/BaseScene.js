@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { buildHexTextures } from '../art/hexArt.js';
-import { buildMechTextures } from '../art/index.js';
+import { buildMechTextures, desaturateTexture, PLAYER_HULL_FRAMES } from '../art/index.js';
 import { playerMechArt } from '../art/playerMechLook.js';
 import { PLAYER_SHIELD_CONFIG } from '../data/Mech.js';
+import { getAbility } from '../data/abilities.js';
 import { mechColorFor } from '../data/mechColors.js';
 import { ACTIVE_MECH_KEY } from '../data/rosters.js';
 import { hexToPixel } from '../data/hexgrid.js';
@@ -16,6 +17,10 @@ import { AmmoIndicatorsMixin } from './arena/ammoIndicators.js';
 import { CombatMixin } from './arena/combat.js';
 import { TargetingMixin } from './arena/targeting.js';
 import { PowerupsMixin } from './arena/powerups.js';
+import { FriendlyDronesMixin } from './arena/friendlyDrones.js';
+import { StealthMixin } from './arena/stealth.js';
+import { CloakFlattenMixin } from './arena/cloakFlatten.js';
+import { initAbilityStates } from './arena/abilities.js';
 import { tickPlayerResources } from './arena/players.js';
 import { GAMEPLAY_ZOOM } from './arena/shared.js';
 import { BaseWorldMixin } from './base/world.js';
@@ -69,9 +74,39 @@ const {
 //     garage's showroom steady-state: the base mech is a real Mech with a real shield pool, so
 //     the shell should be driven by that pool (fading with its fraction, early-exiting when
 //     empty) rather than force-shown at full the way a static showroom preview has to.
-const { _impactFx, _burst, _acquireImpactCircle, _freeImpactCircle } = CombatMixin;
+//
+// #647, part 4 — ABILITIES. `updateAbilities` (arena/abilities.js) is a plain FUNCTION module, not
+// a mixin, and `FiringMixin` (already composed above) carries the `_handleAbilities` wrapper that
+// calls it — so there is no new mixin to compose for the ability system ITSELF. What each effect
+// then reaches for on the scene is another matter, and that is what the extra cherry-picks below
+// supply. Every one of them was checked against what the base actually has (`scene.enemies` is a
+// permanently-empty array, `_damageEnemyAt`/`_damagePlayerAt` are `BaseFiringSeams`' no-ops,
+// `scene.projectiles`/`scene.hazards` are real arrays created by `createBaseFiringState`), so the
+// effects that need a target simply find none rather than throwing:
+//   • CombatMixin → `_aoeBlastFx` + its `_burstRing` helper (Shield Burst / Jump Blast's shockwave;
+//     pure `add.circle` + tween + camera shake, no combat state), and `_interceptFx` +
+//     `_drawAbilityFx` (Anti-Missile's zap bolt and its defended-envelope ring — the envelope is
+//     drawn every frame the ability is up, which is the only thing that reads as "on" here, since
+//     nothing in the base ever shoots at you to intercept).
+//   • FriendlyDronesMixin → the whole 3-method system. It is self-contained (position + view +
+//     a fire cadence), holds no arena-only state, and its per-frame step already filters
+//     `this.enemies`, so a base squad flies its normal escort pattern and never finds a target.
+//   • StealthMixin → the smoke cloud's spawn/despawn pair ONLY. Its other two methods
+//     (`_smokeBlocksSight`/`_cloakBlocksSight`) exist to be called from the arena's per-enemy LOS
+//     raycast, which the base has no equivalent of — leaving them out keeps the base's own
+//     terrain-only `_wallDistance` (base/firing.js) the single answer to "what stops a shot here".
+//   • CloakFlattenMixin → both methods, and `_updateCloakFlatten` is called as the LAST statement
+//     of update() for the same reason ArenaScene does it there (see that mixin's header): it bakes
+//     whatever the mech looks like after every other per-frame mutation of the view.
+const {
+  _impactFx, _burst, _acquireImpactCircle, _freeImpactCircle,
+  _aoeBlastFx, _burstRing, _interceptFx, _drawAbilityFx,
+} = CombatMixin;
 const { _fireAngle, _lockAimPoint } = TargetingMixin;
 const { _ensureShieldVisualFor, _updateShieldVisual } = PowerupsMixin;
+const { _spawnFriendlyDrone, _despawnFriendlyDrone, _updateFriendlyDrones } = FriendlyDronesMixin;
+const { _spawnSmokeCloud, _despawnSmokeCloud } = StealthMixin;
+const { _updateCloakFlatten, _flattenCloakedView, _teardownCloakFlatten } = CloakFlattenMixin;
 
 export default class BaseScene extends Phaser.Scene {
   constructor() {
@@ -105,13 +140,28 @@ export default class BaseScene extends Phaser.Scene {
     mech.configureShield(PLAYER_SHIELD_CONFIG);
 
     const textureKey = 'baseMech';
-    buildMechTextures(this, textureKey, mech, playerMechArt(0, { accent: mechColorFor(mech, 0) }));
+    const accent = mechColorFor(mech, 0);
+    buildMechTextures(this, textureKey, mech, playerMechArt(0, { accent }));
+    // #647: the same pre-bake coop.js `_makePlayerAt` does for an arena player, for the same
+    // reason and gated the same way. The hull is the ONE part `_stepGaitBase` re-picks every gait
+    // tick regardless of cloak state, so its `_grey` walk-frame variants have to already exist
+    // before the first cloaked footstep — otherwise that frame points at a texture key that was
+    // never created and Phaser silently substitutes its missing-texture placeholder. Hull art is
+    // damage-independent (buildMechTextures' `skipHull` note), so one bake lasts the whole visit;
+    // the shoulder/arm/turret variants are rebaked per activation by `setCloakVisual` instead.
+    if (Object.values(mech.abilityMounts || {}).some((id) => id && getAbility(id)?.effect === 'cloak')) {
+      for (let f = 0; f < PLAYER_HULL_FRAMES; f++) desaturateTexture(this, `${textureKey}_hull_${f}`);
+    }
     const spawn = hexToPixel(0, 0);
     this.player = {
       // #597: `id` is the same player-0 identity `playerMechArt(0, …)` above already assumes —
       // now declared, because the composed arena code keys per-player audio/beam state off it.
       id: 0,
       mech, textureKey,
+      // #647: the owner tint a summoned drone squad is painted with (friendlyDrones.js falls back
+      // to a generic cyan without it). Same resolved build colour the mech itself is baked in, so
+      // a player's drones read as theirs here exactly as they do in the arena.
+      color: accent,
       x: spawn.x, y: spawn.y, vx: 0, vy: 0,
       angle: -Math.PI / 2, turretAngle: -Math.PI / 2,
       speed: 0, stepMs: 0, hullFrame: 0,
@@ -120,10 +170,13 @@ export default class BaseScene extends Phaser.Scene {
       // muzzle-glow readout), and the held-loop bookkeeping for continuous weapons. The mixin
       // lazily `??=`s all four, but seeding them here keeps the player object's real shape honest.
       fireCooldowns: {}, chargeState: {}, firingNow: {}, heldAudio: {},
-      // The base mounts no abilities, but `isPlayerStealthed` (called on every trigger pull to
-      // decide whether the shot makes noise) indexes this map whenever a Cloak ability IS mounted
-      // on the saved build — an absent map would throw there rather than answering "not cloaked".
-      abilityStates: {},
+      // #647: the REAL per-slot ability state machines, seeded from the same `initAbilityStates`
+      // every arena player gets — not the empty `{}` this used to be. That placeholder existed
+      // only so `isPlayerStealthed` could index the map safely; nothing populated or ticked it, so
+      // a mounted ability was inert here. `update()` now runs `_handleAbilities` (FiringMixin →
+      // arena/abilities.js) against these every frame, which is the whole of the wiring: cooldowns,
+      // burst windows and the per-effect activate/deactivate edges are the arena's own code.
+      abilityStates: initAbilityStates(),
     };
     this.player.view = this._makeMechView(textureKey, this.player.x, this.player.y, this.player.angle, true);
     // #347's players collection. The base has exactly one player and no co-op join, but the
@@ -166,12 +219,22 @@ export default class BaseScene extends Phaser.Scene {
   update(_time, delta) {
     const dt = Math.min(0.05, delta / 1000);
     const intent = this.controls.read();
+    // #647: abilities resolve BEFORE the drive, matching ArenaScene.update()'s own order — Dash
+    // and Jump Blast are speed multipliers `_driveBase` reads (`activeSpeedMult`, base/
+    // locomotion.js), so a same-frame press has to be in the state machine before movement is
+    // computed or the burst lands a frame late. `_handleAbilities` is FiringMixin's, already
+    // composed; it just forwards to `updateAbilities`.
+    this._handleAbilities(intent, delta, this.player);
     this._driveBase(intent, dt);
     this._stepGaitBase(dt);
     // #597: firing runs AFTER the gait, matching ArenaScene.update()'s order — `_muzzle` reads
     // the part tilts `_stepGaitBase` just eased, so a shot leaves the barrel where it is actually
     // drawn this frame rather than where it was last frame.
     updateBaseFiring(this, intent, delta, dt);
+    // #647: a summoned drone squad's own per-frame step (movement + its fire cadence). Ordered
+    // after firing the same way ArenaScene runs it after `_updateEnemies` — it needs this frame's
+    // positions — and it is a no-op whenever nothing is summoned.
+    this._updateFriendlyDrones(dt);
     // #597 playtest fix: "shield isn't visible and reload isn't working". BOTH were the same
     // omission — this call. `tickPlayerResources` is what drives `regenAmmo` (which counts the
     // reload lockout down and refills the magazine when it hits zero) and `tickShield` (which
@@ -184,6 +247,11 @@ export default class BaseScene extends Phaser.Scene {
     // this call, so it runs before the visual that reads the result.
     tickPlayerResources(this, dt);
     this._updateShieldVisual(delta);
+    // #647: Cloak's flatten pass, LAST — after the gait posed the parts, after the muzzle-glow
+    // readout inside `updateBaseFiring` toggled their visibility, and after the shield shell was
+    // updated just above. Same placement (and same reason) as ArenaScene.update()'s final
+    // statement; see cloakFlatten.js's header. A no-op unless Cloak is actually active.
+    this._updateCloakFlatten();
     this._checkTriggers();
   }
 
@@ -210,8 +278,12 @@ Object.assign(BaseScene.prototype,
     _makeMechView, _syncTilts, _syncPivots, _footImpactFx, _footShake, _shakeCamera,
     _muzzle, _partTilt,
     _impactFx, _burst, _acquireImpactCircle, _freeImpactCircle,
+    _aoeBlastFx, _burstRing, _interceptFx, _drawAbilityFx,
     _fireAngle, _lockAimPoint,
     _ensureShieldVisualFor, _updateShieldVisual,
+    _spawnFriendlyDrone, _despawnFriendlyDrone, _updateFriendlyDrones,
+    _spawnSmokeCloud, _despawnSmokeCloud,
+    _updateCloakFlatten, _flattenCloakedView, _teardownCloakFlatten,
   },
   BaseFiringSeams,
 );
