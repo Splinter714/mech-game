@@ -109,7 +109,7 @@ import {
 // summon spawns rather than a lookalike. Importing an arena module from the UI is the same shape as
 // casterMech.js reaching into arena/abilities.js for the real Cloak constants.
 import { ensureFriendlyDroneTextures } from '../scenes/arena/friendlyDrones.js';
-import { ensureSmokeTextures, smokePuffLayout, smokePuffScale } from '../art/smokePuff.js';
+import { ensureSmokeTextures, smokePuffLayout, smokePuffScale, SMOKE_BREATHE } from '../art/smokePuff.js';
 import {
   CasterMech, CasterCloak, CASTER_WORLD_PX, CASTER_PART_PX, CASTER_BODY_FRAC, CLOAK_ALPHA,
 } from './casterMech.js';
@@ -589,8 +589,10 @@ export class AbilityCardPreview {
 
   // ── Smoke Screen: the real puff textures + the real cloud scatter ───────────────────────────
 
-  // Built ONCE per layout (not per loop) — re-scattering every few seconds would churn ~25
-  // GameObjects for no visible gain, since the loop only re-runs the fade envelope.
+  // Built ONCE per layout (not per loop) — re-scattering every few seconds would churn ~75
+  // GameObjects (post-#507-density-pass; it was ~30) for no visible gain, since the loop only
+  // re-runs the fade envelope. Only ONE card in the catalog is Smoke Screen, so this cost is
+  // paid once, and unlike the arena it hangs zero tweens off them.
   _buildSmoke() {
     this._destroySmoke();
     if (this.effect !== 'smokeScreen') return;
@@ -606,7 +608,7 @@ export class AbilityCardPreview {
       this._puffs.push({
         x0: cx + ox, y0: cy + oy, scale, baseAlpha, view,
         // The arena hangs two endlessly-repeating yoyo tweens off each puff (a slow positional
-        // drift and a scale/alpha breathe). A card can't afford ~50 live tweens, so the same two
+        // drift and a scale/alpha breathe). A card can't afford ~150 live tweens, so the same two
         // motions ride the loop clock as sine waves with the same period range and per-puff
         // stagger — visually the same roil, zero tween objects.
         driftAng: Math.random() * Math.PI * 2,
@@ -634,8 +636,10 @@ export class AbilityCardPreview {
       const breathe = (Math.sin((this.t / p.breatheMs) * Math.PI * 2 + p.breathePhase) + 1) / 2;
       p.view.setPosition(p.x0 + Math.cos(p.driftAng) * p.driftDist * drift,
         p.y0 + Math.sin(p.driftAng) * p.driftDist * drift);
-      p.view.setScale(p.scale * (0.8 + breathe * 0.5));
-      p.view.setAlpha(p.baseAlpha * (1 - breathe * 0.6) * env);
+      // Same envelope the arena tweens between, read from the shared `SMOKE_BREATHE` bounds so a
+      // density retune moves both surfaces: `breathe` runs 0..1, 0 = full alpha / smallest scale.
+      p.view.setScale(p.scale * (SMOKE_BREATHE.scaleMin + breathe * (SMOKE_BREATHE.scaleMax - SMOKE_BREATHE.scaleMin)));
+      p.view.setAlpha(p.baseAlpha * (1 - breathe * (1 - SMOKE_BREATHE.alphaFloorFrac)) * env);
     }
   }
 
