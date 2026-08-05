@@ -53,7 +53,7 @@ import { UNAWARE, AWARE, DORMANT, detectionRangeFor, shouldBecomeAware, NOISE_WI
 import { ENEMY_BEHAVIORS, carrierDeployTick, CARRIER_DEPLOY_GRACE_MS } from './enemyBehaviors.js';
 import { makeTakeoff, stepTakeoff } from '../../data/takeoff.js';
 import { planEmissions } from '../../data/delivery.js';
-import { scheduleFireCues } from '../../audio/fireCues.js';
+import { scheduleFireCues, ENEMY_FIRE_GAIN } from '../../audio/fireCues.js';
 import { SOUND_THROTTLE_MS } from '../../data/hitFx.js';
 import { tickUnstick, unstickBend, bendHeading } from '../../data/groundUnstick.js';
 // #302: shielded enemies (helicopter 30 — enemyKinds.js) wear the SAME glowing shield outline
@@ -1303,7 +1303,7 @@ export const EnemiesMixin = {
           // #264: real positional audio — the firer's actual muzzle position vs. the
           // player's (the listener) drives distance falloff + stereo pan, replacing the old
           // flat ENEMY_FIRE_GAIN_SCALE approximation (see fireCues.js's header comment).
-          scheduleFireCues(this, w.weapon, plan, true, 1, { x: mx2, y: my2, ...listenerOf(this) });
+          scheduleFireCues(this, w.weapon, plan, true, ENEMY_FIRE_GAIN, { x: mx2, y: my2, ...listenerOf(this) });
         }
         // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
         // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause
@@ -1761,7 +1761,7 @@ export const EnemiesMixin = {
     // never stacks overlapping fire-cue trails.
     if (this._allowEnemyFireCue(weapon.id, plan)) {
       // #264: same real positional audio as the mech enemy loop above.
-      scheduleFireCues(this, weapon, plan, true, 1, { x: mx, y: my, ...listenerOf(this) });
+      scheduleFireCues(this, weapon, plan, true, ENEMY_FIRE_GAIN, { x: mx, y: my, ...listenerOf(this) });
     }
     // #269 playtest follow-up (helicopter Repeater streams bug): dispatch EVERY emission in
     // `plan.shots`, not just one — see `_fireEnemyShots`'s header comment for the root cause

@@ -41,6 +41,25 @@ import { TRAJECTORY_DELAY, hasHeldSfx, WEAPON_TRAJECTORY_SOUNDS_ENABLED } from '
 // a nearby enemy, which the old approximation could never do. See scenes/arena/enemies.js's
 // two scheduleFireCues call sites, which now pass a `pos` (below) instead of a gainScale.
 
+// 2026-08-04 (Jackson: "can we decrease the relative volume of enemy weapons by like 50%?").
+//
+// This deliberately re-introduces a flat enemy-fire multiplier, which #264 above retired — so it
+// needs to be clear this is NOT the same fix coming back. #200's version was a stopgap for a
+// different problem ("enemy fire sounds exactly as loud as mine even from across the map"), and
+// #264 solved that properly with real distance falloff and stereo pan. That machinery stays and
+// still does its job: a distant enemy is quiet, a close one is loud, which a flat multiplier could
+// never do. This is a MIX decision layered on top — even correctly attenuated, enemy weapons sit
+// too far forward against the player's own guns. Positional audio decides how loud an enemy is for
+// where it is; this decides how loud enemies are as a class.
+//
+// Applied at the two enemy `scheduleFireCues` call sites in scenes/arena/enemies.js (the mech fire
+// loop and `_fireVehicleWeapon`). Those are the ONLY enemy weapon sound sources: enemies never
+// start held/looping voices — `hasHeldSfx` is consulted only on the player's input path
+// (scenes/arena/firing.js) and in the Weapon Lab — and the trajectory/impact stages are globally
+// disabled (WEAPON_TRAJECTORY_SOUNDS_ENABLED / WEAPON_IMPACT_SOUNDS_ENABLED, sfxParams.js). So
+// this genuinely covers all enemy weapon audio rather than most of it.
+export const ENEMY_FIRE_GAIN = 0.5;
+
 // Schedule the one-shot fire + trajectory audio cues for a single trigger pull.
 //
 //   scene     — the Phaser scene (for scene.time.delayedCall).
