@@ -153,7 +153,19 @@ export const ABILITIES = {
     effect: 'smokeScreen',
     cooldown: 4,      // #628: was 12 — the flat 4s cap; deliberately shorter than `duration`.
     duration: 6,
-    radius: 100,
+    // 2026-08-04 playtest (Jackson: "the thickness is great now, can we also make it a much larger
+    // area?"). 100 -> 180: 1.8x the radius, 3.24x the covered area, ~7.5 hexes across.
+    //
+    // Safe to change alone, and worth knowing WHY: every dimension in `smokePuffLayout`
+    // (art/smokePuff.js) is a FRACTION of the cloud radius — cluster size, sub-blob size, scatter
+    // distance, haze size — and cluster centres scatter by uniform AREA (sqrt(random)), not uniform
+    // radius. So the whole cloud scales as one piece: same relative density, same thickness, no
+    // extra objects drawn. It costs nothing in frame time and does not undo the density pass.
+    //
+    // It DOES make the ability stronger: `radius` is also the LOS-blocking radius that
+    // `smokeBlocksPoint` (arena/stealth.js) tests against, so this is 3.24x the actual cover, not
+    // just 3.24x the visual. One number if that turns out to be too much.
+    radius: 180,
   },
   antiMissile: {
     name: 'Anti-Missile Defense',
