@@ -8,7 +8,7 @@ import {
 } from '../data/events.js';
 import {
   loadShowVersion, loadShowPerf, loadShowControlMethod, loadShowAiDebug,
-  loadDevUnlockAll, loadMasterVolume, loadAimAssist,
+  loadDevUnlockAll, loadMasterVolume, loadAimAssist, loadProjectileLead,
 } from '../data/pauseSettings.js';
 import { Audio } from '../audio/index.js';
 import { startGamepadAudioUnlock } from '../audio/gamepadUnlock.js';
@@ -48,6 +48,9 @@ export default class BootScene extends Phaser.Scene {
     // arena/locomotion.js can read the LIVE channel every frame; the pause-menu row and the
     // arena's D-pad UP bind both write this same channel, so a mid-sortie flip is felt instantly.
     this.registry.set('aimAssist', loadAimAssist());
+    // #637: projectile leading, ON by default. Seeded the same way so targeting.js `_fireAngle`
+    // can read the LIVE channel on every shot — the pause-menu row is felt on the next frame.
+    this.registry.set('projectileLead', loadProjectileLead());
     buildBaseTextures(this);
     // Procedural audio: adopt Phaser's WebAudio context. The soundtrack starts OFF — the
     // player turns it on with the music panel's play/pause (or it stays silent).
