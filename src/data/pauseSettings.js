@@ -26,6 +26,11 @@ const KEYS = {
   // not a diagnostic readout — and the only flag here that defaults ON, so it doesn't go
   // through loadFlag (which defaults OFF); see loadAimAssist below.
   aimAssist: 'mech-game-aim-assist-v1',
+  // #637: projectile LEADING — a non-tracking round is aimed where the target will be rather
+  // than where it is. Deliberately its OWN toggle rather than riding on `aimAssist`: leading is
+  // the gun aiming correctly, not a helper, so it applies to mouse and pad alike. Defaults ON
+  // for the same reason, so it goes through loadProjectileLead (not loadFlag) below.
+  projectileLead: 'mech-game-projectile-lead-v1',
 };
 
 function loadFlag(key) {
@@ -73,6 +78,18 @@ export function loadAimAssist() {
   }
 }
 export function saveAimAssist(enabled) { saveFlag(KEYS.aimAssist, enabled); }
+
+// #637: projectile leading, default ON — same "absent key reads as ON" treatment as aim assist
+// above. Turning it OFF restores the pre-#637 behaviour (every non-tracking round fired straight
+// at where the target IS, landing behind it by targetSpeed × flightTime).
+export function loadProjectileLead() {
+  try {
+    return localStorage.getItem(KEYS.projectileLead) !== '0';
+  } catch {
+    return true;
+  }
+}
+export function saveProjectileLead(enabled) { saveFlag(KEYS.projectileLead, enabled); }
 
 // #558: master volume, 0..1, defaults to 1 (unchanged from today's implicit full volume) so an
 // existing player's experience doesn't change until they touch the new slider.

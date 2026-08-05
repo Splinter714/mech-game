@@ -12,8 +12,13 @@
 // player-facing preference (and the one row here that defaults ON) — it sits next to MOVEMENT
 // FEEL because both are control-feel dials rather than readouts. It's also the only setting with
 // a second live input path: the arena's D-pad UP flips the same registry channel mid-fight.
+// PROJECTILE LEAD (#637) sits directly under it — the other player-facing control-feel row, and
+// the other one defaulting ON — but is a SEPARATE preference on purpose: aim assist is a helper
+// and is pad-only, whereas leading a non-tracking round is the gun aiming correctly and applies
+// to mouse and pad alike, hence no "(PAD)" in its title.
 export const PAUSE_ROWS = [
-  'version', 'volume', 'movement', 'aimAssist', 'perf', 'controlMethod', 'aiDebug', 'unlockAll',
+  'version', 'volume', 'movement', 'aimAssist', 'projectileLead',
+  'perf', 'controlMethod', 'aiDebug', 'unlockAll',
 ];
 
 // #529: dev-only NAVIGATION rows, appended after the base five when the pause menu is opened
@@ -37,6 +42,7 @@ export const PAUSE_ROW_TITLES = {
   volume: 'VOLUME',
   movement: 'MOVEMENT FEEL',
   aimAssist: 'AIM ASSIST (PAD)',
+  projectileLead: 'PROJECTILE LEAD',
   perf: 'PERF READOUT',
   controlMethod: 'CONTROL METHOD',
   aiDebug: 'AI DEBUG READOUT',

@@ -43,7 +43,7 @@ import {
   loadShowVersion, saveShowVersion, loadShowPerf, saveShowPerf,
   loadShowControlMethod, saveShowControlMethod, loadShowAiDebug, saveShowAiDebug,
   loadDevUnlockAll, saveDevUnlockAll, loadMasterVolume, saveMasterVolume,
-  loadAimAssist, saveAimAssist,
+  loadAimAssist, saveAimAssist, loadProjectileLead, saveProjectileLead,
 } from '../data/pauseSettings.js';
 
 const UI = {
@@ -70,6 +70,12 @@ const TOGGLE_ROWS = {
   // `_refreshRows` reading the registry (not a cached value) is what keeps this row's label
   // correct after the pad flipped it mid-sortie. Defaults ON, hence `!== false` below.
   aimAssist: { channel: 'aimAssist', load: loadAimAssist, save: saveAimAssist, defaultOn: true },
+  // #637: projectile leading. Same shape as aim assist and also defaults ON, but it is a
+  // genuinely separate preference — no D-pad bind, and it is NOT gamepad-gated (targeting.js
+  // `_fireAngle` reads this channel live for mouse and pad alike).
+  projectileLead: {
+    channel: 'projectileLead', load: loadProjectileLead, save: saveProjectileLead, defaultOn: true,
+  },
 };
 
 // #558: step size for the VOLUME row's D-pad LEFT/RIGHT adjustment (mouse/touch drag on the

@@ -25,7 +25,7 @@ import { stepReticlePosition } from '../../data/targetlock.js';
 import { enemyTargetable } from '../../data/visibility.js';
 import { CONVERGE_DIST, TARGET_CONE, aimAngleOffset, convergedFireAngle, pickConvergeTarget } from './shared.js';
 import { TARGETING_RANGE } from '../../data/targetingRange.js';
-import { primaryPlayerOf } from './players.js';
+import { playersOf, primaryPlayerOf } from './players.js';
 
 // #620/#642: the aim-assist CEILING, expressed as a fraction of the targeting cone (applied in
 // `_fireAngle` below). A converge target only exists while it's inside `TARGET_CONE` (shared.js, a
@@ -72,6 +72,53 @@ const AIM_ASSIST_FALLOFF = 2;
 const ASSIST_PEAK_N = Math.pow(1 / (AIM_ASSIST_FALLOFF + 1), 1 / AIM_ASSIST_FALLOFF);
 const ASSIST_CENTER_FRACTION =
   AIM_ASSIST_STRENGTH / (ASSIST_PEAK_N * (1 - Math.pow(ASSIST_PEAK_N, AIM_ASSIST_FALLOFF)));
+
+// ── #637: PROJECTILE LEADING ──────────────────────────────────────────────────────────────────
+// A non-tracking round has flight time, so aiming it at where the target IS lands it behind by
+// `targetSpeed × flightTime`. Measured against the fastest ground chassis (light enemy mech,
+// 268 px/s) at max range that is 179px for the Repeater — about four hex widths. `_fireAngle`
+// below now aims those weapons at where the target WILL BE.
+//
+// This is its OWN dial, deliberately not scaled off AIM_ASSIST_STRENGTH: assist and lead answer
+// different questions (assist = which point am I aiming at, lead = where will that point be), so
+// tuning one must not move the other. It is also its own player-facing toggle (`projectileLead`,
+// data/pauseSettings.js) rather than riding on `aimAssist`, and it is NOT gamepad-gated — leading
+// is the gun aiming correctly, not a helper, so mouse gets it too.
+//
+// FELT MEANING of raising/lowering it:
+//   0    -> off; every non-tracking round is fired at the target's current position (pre-#637)
+//   0.5  -> aims half way to the intercept point: a crossing target is still missed, by half as
+//           much, so hitting one remains a manual-lead skill and the gun only nudges you
+//   1    -> FULL lead (current default): a round fired at a target holding its course connects.
+//           The intercept is exact only while the target keeps its velocity — a mech that turns,
+//           stops or is knocked back still makes the shot miss, so this is not an aimbot; it is
+//           the difference between "the gun is wrong" and "the target dodged".
+//   >1   -> overlead; the shot lands AHEAD of the target. No reason to want this.
+//
+// LIMB ART. `_partTilt` is `fireAngle − turretAngle`, so the arms and shoulders visibly swing onto
+// the lead with no art change — which is wanted, and is bounded rather than wild. For a target
+// crossing at speed `s` against a round of speed `u` the lead angle is atan(s·t / d) with
+// t = d/u, i.e. atan(s/u) — INDEPENDENT OF RANGE, so it can't blow up at point-blank the way a
+// naive "offset ÷ distance" would. Against the fastest ground chassis (268 px/s) that ceiling is
+// 28° (Repulsor Pulse, the slowest leading round) down to 13° (Cluster Salvo, the fastest), and it
+// only applies at all while something is locked inside the 20° targeting cone. It also goes to
+// zero continuously as a target slows, and the DRAWN tilt is exponentially smoothed on top
+// (locomotion `_syncTilts`), so a target reversing direction sweeps the limbs rather than snapping
+// them. The FIRE angle itself is deliberately unsmoothed — the shot has to be right when it leaves.
+const LEAD_STRENGTH = 1;
+
+// The flight-time ceiling, in SECONDS, above which a weapon does not lead at all. Expressed as a
+// threshold on `range.max / delivery.velocity` rather than a hardcoded list of weapon ids, so a
+// future slow weapon is covered the day it is added.
+//
+// A long flight time makes a "correct" lead both enormous and worthless: it swings the limbs to an
+// extreme angle and is wrong the instant the target changes direction, which it certainly will
+// over multiple seconds. The live weapons sit in two well-separated clusters, which is where this
+// number comes from — the six that lead run 0.38s (Repulsor Pulse) to 1.07s (Plasma Lance), and
+// the two that must not are Flamethrower at 2.61s and Caustic Lobber at 6.92s. 1.5 sits in the
+// middle of that gap with room on both sides, so ordinary retuning of any of the eight can't
+// silently flip which cluster it lands in.
+const MAX_LEAD_FLIGHT_SECONDS = 1.5;
 
 // #322: the two hand-set targeting ranges are gone. `ASSIST_RANGE` (2200) gated enemies and
 // `CONVERGE_DIST` (450) gated terrain — different numbers for the same question, and 2200 was
@@ -255,6 +302,9 @@ export const TargetingMixin = {
   //    standing destructible hex when no enemy is available, or CONVERGE_DIST when neither), so
   //    shots land where the turret points. Purely geometric — no LOS gate, no lock state at all;
   //    the indirect-fire lock (#252) is simply this SAME `convergeTarget`, mirrored.
+  // Two angular offsets ride on top of whichever regime applies, both derived from the same
+  // `convergeTarget`: #620/#642's AIM ASSIST (pad only, toward where the target is) and #637's
+  // LEAD (player only, non-tracking projectiles only, toward where the target will be).
   // #348: `player` is whose weapon this is — its own turret facing and its own converge pick.
   _fireAngle(w, m, player = primaryPlayerOf(this)) {
     const d = w.weapon.delivery;
@@ -278,31 +328,14 @@ export const TargetingMixin = {
     // (`!== false` because it defaults ON). In the base, `convergeTarget` is never set at all, so
     // this is always 0 there — the same "nothing locked" behaviour the base already had.
     //
-    // FOURTH GATE (#637, 2026-08-02). Jackson: "without perfect lead, wouldn't aim assist actually
-    // CAUSE me to miss and keep it difficult to hit with skill?" — yes, and this weapon class is
-    // strictly WORSE OFF with the assist than without it, so it's excluded until leading exists.
-    //
-    // The assist pulls toward where the target IS. A round with flight time has to be aimed where
-    // the target WILL BE. So on a non-tracking projectile the assist doesn't merely fail to help,
-    // it drags 60% of the way OFF whatever lead the player applied by hand. The numbers make it
-    // concrete: a Repeater round takes 667ms to cross its 600px range, during which a light enemy
-    // mech (268 px/s) travels 179px — nearly four hex widths. Leading by that much at 600px is
-    // ~17°, still inside `TARGET_CONE`'s 20°, so the target is still picked and the assist still
-    // fires — precisely when the player was aiming correctly.
-    //
-    // Scope is exactly #637's set: `hit: 'projectile'` AND not homing AND not arcing — 8 weapons
-    // (Repeater, Scatter Gun, Autocannon, Cluster Salvo, Plasma Lance, Flamethrower, Caustic
-    // Lobber, Repulsor Pulse). Hitscan keeps the assist because zero flight time makes "aim at the
-    // target" exactly right; homing keeps it because the round steers itself; melee keeps it. Lobs
-    // (`path: 'arcing'`) are deliberately left in — they resolve a travel DISTANCE to the target
-    // rather than bending a launch angle, so they're a different mechanism and a separate question.
-    //
-    // DELETE THIS GATE when #637 lands: with a real lead the assist becomes correct for these
-    // weapons and this exclusion becomes the thing making them feel bad.
-    const noLeadYet = d.hit === 'projectile' && d.guidance !== 'homing' && d.path !== 'arcing';
+    // #637 removed the fourth gate that used to sit here (`noLeadYet`). It excluded every
+    // non-tracking projectile from the assist, because the assist pulls toward where the target IS
+    // and so dragged the player OFF whatever lead they had applied by hand. Now that those same
+    // weapons genuinely lead (below), the assist is correct for them and the exclusion would be
+    // the thing making them feel bad — so they are back on the ordinary three gates.
     const t = player.convergeTarget;
     let assist = 0;
-    if (t && !noLeadYet && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false) {
+    if (t && player.inputMode === 'pad' && this.registry.get('aimAssist') !== false) {
       // #642: the blend fraction is a function of how close the turret already is, not a flat 30%.
       // `aimAngleOffset` (shared.js) is the signed gap and is wrap-safe across the ±π seam — a raw
       // numeric subtraction of two angles is not, so don't inline arithmetic here.
@@ -319,9 +352,66 @@ export const TargetingMixin = {
       const fraction = Math.min(1, ASSIST_CENTER_FRACTION * (1 - Math.pow(n, AIM_ASSIST_FALLOFF)));
       assist = gap * fraction;
     }
+
+    // #637 LEADING. A second angular offset, on the same axis and from the same target, added on
+    // top of the assist. Computed INLINE for exactly the reason spelled out above — BaseScene
+    // cherry-picks `_fireAngle` off this mixin, so a `this._helper()` sibling would be a runtime
+    // TypeError there. Keep it self-contained.
+    //
+    // HOW THE TWO COMPOSE (and why they don't cancel). The assist is measured from the TURRET:
+    // `assist = f × (targetBearing − turretAngle)`, a fraction of the way onto the target. The
+    // lead is measured from the TARGET: `lead = leadBearing − targetBearing`, i.e. purely "how far
+    // ahead of the target do I have to point", independent of where the turret currently is. Their
+    // sum is therefore `turretAngle + f×gap + leadDelta` — the assist decides which point you are
+    // aiming at, the lead then displaces that point to where it will be. With the assist off (or
+    // on mouse) the full lead still applies to the raw turret bearing, which is the correctness
+    // fix; with the assist at full strength the muzzles sit exactly on the intercept point.
+    //
+    // Gates:
+    //  • A live converge target that is actually MOVING. Destructible hexes and wall spans carry no
+    //    `vx`/`vy` at all, so terrain yields zero lead naturally, with no special case.
+    //  • PLAYER ONLY (deliberate asymmetry in the player's favour — enemy fire keeps aiming at
+    //    where the player is). `_fireAngle` is the shared fire-angle entry point, so this asks
+    //    whether the shooter is one of the scene's own players rather than assuming it.
+    //  • The weapon class: `hit: 'projectile'`, not homing (the round steers itself), not arcing
+    //    (a lob resolves a travel DISTANCE rather than bending a launch angle — a different solve,
+    //    left alone on purpose). Hitscan needs nothing; its flight time is zero.
+    //  • Flight time under MAX_LEAD_FLIGHT_SECONDS — see that constant.
+    //  • The player-facing `projectileLead` preference, read LIVE off the registry every call (not
+    //    cached) so the pause-menu row is felt on the very next frame. `!== false` because it
+    //    defaults ON. Note this is NOT the `aimAssist` channel and NOT gamepad-gated.
+    const flightSeconds = d.velocity > 0 ? (w.weapon.range?.max ?? 0) / d.velocity : Infinity;
+    const leadable = d.hit === 'projectile' && d.guidance !== 'homing' && d.path !== 'arcing'
+      && flightSeconds <= MAX_LEAD_FLIGHT_SECONDS;
+    let lead = 0;
+    if (t && (t.vx || t.vy) && leadable && playersOf(this).includes(player)
+      && this.registry.get('projectileLead') !== false) {
+      // The intercept solve — find `t` where `|target + vel·t − shooter| = projectileSpeed · t` —
+      // done as TWO fixed-point iterations rather than the exact quadratic. Iterate once (flight
+      // time to where the target is now), then re-measure the distance to that first guess and
+      // iterate again. Measured residual miss against a 268 px/s crossing target at each weapon's
+      // max range: one iteration leaves 6–29px (Plasma Lance, the slowest round that leads, is the
+      // 29), two leaves 0.3–6px. The second pass is two lines and takes every weapon inside the
+      // round's own hit radius, so it's worth having; the exact quadratic would buy the last ~6px
+      // at the cost of a discriminant that has to be guarded for the "target outruns the round"
+      // case, which cannot happen here (targets cap at 268 px/s, the slowest leading round is 500).
+      // Fixed-point iteration has no such case — it just converges.
+      const dx = t.x - player.x, dy = t.y - player.y;
+      let flight = Math.hypot(dx, dy) / d.velocity;
+      flight = Math.hypot(dx + t.vx * flight, dy + t.vy * flight) / d.velocity;
+      const lx = t.x + t.vx * flight * LEAD_STRENGTH;
+      const ly = t.y + t.vy * flight * LEAD_STRENGTH;
+      // Wrap-safe: `aimAngleOffset` is the signed, ±π-seam-safe offset of a point from a bearing,
+      // so passing the target's OWN bearing as the reference gives exactly the lead delta. A raw
+      // subtraction of two atan2 results would blow up by 2π when the target sits near ±π.
+      lead = aimAngleOffset(player.x, player.y, Math.atan2(dy, dx), lx, ly);
+    }
+
     if (d.hit === 'contact' || d.guidance === 'homing' || d.path === 'arcing') {
       // Indirect/melee never converged (their targeting happens downrange), but they still have a
       // limb to pivot — so they take the raw assist offset and the round leaves along the arm.
+      // No lead here by construction: `leadable` excludes contact/homing/arcing, so `lead` is
+      // provably 0 on this branch and is left out rather than added as a no-op.
       return player.turretAngle + assist;
     }
     // Converge on a point at the picked target's range (or CONVERGE_DIST when there's none at
@@ -333,7 +423,13 @@ export const TargetingMixin = {
     // The convergence POINT moves onto the assisted bearing, so the muzzles toe in toward the
     // target rather than toward a point dead ahead of the turret. At full strength the point sits
     // on the target itself and both arms are pointed right at it.
-    return convergedFireAngle(player.x, player.y, player.turretAngle + assist, dist, m.x, m.y);
+    // #637: …and then onto the LEAD bearing, so at full strength the point sits on the INTERCEPT
+    // and the arms are pointed where the target is going. `dist` stays the target's own range: the
+    // intercept sits at most a few percent further out (a 179px lead at 600px is a 626px intercept)
+    // and `dist` only sets how hard the off-centre muzzles toe in — that 4% is worth well under a
+    // pixel of lateral error at range, so it isn't worth a second hypot per shot.
+    return convergedFireAngle(
+      player.x, player.y, player.turretAngle + assist + lead, dist, m.x, m.y);
   },
 
 };
